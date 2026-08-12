@@ -1,0 +1,12 @@
+[Unit]
+Description=应用快照 (WindowSnap) 常驻进程
+PartOf=graphical-session.target
+After=graphical-session.target
+
+[Service]
+ExecStart=%h/.local/bin/windowsnap
+Restart=on-failure
+RestartSec=2
+
+[Install]
+WantedBy=graphical-session.target

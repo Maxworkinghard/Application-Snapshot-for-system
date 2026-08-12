@@ -1,0 +1,8 @@
+/.build/
+/dist/
+.DS_Store
+/linux/target/
+/windows/**/bin/
+/windows/**/obj/
+.claude/
+.zcode/
