@@ -4,13 +4,12 @@
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::mpsc::Sender;
 use std::sync::{Arc, Mutex};
-use std::time::Instant;
+use std::time::{Duration, Instant};
 
 use x11rb::connection::Connection;
 use x11rb::protocol::xproto::{
-    AtomEnum, ConnectionExt, CreateWindowAux, EventMask, GrabMode,
-    ImageFormat, ImageOrder, ModMask, PropMode, SelectionNotifyEvent, Window, WindowClass,
-    SELECTION_NOTIFY_EVENT,
+    AtomEnum, ConnectionExt, CreateWindowAux, EventMask, GrabMode, ImageFormat, ImageOrder,
+    MapState, ModMask, PropMode, SelectionNotifyEvent, Window, WindowClass, SELECTION_NOTIFY_EVENT,
 };
 use x11rb::protocol::Event;
 use x11rb::rust_connection::RustConnection;
@@ -25,11 +24,23 @@ x11rb::atom_manager! {
         TARGETS,
         INCR,
         IMAGE_PNG: b"image/png",
+        UTF8_STRING: b"UTF8_STRING",
+        TEXT: b"TEXT",
         NET_ACTIVE_WINDOW: b"_NET_ACTIVE_WINDOW",
+        NET_CLIENT_LIST: b"_NET_CLIENT_LIST",
+        NET_WM_NAME: b"_NET_WM_NAME",
         NET_FRAME_EXTENTS: b"_NET_FRAME_EXTENTS",
         GTK_FRAME_EXTENTS: b"_GTK_FRAME_EXTENTS",
         WM_CLASS,
+        WM_NAME: b"WM_NAME",
     }
+}
+
+/// 当前供数到 CLIPBOARD 的内容。
+#[derive(Clone)]
+enum ClipContent {
+    Png(Arc<Vec<u8>>),
+    Text(Arc<String>),
 }
 
 pub struct X11Backend {
@@ -37,8 +48,8 @@ pub struct X11Backend {
     screen_num: usize,
     atoms: Atoms,
     clip_win: Window,
-    /// 当前供数的 PNG 内容
-    content: Mutex<Option<Arc<Vec<u8>>>>,
+    /// 当前供数的内容
+    content: Mutex<Option<ClipContent>>,
     /// 是否仍持有 CLIPBOARD 所有权
     owned: AtomicBool,
 }
@@ -189,8 +200,20 @@ impl X11Backend {
         time: u32,
     ) -> Result<()> {
         let property = if property == x11rb::NONE { target } else { property };
+        let content = self.content.lock().unwrap().clone();
+        let string_atom = u32::from(AtomEnum::STRING);
+
         let served = if target == self.atoms.TARGETS {
-            let targets: [u32; 2] = [self.atoms.TARGETS, self.atoms.IMAGE_PNG];
+            let targets: Vec<u32> = match content {
+                Some(ClipContent::Png(_)) => vec![self.atoms.TARGETS, self.atoms.IMAGE_PNG],
+                Some(ClipContent::Text(_)) => vec![
+                    self.atoms.TARGETS,
+                    self.atoms.UTF8_STRING,
+                    self.atoms.TEXT,
+                    string_atom,
+                ],
+                None => vec![self.atoms.TARGETS],
+            };
             self.conn
                 .change_property32(
                     PropMode::REPLACE,
@@ -201,9 +224,8 @@ impl X11Backend {
                 )
                 .is_ok()
         } else if target == self.atoms.IMAGE_PNG {
-            let png = self.content.lock().unwrap().clone();
-            match png {
-                Some(png) => self
+            match content {
+                Some(ClipContent::Png(png)) => self
                     .conn
                     .change_property8(
                         PropMode::REPLACE,
@@ -213,7 +235,24 @@ impl X11Backend {
                         &png,
                     )
                     .is_ok(),
-                None => false,
+                _ => false,
+            }
+        } else if target == self.atoms.UTF8_STRING
+            || target == self.atoms.TEXT
+            || target == string_atom
+        {
+            match content {
+                Some(ClipContent::Text(text)) => self
+                    .conn
+                    .change_property8(
+                        PropMode::REPLACE,
+                        requestor,
+                        property,
+                        target,
+                        text.as_bytes(),
+                    )
+                    .is_ok(),
+                _ => false,
             }
         } else {
             false
@@ -241,8 +280,124 @@ impl X11Backend {
         let active = self.active_window()?;
         let (x, y, width, height) = self.window_rect_on_root(active)?;
         let png = self.grab_root_region(x, y, width, height)?;
+        self.serve_clipboard(ClipContent::Png(Arc::new(png)))?;
+        Ok(self.window_app_name(active))
+    }
 
-        *self.content.lock().unwrap() = Some(Arc::new(png));
+    /// 截取指定窗口（「应用快照…」列表里选的那个）。
+    pub fn capture_window(&self, window: Window) -> Result<String> {
+        let (x, y, width, height) = self.window_rect_on_root(window)?;
+        let png = self.grab_root_region(x, y, width, height)?;
+        self.serve_clipboard(ClipContent::Png(Arc::new(png)))?;
+        Ok(self.window_app_name(window))
+    }
+
+    /// 列出可截取的窗口（_NET_CLIENT_LIST 中可见且有标题的）。
+    pub fn list_windows(&self) -> Result<Vec<(Window, String)>> {
+        let reply = self
+            .conn
+            .get_property(
+                false,
+                self.root(),
+                self.atoms.NET_CLIENT_LIST,
+                AtomEnum::WINDOW,
+                0,
+                512,
+            )?
+            .reply()?;
+        let ids: Vec<u32> = reply
+            .value32()
+            .map(|values| values.collect())
+            .unwrap_or_default();
+        let mut result = Vec::new();
+        for id in ids {
+            let window = id as Window;
+            if window == self.clip_win {
+                continue;
+            }
+            let attributes = match self.conn.get_window_attributes(window)?.reply() {
+                Ok(attributes) => attributes,
+                Err(_) => continue,
+            };
+            if attributes.map_state != MapState::VIEWABLE {
+                continue;
+            }
+            let title = self.window_title(window);
+            if title.is_empty() {
+                continue;
+            }
+            result.push((window, title));
+        }
+        Ok(result)
+    }
+
+    /// 写文字到 CLIPBOARD 并持有所有权（润色结果 / 撤销恢复）。
+    pub fn set_text(&self, text: String) -> Result<()> {
+        self.serve_clipboard(ClipContent::Text(Arc::new(text)))
+    }
+
+    /// 读取 CLIPBOARD 中的文字（润色原文）。润色频率低，开独立连接完成
+    /// 一次性 selection 请求，不与后台事件线程抢事件。
+    pub fn read_clipboard_text(&self) -> Result<String> {
+        let (conn, screen_num) = x11rb::connect(None)?;
+        let root = conn.setup().roots[screen_num].root;
+        let utf8 = conn.intern_atom(false, b"UTF8_STRING")?.reply()?.atom;
+        let clipboard = conn.intern_atom(false, b"CLIPBOARD")?.reply()?.atom;
+        let requestor = conn.generate_id()?;
+        conn.create_window(
+            x11rb::COPY_DEPTH_FROM_PARENT,
+            requestor,
+            root,
+            -1,
+            -1,
+            1,
+            1,
+            0,
+            WindowClass::INPUT_OUTPUT,
+            x11rb::COPY_FROM_PARENT,
+            &CreateWindowAux::new(),
+        )?
+        .check()?;
+
+        let mut text = String::new();
+        for target in [utf8, u32::from(AtomEnum::STRING)] {
+            conn.convert_selection(requestor, clipboard, target, target, x11rb::CURRENT_TIME)?;
+            conn.flush()?;
+
+            let deadline = Instant::now() + Duration::from_millis(1500);
+            loop {
+                match conn.poll_for_event() {
+                    Ok(Some(Event::SelectionNotify(notify))) => {
+                        if notify.property == x11rb::NONE {
+                            break; // 换下一个 target
+                        }
+                        if let Ok(reply) = conn
+                            .get_property(false, requestor, notify.property, AtomEnum::ANY, 0, 262_144)?
+                            .reply()
+                        {
+                            text = String::from_utf8_lossy(&reply.value).trim().to_string();
+                        }
+                        let _ = conn.destroy_window(requestor);
+                        return Ok(text);
+                    }
+                    Ok(Some(_)) => continue,
+                    Ok(None) => {
+                        if Instant::now() >= deadline {
+                            return Ok(text);
+                        }
+                        std::thread::sleep(Duration::from_millis(10));
+                    }
+                    Err(_) => return Ok(text),
+                }
+            }
+        }
+        let _ = conn.destroy_window(requestor);
+        Ok(text)
+    }
+
+    /// 统一的「设置剪贴板内容并接管所有权」。
+    fn serve_clipboard(&self, content: ClipContent) -> Result<()> {
+        *self.content.lock().unwrap() = Some(content);
         self.conn
             .set_selection_owner(self.clip_win, self.atoms.CLIPBOARD, x11rb::CURRENT_TIME)?
             .check()?;
@@ -252,8 +407,7 @@ impl X11Backend {
         }
         self.owned.store(true, Ordering::SeqCst);
         self.conn.flush()?;
-
-        Ok(self.window_app_name(active))
+        Ok(())
     }
 
     pub fn clear_if_owned(&self) {
@@ -266,7 +420,7 @@ impl X11Backend {
         }
     }
 
-    fn active_window(&self) -> Result<Window> {
+    pub fn active_window(&self) -> Result<Window> {
         let reply = self
             .conn
             .get_property(
@@ -286,6 +440,12 @@ impl X11Backend {
             return Err("没有找到可截取的活动窗口".into());
         }
         Ok(window)
+    }
+
+    /// 活动窗口在 root 上的矩形（录制用）。
+    pub fn active_window_rect(&self) -> Result<(i32, i32, u32, u32)> {
+        let active = self.active_window()?;
+        self.window_rect_on_root(active)
     }
 
     /// 活动窗口在 root 上的矩形：客户区 + WM 边框（_NET_FRAME_EXTENTS）
@@ -419,6 +579,23 @@ impl X11Backend {
             .last()
             .map(|s| String::from_utf8_lossy(s).to_string())
             .unwrap_or_else(|| "应用".to_string())
+    }
+
+    fn window_title(&self, window: Window) -> String {
+        for property in [self.atoms.NET_WM_NAME, self.atoms.WM_NAME] {
+            if let Some(cookie) = self
+                .conn
+                .get_property(false, window, property, AtomEnum::ANY, 0, 256)
+                .ok()
+            {
+                if let Ok(reply) = cookie.reply() {
+                    if !reply.value.is_empty() {
+                        return String::from_utf8_lossy(&reply.value).trim().to_string();
+                    }
+                }
+            }
+        }
+        String::new()
     }
 }
 
