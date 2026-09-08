@@ -13,16 +13,29 @@
     <AutoGenerateBindingRedirects>true</AutoGenerateBindingRedirects>
   </PropertyGroup>
   <ItemGroup>
+    <Compile Include="src\ActionPanel.cs" />
+    <Compile Include="src\App.cs" />
+    <Compile Include="src\AppSettings.cs" />
     <Compile Include="src\CaptureService.cs" />
+    <Compile Include="src\HotKeys.cs" />
     <Compile Include="src\NativeMethods.cs" />
+    <Compile Include="src\PolishController.cs" />
+    <Compile Include="src\PolishService.cs" />
+    <Compile Include="src\PolishSettingsForm.cs" />
     <Compile Include="src\Program.cs" />
+    <Compile Include="src\RecordingControlsForm.cs" />
+    <Compile Include="src\RecordingService.cs" />
     <Compile Include="src\SnapshotBubbleForm.cs" />
     <Compile Include="src\TargetAppTracker.cs" />
+    <Compile Include="src\Toast.cs" />
+    <Compile Include="src\TrayController.cs" />
+    <Compile Include="src\WindowIconLoader.cs" />
   </ItemGroup>
   <ItemGroup>
     <Reference Include="System" />
     <Reference Include="System.Core" />
     <Reference Include="System.Drawing" />
+    <Reference Include="System.Web.Extensions" />
     <Reference Include="System.Windows.Forms" />
   </ItemGroup>
   <Import Project="$(MSBuildToolsPath)\Microsoft.CSharp.targets" />
