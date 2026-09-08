@@ -343,7 +343,7 @@ final class DesktopPetController {
                 y: CGFloat(defaults.double(forKey: positionYKey))
             )
             if isPointOnScreen(point) {
-                return point
+                return clampToVisibleArea(point, size: NSSize(width: 56, height: 56))
             }
         }
         return defaultPosition()
@@ -372,6 +372,20 @@ final class DesktopPetController {
         defaults.set(Double(origin.x), forKey: positionXKey)
         defaults.set(Double(origin.y), forKey: positionYKey)
     }
+}
+
+/// 把悬浮窗原点夹回「锚点所在屏幕」的可见区域（Dock、菜单栏之外）。
+/// 历史位置可能停在屏幕边缘外或 Dock 后面（isPointOnScreen 有 ±200 容差），
+/// 恢复与拖拽时都做约束，避免悬浮窗从视野里消失。
+private func clampToVisibleArea(_ origin: NSPoint, size: NSSize, around anchor: NSPoint? = nil) -> NSPoint {
+    let reference = anchor ?? origin
+    let screen = NSScreen.screens.first { $0.frame.contains(reference) } ?? NSScreen.main
+    guard let visible = screen?.visibleFrame else { return origin }
+    let margin: CGFloat = 8
+    return NSPoint(
+        x: min(max(origin.x, visible.minX + margin), visible.maxX - size.width - margin),
+        y: min(max(origin.y, visible.minY + margin), visible.maxY - size.height - margin)
+    )
 }
 
 private final class DesktopPetView: NSView {
@@ -441,7 +455,7 @@ private final class DesktopPetView: NSView {
             x: current.x - window.frame.width / 2,
             y: current.y - window.frame.height / 2
         )
-        window.setFrameOrigin(newOrigin)
+        window.setFrameOrigin(clampToVisibleArea(newOrigin, size: window.frame.size, around: current))
     }
 
     override func mouseUp(with event: NSEvent) {
