@@ -15,14 +15,11 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     private let shortcutStore = ShortcutStore()
     private let saveDirectoryStore = SaveDirectoryStore()
     private let capturableApplicationService = CapturableApplicationService()
-    /// 是否调用真实模型由 polishConfigurationStore 是否配置完整决定；未配置时路由到本地模板（离线）。
+    /// 润色调用「润色设置…」中配置的真实模型；未配置完整时直接报错引导配置，不再回退本地模板。
     private let polishConfigurationStore = PolishBackendConfigurationStore()
-    private lazy var promptPolishingService: PromptPolishingService = PolishServiceRouter(
-        mock: MockPromptPolishingService(),
-        remote: RemotePromptPolishingService(configurationStore: polishConfigurationStore),
+    private lazy var promptPolishingService: PromptPolishingService = RemotePromptPolishingService(
         configurationStore: polishConfigurationStore
     )
-    private let promptTypeDetector = PromptTypeDetector()
     private var statusItem: NSStatusItem?
     private var captureMenuItem: NSMenuItem?
     private var recordMenuItem: NSMenuItem?
@@ -533,7 +530,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         return NSPasteboard.general.changeCount == lastPolishUndo.changeCountAfterWrite
     }
 
-    /// 润色流程：剪切板文字 → 用户确认 → 本地识别类型 → 服务润色 → 结果写回剪切板（替换原文）。
+    /// 润色流程：剪切板文字 → 用户确认 → 服务润色 → 结果写回剪切板（替换原文）。
     /// 处理中再次点击视为取消；写回前会校验剪切板未被外部改动，避免用旧结果覆盖用户新复制的内容。
     private func polishPromptFromClipboard() {
         if case .polishing(let task, _) = polishRuntimeState {
@@ -563,12 +560,11 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
             return
         }
 
-        let type = promptTypeDetector.detect(from: text)
-        toastController.show(message: "本地识别：\(type.displayName)，正在润色…", symbolName: "wand.and.stars")
+        toastController.show(message: "正在润色…", symbolName: "wand.and.stars")
 
         let requestID = UUID()
         let task = promptPolishingService.polish(
-            request: PromptPolishRequest(text: text, typeHint: type)
+            request: PromptPolishRequest(text: text)
         ) { [weak self] result in
             guard let self else { return }
             guard case .polishing(_, let activeID) = self.polishRuntimeState, activeID == requestID else {
@@ -586,7 +582,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
                 pasteboard.setString(response.polishedText, forType: .string)
                 self.lastPolishUndo = PolishUndoState(originalText: text, changeCountAfterWrite: pasteboard.changeCount)
                 self.toastController.show(
-                    message: "已按\(response.effectiveType.displayName)润色，结果已替换剪切板",
+                    message: "润色完成，结果已替换剪切板",
                     symbolName: "checkmark"
                 )
             case .failure(let error):
