@@ -1,23 +1,36 @@
 mod dbus_service;
+mod dialog;
 mod notify;
+mod pet;
+mod polish;
+mod record;
+mod settings;
 mod tray;
 mod wayland;
 mod x11;
 
+use std::collections::VecDeque;
+use std::sync::atomic::Ordering;
 use std::sync::mpsc;
+use std::sync::Arc;
 use std::time::{Duration, Instant};
+
+pub use settings::{pet_position, save_directory, save_pet_position};
 
 pub type Error = Box<dyn std::error::Error + Send + Sync>;
 pub type Result<T> = std::result::Result<T, Error>;
 
-/// 主循环消息：来自热键 / 托盘 / D-Bus 触发。
+/// 主循环消息：来自热键 / 托盘 / 悬浮球菜单 / D-Bus 触发。
 pub enum Msg {
     Capture,
+    CaptureList,
+    Polish,
+    StopPolish,
+    UndoPolish,
+    StartRecording,
+    StopRecording,
+    TogglePanel,
     Quit,
-}
-
-pub struct Config {
-    pub shortcut: String,
 }
 
 const AUTO_CLEAR: Duration = Duration::from_secs(60);
@@ -35,30 +48,6 @@ fn detect_session() -> Result<Session> {
     } else {
         Err("未检测到图形会话（WAYLAND_DISPLAY / DISPLAY 均未设置）".into())
     }
-}
-
-fn load_config() -> Config {
-    let mut shortcut = "Alt+Shift+2".to_string();
-    let path = std::env::var_os("XDG_CONFIG_HOME")
-        .map(std::path::PathBuf::from)
-        .or_else(|| std::env::var_os("HOME").map(|h| std::path::PathBuf::from(h).join(".config")))
-        .map(|base| base.join("windowsnap/config.toml"));
-    if let Some(path) = path {
-        if let Ok(text) = std::fs::read_to_string(path) {
-            for line in text.lines() {
-                let line = line.split('#').next().unwrap_or("").trim();
-                if let Some((key, value)) = line.split_once('=') {
-                    if key.trim() == "shortcut" {
-                        let value = value.trim().trim_matches('"').trim_matches('\'');
-                        if !value.is_empty() {
-                            shortcut = value.to_string();
-                        }
-                    }
-                }
-            }
-        }
-    }
-    Config { shortcut }
 }
 
 fn main() {
@@ -83,16 +72,289 @@ fn print_help() {
         "应用快照 Linux 版\n\
          \n\
          用法：\n\
-           windowsnap            常驻运行：全局快捷键 + 托盘 + 60 秒自动清空剪贴板\n\
+           windowsnap            常驻运行：快捷键截图 + 悬浮球 + 托盘菜单 + 剪贴板 60 秒自动清空\n\
            windowsnap capture    截取一次：优先转发给常驻进程，否则独立执行\n\
          \n\
+         功能（与 macOS / Windows 端对齐）：\n\
+           - 悬浮球：显示上一个前台应用的图标，点击弹菜单，可拖动、位置记忆\n\
+           - 应用快照…：从窗口列表选择目标窗口截图\n\
+           - 窗口录制：ffmpeg 录制当前活动窗口为 MP4（仅 X11）\n\
+           - 润色 Prompt：剪贴板草稿 → 确认 → 大模型改写 → 写回，支持撤销\n\
+         \n\
          配置：~/.config/windowsnap/config.toml\n\
-           shortcut = \"Alt+Shift+2\"   # X11 下生效；Wayland 由 GlobalShortcuts portal 或桌面环境绑定"
+           shortcut = \"Alt+Shift+2\"        # X11 下生效；Wayland 由 GlobalShortcuts portal 或桌面环境绑定\n\
+           save_dir = \"~/Videos/应用快照\"   # 录制文件保存目录\n\
+           polish.kind = \"openai\"          # openai | anthropic\n\
+           polish.base_url = \"https://api.deepseek.com\"\n\
+           polish.model = \"deepseek-chat\"\n\
+           polish.api_key = \"sk-...\""
     );
 }
 
+struct Daemon {
+    backend: Option<Arc<x11::X11Backend>>,
+    wayland: Option<wayland::WaylandBackend>,
+    recorder: record::Recorder,
+    polish_state: polish::PolishState,
+    polish_config: polish::PolishConfig,
+    /// 剪贴板自动清空的截止时间。
+    deadline: Option<Instant>,
+}
+
+impl Daemon {
+    fn clipboard_session(&self) -> polish::ClipboardSession {
+        match &self.backend {
+            Some(backend) => polish::ClipboardSession::X11(Arc::clone(backend)),
+            None => polish::ClipboardSession::Wayland,
+        }
+    }
+
+    /// 返回 false 表示退出主循环。
+    fn handle(&mut self, msg: Msg) -> bool {
+        match msg {
+            Msg::Capture => self.capture(),
+            Msg::CaptureList => self.capture_list(),
+            Msg::Polish => self.start_polish(),
+            Msg::StopPolish => self.stop_polish(),
+            Msg::UndoPolish => self.undo_polish(),
+            Msg::StartRecording => self.start_recording(),
+            Msg::StopRecording => self.stop_recording(),
+            Msg::TogglePanel => self.open_panel(),
+            Msg::Quit => return false,
+        }
+        true
+    }
+
+    fn run(&mut self, rx: mpsc::Receiver<Msg>) {
+        let mut pending: VecDeque<Msg> = VecDeque::new();
+        loop {
+            let msg = if let Some(msg) = pending.pop_front() {
+                Some(msg)
+            } else if let Some(deadline) = self.deadline {
+                match rx.recv_timeout(deadline.saturating_duration_since(Instant::now())) {
+                    Ok(msg) => Some(msg),
+                    Err(mpsc::RecvTimeoutError::Timeout) => None,
+                    Err(mpsc::RecvTimeoutError::Disconnected) => return,
+                }
+            } else {
+                match rx.recv() {
+                    Ok(msg) => Some(msg),
+                    Err(_) => return,
+                }
+            };
+
+            let Some(msg) = msg else {
+                self.clear_clipboard();
+                continue;
+            };
+
+            // 吸掉排队的重复截图触发（按住快捷键会自动重复），其他消息暂存稍后处理
+            if matches!(msg, Msg::Capture) {
+                let mut quit_after = false;
+                while let Ok(extra) = rx.try_recv() {
+                    if matches!(extra, Msg::Quit) {
+                        quit_after = true;
+                        break;
+                    }
+                    if !matches!(extra, Msg::Capture) {
+                        pending.push_back(extra);
+                    }
+                }
+                if quit_after {
+                    return;
+                }
+            }
+
+            if !self.handle(msg) {
+                return;
+            }
+        }
+    }
+
+    fn clear_clipboard(&mut self) {
+        self.deadline = None;
+        if let Some(backend) = &self.backend {
+            backend.clear_if_owned();
+        } else if let Some(backend) = &self.wayland {
+            backend.clear_if_owned();
+        }
+    }
+
+    fn capture(&mut self) {
+        let result = match (&self.backend, &self.wayland) {
+            (Some(backend), _) => backend.capture_and_copy(),
+            (None, Some(backend)) => backend.capture_and_copy(),
+            (None, None) => Err("截图后端未初始化".into()),
+        };
+        match result {
+            Ok(name) => {
+                notify::notify("已复制窗口截图", &format!("{name} — 60 秒后自动清空"));
+                self.deadline = Some(Instant::now() + AUTO_CLEAR);
+            }
+            Err(e) => notify::notify("截取失败", &e.to_string()),
+        }
+    }
+
+    fn capture_list(&mut self) {
+        let picked = match &self.backend {
+            Some(backend) => match backend.list_windows() {
+                Ok(windows) => {
+                    let titles: Vec<String> = windows.iter().map(|(_, title)| title.clone()).collect();
+                    dialog::choose_window(&titles).and_then(|title| {
+                        windows
+                            .iter()
+                            .find(|(_, existing)| *existing == title)
+                            .map(|(window, _)| *window)
+                    })
+                }
+                Err(e) => {
+                    notify::notify("获取窗口列表失败", &e.to_string());
+                    None
+                }
+            },
+            None => {
+                notify::notify(
+                    "窗口列表不可用",
+                    "Wayland 会话下暂不支持窗口列表，请使用快捷键截取当前窗口",
+                );
+                None
+            }
+        };
+        let Some(window) = picked else { return };
+
+        let result = match &self.backend {
+            Some(backend) => backend.capture_window(window),
+            None => return,
+        };
+        match result {
+            Ok(name) => {
+                notify::notify("已复制窗口截图", &format!("{name} — 60 秒后自动清空"));
+                self.deadline = Some(Instant::now() + AUTO_CLEAR);
+            }
+            Err(e) => notify::notify("截取失败", &e.to_string()),
+        }
+    }
+
+    fn start_polish(&mut self) {
+        if self.polish_state.busy.load(Ordering::SeqCst) {
+            notify::notify("润色进行中", "请等待完成，或选择「停止润色」");
+            return;
+        }
+        if !self.polish_config.is_complete() {
+            notify::notify(
+                "润色未配置",
+                "请在 ~/.config/windowsnap/config.toml 填写 polish.base_url / polish.model / polish.api_key",
+            );
+            return;
+        }
+        self.polish_state.busy.store(true, Ordering::SeqCst);
+        self.polish_state.cancel.store(false, Ordering::SeqCst);
+        // 润色结果要留在剪贴板里，取消截图的自动清空倒计时
+        self.deadline = None;
+        let config = self.polish_config.clone();
+        let state = self.polish_state.clone();
+        let session = self.clipboard_session();
+        std::thread::spawn(move || polish::run_polish(&config, &session, &state));
+    }
+
+    fn stop_polish(&mut self) {
+        if !self.polish_state.busy.load(Ordering::SeqCst) {
+            notify::notify("没有进行中的润色", "");
+            return;
+        }
+        self.polish_state.stop();
+        notify::notify("停止润色", "正在中止当前请求");
+    }
+
+    fn undo_polish(&mut self) {
+        self.deadline = None;
+        let session = self.clipboard_session();
+        polish::undo_polish(&session, &self.polish_state);
+    }
+
+    fn start_recording(&mut self) {
+        if self.recorder.active.load(Ordering::SeqCst) {
+            notify::notify("已在录制中", "请先停止当前录制");
+            return;
+        }
+        let Some(backend) = &self.backend else {
+            notify::notify("录制失败", "窗口录制仅支持 X11 会话（依赖 ffmpeg x11grab）");
+            return;
+        };
+        let (x, y, width, height) = match backend.active_window_rect() {
+            Ok(rect) => rect,
+            Err(e) => {
+                notify::notify("录制失败", &e.to_string());
+                return;
+            }
+        };
+        // 悬浮球先藏起来，免得被录进画面
+        pet::set_pet_visible(false);
+        match self.recorder.start(x, y, width, height) {
+            Ok(_) => notify::notify("录制中", "录制当前活动窗口；通过托盘或悬浮球菜单停止"),
+            Err(e) => {
+                pet::set_pet_visible(true);
+                notify::notify("录制失败", &e.to_string());
+            }
+        }
+    }
+
+    fn stop_recording(&mut self) {
+        match self.recorder.stop() {
+            Ok(path) => notify::notify("录制完成", &format!("已保存到 {path}")),
+            Err(e) => notify::notify("录制结束", &e.to_string()),
+        }
+        pet::set_pet_visible(true);
+    }
+
+    /// 悬浮球点击菜单（zenity / kdialog 进程外 UI）。
+    fn open_panel(&mut self) {
+        let recording = self.recorder.active.load(Ordering::SeqCst);
+        let polishing = self.polish_state.busy.load(Ordering::SeqCst);
+
+        let mut items: Vec<&str> = vec!["截取当前应用窗口"];
+        if self.backend.is_some() {
+            items.push("应用快照…（选择窗口）");
+        }
+        items.push(if recording { "停止窗口录制" } else { "开始窗口录制" });
+        items.push(if polishing { "停止润色" } else { "润色 Prompt" });
+        items.push("撤销润色");
+        items.push("退出");
+
+        let Some(index) = dialog::choose_action(&items) else { return };
+        let Some(choice) = items.get(index).map(|item| item.to_string()) else { return };
+        match choice.as_str() {
+            "截取当前应用窗口" => {
+                self.handle(Msg::Capture);
+            }
+            "应用快照…（选择窗口）" => {
+                self.handle(Msg::CaptureList);
+            }
+            "开始窗口录制" => {
+                self.handle(Msg::StartRecording);
+            }
+            "停止窗口录制" => {
+                self.handle(Msg::StopRecording);
+            }
+            "润色 Prompt" => {
+                self.handle(Msg::Polish);
+            }
+            "停止润色" => {
+                self.handle(Msg::StopPolish);
+            }
+            "撤销润色" => {
+                self.handle(Msg::UndoPolish);
+            }
+            "退出" => {
+                self.handle(Msg::Quit);
+            }
+            _ => {}
+        }
+    }
+}
+
 fn run_daemon() -> Result<()> {
-    let config = load_config();
+    let settings = settings::load();
     let (tx, rx) = mpsc::channel::<Msg>();
 
     // D-Bus 名同时充当单实例锁
@@ -107,86 +369,53 @@ fn run_daemon() -> Result<()> {
         }
     };
 
-    tray::spawn(tx.clone(), config.shortcut.clone());
+    let recorder = record::Recorder::new();
+    let polish_state = polish::PolishState::new();
+    tray::spawn(
+        tx.clone(),
+        settings.shortcut.clone(),
+        Arc::clone(&recorder.active),
+        Arc::clone(&polish_state.busy),
+    );
+
+    let mut daemon = Daemon {
+        backend: None,
+        wayland: None,
+        recorder,
+        polish_state,
+        polish_config: settings.polish.clone(),
+        deadline: None,
+    };
 
     match detect_session()? {
         Session::X11 => {
             let backend = x11::X11Backend::new()?;
-            match backend.grab_hotkey(&config.shortcut) {
+            match backend.grab_hotkey(&settings.shortcut) {
                 Ok(()) => notify::notify(
                     "应用快照已启动",
-                    &format!("按 {} 截取当前活动窗口", config.shortcut),
+                    &format!("按 {} 截取当前活动窗口", settings.shortcut),
                 ),
                 Err(e) => notify::notify(
                     "快捷键注册失败",
-                    &format!("{e}。仍可用命令 windowsnap capture 触发"),
+                    &format!("{e}。仍可用托盘菜单或命令 windowsnap capture 触发"),
                 ),
             }
             backend.spawn_event_thread(tx.clone());
-            event_loop(rx, || backend.capture_and_copy(), || backend.clear_if_owned());
+            daemon.backend = Some(backend);
         }
         Session::Wayland => {
-            let backend = wayland::WaylandBackend::new();
-            wayland::spawn_global_shortcuts(tx.clone(), config.shortcut.clone());
+            daemon.wayland = Some(wayland::WaylandBackend::new());
+            wayland::spawn_global_shortcuts(tx.clone(), settings.shortcut.clone());
             notify::notify(
                 "应用快照已启动",
                 "Wayland 下由 GlobalShortcuts portal 或桌面环境快捷键触发",
             );
-            event_loop(rx, || backend.capture_and_copy(), || backend.clear_if_owned());
         }
     }
-    Ok(())
-}
 
-/// 主事件循环：串行处理截取请求，管理 60 秒自动清空。
-fn event_loop(
-    rx: mpsc::Receiver<Msg>,
-    mut capture: impl FnMut() -> Result<String>,
-    clear: impl Fn(),
-) {
-    let mut deadline: Option<Instant> = None;
-    loop {
-        let msg = match deadline {
-            Some(d) => match rx.recv_timeout(d.saturating_duration_since(Instant::now())) {
-                Ok(m) => Some(m),
-                Err(mpsc::RecvTimeoutError::Timeout) => None,
-                Err(mpsc::RecvTimeoutError::Disconnected) => return,
-            },
-            None => match rx.recv() {
-                Ok(m) => Some(m),
-                Err(_) => return,
-            },
-        };
-        match msg {
-            Some(Msg::Capture) => {
-                // 吸掉排队的重复触发（按住快捷键会自动重复）
-                let mut quit_after = false;
-                while let Ok(extra) = rx.try_recv() {
-                    if matches!(extra, Msg::Quit) {
-                        quit_after = true;
-                        break;
-                    }
-                }
-                match capture() {
-                    Ok(name) => {
-                        notify::notify("已复制窗口截图", &format!("{name} — 60 秒后自动清空"));
-                        deadline = Some(Instant::now() + AUTO_CLEAR);
-                    }
-                    Err(e) => {
-                        notify::notify("截取失败", &e.to_string());
-                    }
-                }
-                if quit_after {
-                    return;
-                }
-            }
-            Some(Msg::Quit) => return,
-            None => {
-                clear();
-                deadline = None;
-            }
-        }
-    }
+    pet::spawn(tx.clone());
+    daemon.run(rx);
+    Ok(())
 }
 
 fn run_capture_once() -> Result<()> {
