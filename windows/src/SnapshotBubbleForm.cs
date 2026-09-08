@@ -1,5 +1,4 @@
-using System;
-using System.Diagnostics;
+﻿using System;
 using System.Drawing;
 using System.Drawing.Drawing2D;
 using System.Drawing.Imaging;
@@ -14,6 +13,7 @@ namespace AppSnapshot
     {
         private const int BubbleSize = 168;
         private const int DragThreshold = 4;
+        private const int PositionMargin = 8;
 
         private readonly System.Windows.Forms.Timer _clipboardClearTimer;
         private readonly ToolTip _toolTip;
@@ -26,6 +26,11 @@ namespace AppSnapshot
         private bool _pointerPressed;
         private bool _dragging;
         private uint _snapshotClipboardSequence;
+
+        internal TargetAppTracker Tracker
+        {
+            get { return _tracker; }
+        }
 
         public SnapshotBubbleForm()
         {
@@ -61,7 +66,16 @@ namespace AppSnapshot
                 true);
 
             var menu = new ContextMenuStrip();
-            menu.Items.Add("\u9000\u51fa", null, delegate { Close(); });
+            var polishSettingsItem = new ToolStripMenuItem("润色设置…", null, delegate
+            {
+                using (var form = new PolishSettingsForm())
+                {
+                    form.ShowDialog();
+                }
+            });
+            menu.Items.Add(polishSettingsItem);
+            menu.Items.Add(new ToolStripSeparator());
+            menu.Items.Add("\u9000\u51fa", null, delegate { Application.Exit(); });
             ContextMenuStrip = menu;
 
             _toolTip = new ToolTip
@@ -91,10 +105,7 @@ namespace AppSnapshot
                 _snapshotClipboardSequence = 0;
             };
 
-            Rectangle workingArea = Screen.PrimaryScreen.WorkingArea;
-            Location = new Point(
-                workingArea.Right - Width - 16,
-                workingArea.Bottom - Height - 16);
+            Location = RestoreOrClampPosition();
         }
 
         protected override bool ShowWithoutActivation
@@ -177,7 +188,10 @@ namespace AppSnapshot
 
                 if (_dragging)
                 {
-                    Location = new Point(_windowDown.X + deltaX, _windowDown.Y + deltaY);
+                    Location = ClampToWorkingArea(
+                        new Point(_windowDown.X + deltaX, _windowDown.Y + deltaY),
+                        Size,
+                        current);
                 }
             }
 
@@ -190,9 +204,16 @@ namespace AppSnapshot
             {
                 _pointerPressed = false;
                 Capture = false;
-                if (!_dragging)
+                if (_dragging)
                 {
-                    CaptureTarget();
+                    SavePosition(Location);
+                }
+                else
+                {
+                    if (App.Panels != null)
+                    {
+                        App.Panels.Toggle();
+                    }
                 }
             }
 
@@ -239,11 +260,11 @@ namespace AppSnapshot
                 return;
             }
 
-            Bitmap icon = LoadWindowIcon(target.WindowHandle, (int)target.ProcessId);
+            Bitmap icon = WindowIconLoader.LoadWindowIcon(target.WindowHandle, (int)target.ProcessId, 112);
             Bitmap previousIcon = _targetIcon;
             _target = target;
             _targetIcon = icon;
-            _toolTip.SetToolTip(this, "\u70b9\u51fb\u622a\u53d6\u5e76\u590d\u5236 " + target.ProcessName);
+            _toolTip.SetToolTip(this, "\u70b9\u51fb\u6253\u5f00\u529f\u80fd\u83dc\u5355 " + target.ProcessName);
             Invalidate();
 
             if (previousIcon != null)
@@ -252,137 +273,13 @@ namespace AppSnapshot
             }
         }
 
-        private static Bitmap LoadWindowIcon(IntPtr window, int processId)
+        /// <summary>截取指定窗口并复制到剪贴板（悬浮窗短暂隐藏避免入镜）。</summary>
+        internal void CaptureWindow(IntPtr windowHandle)
         {
-            // Window messages commonly return only a 16x16 or 32x32 icon. Try
-            // the executable first so Windows can select its 128/256px icon
-            // resource instead of stretching a tiny bitmap to 112x112.
-            try
+            if (windowHandle == IntPtr.Zero
+                || !NativeMethods.IsWindow(windowHandle))
             {
-                using (Process process = Process.GetProcessById(processId))
-                {
-                    string executablePath = process.MainModule.FileName;
-                    Bitmap executableIcon = LoadHighResolutionExecutableIcon(executablePath);
-                    if (executableIcon != null)
-                    {
-                        return executableIcon;
-                    }
-                }
-            }
-            catch
-            {
-            }
-
-            IntPtr iconHandle = NativeMethods.SendMessage(
-                window, NativeMethods.WmGetIcon,
-                new IntPtr(NativeMethods.IconBig), IntPtr.Zero);
-            if (iconHandle == IntPtr.Zero)
-            {
-                iconHandle = NativeMethods.SendMessage(
-                    window, NativeMethods.WmGetIcon,
-                    new IntPtr(NativeMethods.IconSmall2), IntPtr.Zero);
-            }
-            if (iconHandle == IntPtr.Zero)
-            {
-                iconHandle = NativeMethods.SendMessage(
-                    window, NativeMethods.WmGetIcon,
-                    new IntPtr(NativeMethods.IconSmall), IntPtr.Zero);
-            }
-            if (iconHandle == IntPtr.Zero)
-            {
-                iconHandle = NativeMethods.GetClassLongPtr(window, NativeMethods.GclpHIconSmall);
-            }
-            if (iconHandle == IntPtr.Zero)
-            {
-                iconHandle = NativeMethods.GetClassLongPtr(window, NativeMethods.GclpHIcon);
-            }
-            if (iconHandle != IntPtr.Zero)
-            {
-                try
-                {
-                    return RenderIcon(iconHandle);
-                }
-                catch
-                {
-                }
-            }
-
-            try
-            {
-                using (Process process = Process.GetProcessById(processId))
-                using (Icon icon = Icon.ExtractAssociatedIcon(process.MainModule.FileName))
-                {
-                    if (icon != null)
-                    {
-                        return RenderIcon(icon.Handle);
-                    }
-                }
-            }
-            catch
-            {
-            }
-
-            return RenderIcon(SystemIcons.Application.Handle);
-        }
-
-        private static Bitmap LoadHighResolutionExecutableIcon(string executablePath)
-        {
-            if (string.IsNullOrEmpty(executablePath))
-            {
-                return null;
-            }
-
-            var iconHandles = new IntPtr[1];
-            var iconIds = new uint[1];
-            uint extracted = NativeMethods.PrivateExtractIcons(
-                executablePath,
-                0,
-                112,
-                112,
-                iconHandles,
-                iconIds,
-                1,
-                0);
-
-            if (extracted == 0 || iconHandles[0] == IntPtr.Zero)
-            {
-                return null;
-            }
-
-            try
-            {
-                return RenderIcon(iconHandles[0]);
-            }
-            finally
-            {
-                NativeMethods.DestroyIcon(iconHandles[0]);
-            }
-        }
-
-        private static Bitmap RenderIcon(IntPtr iconHandle)
-        {
-            var bitmap = new Bitmap(112, 112, PixelFormat.Format32bppPArgb);
-            using (Graphics graphics = Graphics.FromImage(bitmap))
-            using (Icon icon = Icon.FromHandle(iconHandle))
-            {
-                graphics.Clear(Color.Transparent);
-                graphics.SmoothingMode = SmoothingMode.HighQuality;
-                graphics.InterpolationMode = InterpolationMode.HighQualityBicubic;
-                graphics.PixelOffsetMode = PixelOffsetMode.HighQuality;
-                graphics.CompositingQuality = CompositingQuality.HighQuality;
-                graphics.DrawIcon(icon, new Rectangle(0, 0, 112, 112));
-            }
-
-            return bitmap;
-        }
-
-        private void CaptureTarget()
-        {
-            TargetAppTracker.TargetInfo target = _target;
-            if (target == null
-                || target.WindowHandle == IntPtr.Zero
-                || !NativeMethods.IsWindow(target.WindowHandle))
-            {
+                App.Toast.Show("没有找到可截取的窗口", ToastKind.Warning);
                 return;
             }
 
@@ -392,17 +289,76 @@ namespace AppSnapshot
 
             try
             {
-                _snapshotClipboardSequence = CaptureService.CaptureWindowToClipboard(target.WindowHandle);
+                _snapshotClipboardSequence = CaptureService.CaptureWindowToClipboard(windowHandle);
                 _clipboardClearTimer.Stop();
                 _clipboardClearTimer.Start();
+                string applicationName = _target != null && _target.WindowHandle == windowHandle
+                    ? _target.ProcessName
+                    : App.WindowProcessName(windowHandle);
+                App.Toast.Show("已复制 " + applicationName + " 窗口，60 秒后自动清空", ToastKind.Success);
             }
             catch
             {
+                App.Toast.Show("截取失败，请稍后重试", ToastKind.Error);
             }
             finally
             {
                 Show();
             }
+        }
+
+        // ---------- 位置持久化与钳制（对应 macOS 端 clampToVisibleArea） ----------
+
+        private static Point ClampToWorkingArea(Point origin, Size size, Point anchor)
+        {
+            Screen screen = Screen.FromPoint(anchor);
+            Rectangle working = screen.WorkingArea;
+            int x = Math.Max(working.Left + PositionMargin,
+                Math.Min(origin.X, working.Right - size.Width - PositionMargin));
+            int y = Math.Max(working.Top + PositionMargin,
+                Math.Min(origin.Y, working.Bottom - size.Height - PositionMargin));
+            return new Point(x, y);
+        }
+
+        private static bool IsPointOnAnyScreen(Point point)
+        {
+            foreach (Screen screen in Screen.AllScreens)
+            {
+                Rectangle bounds = screen.Bounds;
+                bounds.Inflate(200, 200);
+                if (bounds.Contains(point))
+                {
+                    return true;
+                }
+            }
+            return false;
+        }
+
+        private Point RestoreOrClampPosition()
+        {
+            string savedX = AppSettings.Read("pet.position.x");
+            string savedY = AppSettings.Read("pet.position.y");
+            int x;
+            int y;
+            if (int.TryParse(savedX, out x) && int.TryParse(savedY, out y))
+            {
+                var point = new Point(x, y);
+                if (IsPointOnAnyScreen(point))
+                {
+                    return ClampToWorkingArea(point, Size, point);
+                }
+            }
+
+            Rectangle workingArea = Screen.PrimaryScreen.WorkingArea;
+            return new Point(
+                workingArea.Right - Width - 16,
+                workingArea.Bottom - Height - 16);
+        }
+
+        private static void SavePosition(Point location)
+        {
+            AppSettings.Write("pet.position.x", location.X.ToString());
+            AppSettings.Write("pet.position.y", location.Y.ToString());
         }
     }
 }

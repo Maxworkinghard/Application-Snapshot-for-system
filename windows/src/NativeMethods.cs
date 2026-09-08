@@ -1,5 +1,6 @@
-using System;
+﻿using System;
 using System.Runtime.InteropServices;
+using System.Text;
 
 namespace AppSnapshot
 {
@@ -19,6 +20,18 @@ namespace AppSnapshot
         internal const uint WineventOutOfContext = 0x0000;
         internal const uint WineventSkipOwnProcess = 0x0002;
         internal const uint PwRenderFullContent = 0x00000002;
+        internal const int GwlStyle = -16;
+        internal const int WsExToolWindowCheck = 0x00000080;
+        internal const int WsVisible = 0x10000000;
+        internal const int WmGetIconCheck = 0x007F;
+
+        internal const uint CredTypeGeneric = 1;
+        internal const uint CredPersistLocalMachine = 2;
+
+        internal const int WmHotkey = 0x0312;
+        internal const uint ModAlt = 0x0001;
+        internal const uint ModShift = 0x0002;
+        internal const uint ModNoRepeat = 0x4000;
 
         [StructLayout(LayoutKind.Sequential)]
         internal struct Rect
@@ -30,6 +43,23 @@ namespace AppSnapshot
 
             public int Width { get { return Right - Left; } }
             public int Height { get { return Bottom - Top; } }
+        }
+
+        [StructLayout(LayoutKind.Sequential, CharSet = CharSet.Unicode)]
+        internal struct Credential
+        {
+            public int Flags;
+            public int Type;
+            public string TargetName;
+            public string Comment;
+            public System.Runtime.InteropServices.ComTypes.FILETIME LastWritten;
+            public uint CredentialBlobSize;
+            public IntPtr CredentialBlob;
+            public int Persist;
+            public uint AttributeCount;
+            public IntPtr Attributes;
+            public string TargetAlias;
+            public string UserName;
         }
 
         [DllImport("user32.dll")]
@@ -141,5 +171,40 @@ namespace AppSnapshot
             int childId,
             uint eventThread,
             uint eventTime);
+
+        internal delegate bool EnumWindowsDelegate(IntPtr hWnd, IntPtr lParam);
+
+        [DllImport("advapi32.dll", EntryPoint = "CredReadW", CharSet = CharSet.Unicode, SetLastError = true)]
+        internal static extern bool CredRead(string target, uint type, uint reservedFlag, out IntPtr credentialPtr);
+
+        [DllImport("advapi32.dll", EntryPoint = "CredWriteW", CharSet = CharSet.Unicode, SetLastError = true)]
+        internal static extern bool CredWrite(ref Credential credential, uint flags);
+
+        [DllImport("advapi32.dll", EntryPoint = "CredDeleteW", CharSet = CharSet.Unicode, SetLastError = true)]
+        internal static extern bool CredDelete(string target, uint type, uint flags);
+
+        [DllImport("advapi32.dll")]
+        internal static extern void CredFree(IntPtr credential);
+
+        [DllImport("user32.dll", SetLastError = true)]
+        internal static extern bool RegisterHotKey(IntPtr hWnd, int id, uint modifiers, uint virtualKey);
+
+        [DllImport("user32.dll", SetLastError = true)]
+        internal static extern bool UnregisterHotKey(IntPtr hWnd, int id);
+
+        [DllImport("user32.dll")]
+        internal static extern bool EnumWindows(EnumWindowsDelegate callback, IntPtr lParam);
+
+        [DllImport("user32.dll", CharSet = CharSet.Unicode)]
+        internal static extern int GetWindowText(IntPtr hWnd, StringBuilder text, int count);
+
+        [DllImport("user32.dll", CharSet = CharSet.Unicode)]
+        internal static extern int GetWindowTextLength(IntPtr hWnd);
+
+        [DllImport("user32.dll")]
+        internal static extern bool IsIconic(IntPtr hWnd);
+
+        [DllImport("user32.dll")]
+        internal static extern IntPtr GetAncestor(IntPtr hWnd, uint flags);
     }
 }
