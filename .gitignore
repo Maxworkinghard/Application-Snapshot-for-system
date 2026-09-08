@@ -4,5 +4,7 @@
 /linux/target/
 /windows/**/bin/
 /windows/**/obj/
+/windows/dist/
+/windows/obj/
 .claude/
 .zcode/
