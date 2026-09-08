@@ -1,6 +1,6 @@
 import AppKit
 
-/// 润色服务连接设置：三项填写完整后改为调用真实模型；「清除配置」按钮无条件回退本地模板。
+/// 润色服务连接设置：三项填写完整后「润色 Prompt」才会调用真实模型；未配置时润色会直接提示先完成配置。
 final class PromptPolishSettingsController: NSObject, NSWindowDelegate {
     private let configurationStore: PolishBackendConfigurationStore
     private var window: NSWindow?
@@ -26,7 +26,7 @@ final class PromptPolishSettingsController: NSObject, NSWindowDelegate {
         title.font = .systemFont(ofSize: 20, weight: .semibold)
         title.translatesAutoresizingMaskIntoConstraints = false
 
-        let description = NSTextField(wrappingLabelWithString: "三项都填写后，「润色 Prompt」将调用真实模型润色；点击「清除配置」可随时回退到本地模板（离线，无网络请求）。API Key 保存在系统 Keychain 中。")
+        let description = NSTextField(wrappingLabelWithString: "三项都填写后，「润色 Prompt」将调用所配置的模型润色；未配置或清除配置后，润色会提示先完成配置。API Key 保存在系统 Keychain 中。")
         description.textColor = .secondaryLabelColor
         description.font = .systemFont(ofSize: 12)
         description.translatesAutoresizingMaskIntoConstraints = false
