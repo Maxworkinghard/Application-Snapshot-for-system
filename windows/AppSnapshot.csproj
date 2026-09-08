@@ -1,0 +1,29 @@
+<Project ToolsVersion="4.0" xmlns="http://schemas.microsoft.com/developer/msbuild/2003">
+  <Import Project="$(MSBuildToolsPath)\Microsoft.CSharp.targets" Condition="false" />
+  <PropertyGroup>
+    <OutputType>WinExe</OutputType>
+    <TargetFrameworkVersion>v4.0</TargetFrameworkVersion>
+    <AssemblyName>AppSnapshot</AssemblyName>
+    <RootNamespace>AppSnapshot</RootNamespace>
+    <OutputPath>dist\</OutputPath>
+    <PlatformTarget>x64</PlatformTarget>
+    <ApplicationIcon />
+    <StartupObject>AppSnapshot.Program</StartupObject>
+    <FileAlignment>512</FileAlignment>
+    <AutoGenerateBindingRedirects>true</AutoGenerateBindingRedirects>
+  </PropertyGroup>
+  <ItemGroup>
+    <Compile Include="src\CaptureService.cs" />
+    <Compile Include="src\NativeMethods.cs" />
+    <Compile Include="src\Program.cs" />
+    <Compile Include="src\SnapshotBubbleForm.cs" />
+    <Compile Include="src\TargetAppTracker.cs" />
+  </ItemGroup>
+  <ItemGroup>
+    <Reference Include="System" />
+    <Reference Include="System.Core" />
+    <Reference Include="System.Drawing" />
+    <Reference Include="System.Windows.Forms" />
+  </ItemGroup>
+  <Import Project="$(MSBuildToolsPath)\Microsoft.CSharp.targets" />
+</Project>

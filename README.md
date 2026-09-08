@@ -1,11 +1,11 @@
 # 应用快照
 
-跨平台的窗口截图小工具：按下全局快捷键，截取当前应用的最前窗口并自动复制到系统剪贴板，随后在任意支持图片的输入框直接粘贴。截图不落盘、不上传，写入剪贴板 60 秒后自动清空（期间复制过别的内容则跳过）。
+跨平台的窗口截图小工具：截取应用窗口并自动复制到系统剪贴板，随后可在任意支持图片的输入框直接粘贴。截图不落盘、不上传，写入剪贴板 60 秒后自动清空（期间复制过别的内容则跳过）。
 
 | 平台 | 技术栈 | 支持架构 | 状态 |
 |---|---|---|---|
 | macOS（本目录） | Swift + ScreenCaptureKit | Apple Silicon + Intel（universal 2） | ✅ 日常使用中 |
-| [Windows](windows/) | .NET 8 WPF + Windows.Graphics.Capture | x64 + arm64 | ⚠️ 编译已验证，待真机运行验证 |
+| [Windows](windows/) | .NET Framework 4.0+ WinForms + Win32 | x64 | ✅ Windows 真机运行验证 |
 | [Linux](linux/) | Rust + X11 / Wayland portal | x86_64 + aarch64（任意架构可自行编译） | ⚠️ 编译已验证，待真机运行验证 |
 
 ## macOS 版功能
