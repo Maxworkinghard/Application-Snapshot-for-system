@@ -62,16 +62,22 @@ final class WindowCaptureService {
         }
     }
 
+    /// 「可截取窗口」判定：在屏、layer 0、尺寸达标，且不属于本应用进程。
+    /// 截图链路与应用列表枚举（CapturableApplicationService）共用这一处实现，避免两条链路的过滤条件漂移。
+    static func isCapturableWindow(_ window: SCWindow) -> Bool {
+        window.isOnScreen
+            && window.windowLayer == 0
+            && window.frame.width >= 80
+            && window.frame.height >= 80
+            && window.owningApplication?.processID != ProcessInfo.processInfo.processIdentifier
+    }
+
     private func frontmostWindow(
         in content: SCShareableContent,
         processID: pid_t?
     ) -> SCWindow? {
         let windows = content.windows.filter { window in
-            guard window.isOnScreen,
-                  window.windowLayer == 0,
-                  window.frame.width >= 80,
-                  window.frame.height >= 80,
-                  window.owningApplication?.processID != ProcessInfo.processInfo.processIdentifier else {
+            guard Self.isCapturableWindow(window) else {
                 return false
             }
 

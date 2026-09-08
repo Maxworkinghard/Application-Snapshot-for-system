@@ -1,12 +1,28 @@
 import AppKit
 import Carbon
 
+enum RecordingState: Equatable {
+    case idle
+    case starting
+    case recording
+    case stopping
+}
+
 final class AppDelegate: NSObject, NSApplicationDelegate {
     private let captureService = WindowCaptureService()
     private let recordingService = WindowRecordingService()
     private let toastController = ToastController()
     private let shortcutStore = ShortcutStore()
     private let saveDirectoryStore = SaveDirectoryStore()
+    private let capturableApplicationService = CapturableApplicationService()
+    /// 是否调用真实模型由 polishConfigurationStore 是否配置完整决定；未配置时路由到本地模板（离线）。
+    private let polishConfigurationStore = PolishBackendConfigurationStore()
+    private lazy var promptPolishingService: PromptPolishingService = PolishServiceRouter(
+        mock: MockPromptPolishingService(),
+        remote: RemotePromptPolishingService(configurationStore: polishConfigurationStore),
+        configurationStore: polishConfigurationStore
+    )
+    private let promptTypeDetector = PromptTypeDetector()
     private var statusItem: NSStatusItem?
     private var captureMenuItem: NSMenuItem?
     private var recordMenuItem: NSMenuItem?
@@ -14,6 +30,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     private var recordingHotKey: GlobalHotKey?
     private var shortcutConfiguration = ShortcutConfiguration.default
     private var shortcutSettingsController: ShortcutSettingsController?
+    private var promptPolishSettingsController: PromptPolishSettingsController?
     private var workspaceObserver: NSObjectProtocol?
     private var terminationObserver: NSObjectProtocol?
     private var lastExternalApplication: NSRunningApplication?
@@ -24,7 +41,11 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     private var rightClickMonitor: Any?
     private var windowPickerWasCancelled = false
     private var isCapturing = false
-    private var isRecording = false
+    private var recordingState: RecordingState = .idle {
+        didSet {
+            updateRecordingUI()
+        }
+    }
 
     func applicationDidFinishLaunching(_ notification: Notification) {
         rememberFrontmostApplication()
@@ -90,19 +111,23 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     }
 
     @objc private func toggleRecording() {
-        if isRecording {
-            stopRecording()
-        } else {
+        switch recordingState {
+        case .idle:
             startRecording(of: currentTargetApplication())
+        case .recording:
+            stopRecording()
+        case .starting, .stopping:
+            break
         }
     }
 
     private func startRecording(of application: NSRunningApplication?) {
-        guard !isRecording else { return }
+        guard recordingState == .idle else { return }
         guard let application else {
             toastController.show(message: "没有找到可录制的应用", symbolName: "exclamationmark.triangle")
             return
         }
+        recordingState = .starting
 
         captureService.frontWindow(processID: application.processIdentifier) { [weak self] result in
             guard let self else { return }
@@ -112,11 +137,13 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
                 self.recordingService.startRecording(
                     window: window,
                     applicationName: appName
-                ) { result in
+                ) { [weak self] result in
+                    guard let self else { return }
                     switch result {
                     case .success:
                         self.beginRecordingUI()
                     case .failure(let error):
+                        self.recordingState = .idle
                         self.toastController.show(
                             message: error.localizedDescription,
                             symbolName: "exclamationmark.triangle"
@@ -124,6 +151,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
                     }
                 }
             case .failure(let error):
+                self.recordingState = .idle
                 self.toastController.show(
                     message: error.localizedDescription,
                     symbolName: "exclamationmark.triangle"
@@ -133,10 +161,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     }
 
     private func beginRecordingUI() {
-        isRecording = true
-        recordMenuItem?.title = "停止录制"
-        recordMenuItem?.keyEquivalentModifierMask = [.option, .shift]
-        recordMenuItem?.keyEquivalent = "r"
+        recordingState = .recording
 
         let panel = RecordingControlsPanel()
         panel.show(startTime: Date()) { [weak self] in
@@ -146,14 +171,14 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     }
 
     private func stopRecording() {
-        guard isRecording else { return }
-        isRecording = false
-        recordMenuItem?.title = "录制当前应用窗口"
+        guard recordingState == .recording else { return }
+        recordingState = .stopping
         recordingControlsPanel?.close()
         recordingControlsPanel = nil
 
         recordingService.stopRecording { [weak self] result in
             guard let self else { return }
+            self.recordingState = .idle
             switch result {
             case .success(let recording):
                 self.toastController.show(
@@ -167,6 +192,31 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
                 )
             }
         }
+    }
+
+    private func updateRecordingUI() {
+        let title: String
+        let isEnabled: Bool
+        switch recordingState {
+        case .idle:
+            title = "录制当前应用窗口"
+            isEnabled = true
+        case .starting:
+            title = "正在开始录制…"
+            isEnabled = false
+        case .recording:
+            title = "停止录制"
+            isEnabled = true
+        case .stopping:
+            title = "正在保存录制…"
+            isEnabled = false
+        }
+
+        recordMenuItem?.title = title
+        recordMenuItem?.isEnabled = isEnabled
+        recordMenuItem?.keyEquivalentModifierMask = [.option, .shift]
+        recordMenuItem?.keyEquivalent = "r"
+        petController?.updateRecordingState()
     }
 
     private func registerRecordingShortcut() -> Bool {
@@ -268,6 +318,13 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         shortcutSettingsController?.show()
     }
 
+    @objc private func openPromptPolishSettings() {
+        if promptPolishSettingsController == nil {
+            promptPolishSettingsController = PromptPolishSettingsController(configurationStore: polishConfigurationStore)
+        }
+        promptPolishSettingsController?.show()
+    }
+
     @objc private func quit() {
         NSApplication.shared.terminate(nil)
     }
@@ -327,6 +384,14 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         )
         saveDirectoryItem.target = self
         menu.addItem(saveDirectoryItem)
+
+        let polishSettingsItem = NSMenuItem(
+            title: "润色设置…",
+            action: #selector(openPromptPolishSettings),
+            keyEquivalent: ""
+        )
+        polishSettingsItem.target = self
+        menu.addItem(polishSettingsItem)
 
         let settingsItem = NSMenuItem(
             title: "屏幕录制设置…",
@@ -427,13 +492,145 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     }
 
     private func configureDesktopPet() {
-        let controller = DesktopPetController()
-        controller.onRequestTarget = { [weak self] in self?.previousExternalApplication }
+        let controller = DesktopPetController(applicationService: capturableApplicationService)
         controller.onCapture = { [weak self] app in self?.captureWindow(of: app) }
         controller.onRecord = { [weak self] app in self?.startRecording(of: app) }
+        controller.onStopRecording = { [weak self] in self?.stopRecording() }
+        controller.onRecordingState = { [weak self] in self?.recordingState ?? .idle }
+        controller.onPolishPrompt = { [weak self] in self?.polishPromptFromClipboard() }
+        controller.onPolishBusy = { [weak self] in self?.isPolishBusy() ?? false }
+        controller.onCanUndoPolish = { [weak self] in self?.canUndoPolish() ?? false }
+        controller.onUndoPolish = { [weak self] in self?.undoPolish() }
+        controller.onOpenScreenRecordingSettings = { [weak self] in self?.openScreenRecordingSettings() }
         controller.show()
         controller.updateTarget(previousExternalApplication)
         petController = controller
+    }
+
+    private static let maxPolishInputLength = 12_000
+    private static let confirmPreviewLength = 200
+
+    private enum PolishRuntimeState {
+        case idle
+        case polishing(task: PromptPolishingTask, requestID: UUID)
+    }
+
+    private struct PolishUndoState {
+        let originalText: String
+        let changeCountAfterWrite: Int
+    }
+
+    private var polishRuntimeState: PolishRuntimeState = .idle
+    private var lastPolishUndo: PolishUndoState?
+
+    private func isPolishBusy() -> Bool {
+        if case .polishing = polishRuntimeState { return true }
+        return false
+    }
+
+    private func canUndoPolish() -> Bool {
+        guard let lastPolishUndo else { return false }
+        return NSPasteboard.general.changeCount == lastPolishUndo.changeCountAfterWrite
+    }
+
+    /// 润色流程：剪切板文字 → 用户确认 → 本地识别类型 → 服务润色 → 结果写回剪切板（替换原文）。
+    /// 处理中再次点击视为取消；写回前会校验剪切板未被外部改动，避免用旧结果覆盖用户新复制的内容。
+    private func polishPromptFromClipboard() {
+        if case .polishing(let task, _) = polishRuntimeState {
+            task.cancel()
+            polishRuntimeState = .idle
+            toastController.show(message: "已停止润色，剪切板未改动", symbolName: "xmark")
+            return
+        }
+
+        let pasteboard = NSPasteboard.general
+        let text = (pasteboard.string(forType: .string) ?? "")
+            .trimmingCharacters(in: .whitespacesAndNewlines)
+
+        guard !text.isEmpty else {
+            toastController.show(message: "剪切板没有文字，请先复制 Prompt", symbolName: "exclamationmark.triangle")
+            return
+        }
+        guard text.count <= Self.maxPolishInputLength else {
+            toastController.show(message: "剪切板内容过长（上限 \(Self.maxPolishInputLength) 字）", symbolName: "exclamationmark.triangle")
+            return
+        }
+
+        let baselineChangeCount = pasteboard.changeCount
+        guard confirmPolish(previewText: text) else { return }
+        guard pasteboard.changeCount == baselineChangeCount else {
+            toastController.show(message: "剪切板内容已变化，请重新点击润色", symbolName: "exclamationmark.triangle")
+            return
+        }
+
+        let type = promptTypeDetector.detect(from: text)
+        toastController.show(message: "本地识别：\(type.displayName)，正在润色…", symbolName: "wand.and.stars")
+
+        let requestID = UUID()
+        let task = promptPolishingService.polish(
+            request: PromptPolishRequest(text: text, typeHint: type)
+        ) { [weak self] result in
+            guard let self else { return }
+            guard case .polishing(_, let activeID) = self.polishRuntimeState, activeID == requestID else {
+                return // 已取消或已被更新的状态覆盖，忽略过期回调
+            }
+            self.polishRuntimeState = .idle
+
+            switch result {
+            case .success(let response):
+                guard pasteboard.changeCount == baselineChangeCount else {
+                    self.toastController.show(message: "剪切板内容已变化，润色结果未写入", symbolName: "exclamationmark.triangle")
+                    return
+                }
+                pasteboard.clearContents()
+                pasteboard.setString(response.polishedText, forType: .string)
+                self.lastPolishUndo = PolishUndoState(originalText: text, changeCountAfterWrite: pasteboard.changeCount)
+                self.toastController.show(
+                    message: "已按\(response.effectiveType.displayName)润色，结果已替换剪切板",
+                    symbolName: "checkmark"
+                )
+            case .failure(let error):
+                self.toastController.show(
+                    message: error.localizedDescription,
+                    symbolName: "exclamationmark.triangle"
+                )
+            }
+        }
+        polishRuntimeState = .polishing(task: task, requestID: requestID)
+    }
+
+    /// 撤销上一次润色：仅当剪切板自写回后未被外部改动时才恢复原文。
+    private func undoPolish() {
+        guard let undo = lastPolishUndo else {
+            toastController.show(message: "没有可撤销的润色", symbolName: "exclamationmark.triangle")
+            return
+        }
+        let pasteboard = NSPasteboard.general
+        lastPolishUndo = nil
+        guard pasteboard.changeCount == undo.changeCountAfterWrite else {
+            toastController.show(message: "剪切板内容已变化，无法撤销", symbolName: "exclamationmark.triangle")
+            return
+        }
+        pasteboard.clearContents()
+        pasteboard.setString(undo.originalText, forType: .string)
+        toastController.show(message: "已撤销，剪切板已恢复原文", symbolName: "arrow.uturn.backward")
+    }
+
+    /// 系统确认弹窗（非独立编辑窗口）：用户确认后才会覆盖剪切板内容。
+    private func confirmPolish(previewText: String) -> Bool {
+        let alert = NSAlert()
+        alert.alertStyle = .informational
+        alert.messageText = "润色剪切板中的 Prompt？"
+        alert.informativeText = "确认后将用润色结果替换剪切板内容：\n\n\(truncatedPreview(previewText))"
+        alert.addButton(withTitle: "润色并替换")
+        alert.addButton(withTitle: "取消")
+        NSApp.activate(ignoringOtherApps: true)
+        return alert.runModal() == .alertFirstButtonReturn
+    }
+
+    private func truncatedPreview(_ text: String) -> String {
+        guard text.count > Self.confirmPreviewLength else { return text }
+        return String(text.prefix(Self.confirmPreviewLength)) + "…"
     }
 
     private func rememberFrontmostApplication() {
@@ -442,6 +639,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
             return
         }
         lastExternalApplication = application
+        previousExternalApplication = application
     }
 
     private func currentTargetApplication() -> NSRunningApplication? {
