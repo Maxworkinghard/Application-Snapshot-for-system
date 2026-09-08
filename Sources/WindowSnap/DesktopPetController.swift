@@ -1,22 +1,40 @@
 import AppKit
 
 final class DesktopPetController {
-    var onRequestTarget: () -> NSRunningApplication? = { nil }
     var onCapture: (NSRunningApplication) -> Void = { _ in }
     var onRecord: (NSRunningApplication) -> Void = { _ in }
+    var onStopRecording: () -> Void = {}
+    var onRecordingState: () -> RecordingState = { .idle }
+    var onPolishPrompt: () -> Void = {}
+    var onPolishBusy: () -> Bool = { false }
+    var onCanUndoPolish: () -> Bool = { false }
+    var onUndoPolish: () -> Void = {}
+    var onOpenScreenRecordingSettings: () -> Void = {}
 
+    private let applicationService: CapturableApplicationService
     private var panel: NSPanel?
     private var petView: DesktopPetView?
-    private var popover: NSPopover?
+    private var actionPanel: NSPanel?
+    private var snapshotListController: ApplicationSnapshotViewController?
+    private weak var recordButton: NSButton?
     private var target: NSRunningApplication?
 
     private let positionXKey = "pet.position.x"
     private let positionYKey = "pet.position.y"
 
+    /// 一级菜单宽度固定，高度随按钮内容自然撑开。
+    private static let menuPageWidth: CGFloat = 248
+    /// 二级应用列表页固定尺寸，列表过长时内部滚动。
+    private static let applicationsPageSize = NSSize(width: 304, height: 400)
+
+    init(applicationService: CapturableApplicationService) {
+        self.applicationService = applicationService
+    }
+
     func show() {
         if panel == nil {
             let petView = DesktopPetView(frame: NSRect(x: 0, y: 0, width: 56, height: 56))
-            petView.onClick = { [weak self] in self?.showPopover() }
+            petView.onClick = { [weak self] in self?.toggleActionPanel() }
             petView.onDragged = { [weak self] origin in self?.savePosition(origin) }
             self.petView = petView
 
@@ -44,81 +62,276 @@ final class DesktopPetController {
     func updateTarget(_ application: NSRunningApplication?) {
         target = application
         petView?.applyIcon(for: application)
+        updateRecordingState()
     }
 
-    private func showPopover() {
-        closePopover()
+    func updateRecordingState() {
+        if let recordButton {
+            configureRecordButton(recordButton)
+        }
+    }
 
-        let stack = NSStackView()
-        stack.orientation = .vertical
-        stack.spacing = 10
-        stack.edgeInsets = NSEdgeInsets(top: 16, left: 16, bottom: 16, right: 16)
+    private func toggleActionPanel() {
+        if actionPanel != nil {
+            closeActionPanel()
+            return
+        }
 
-        let name = target?.localizedName ?? "未识别到上一个应用"
-        let titleLabel = NSTextField(labelWithString: name)
-        titleLabel.font = .systemFont(ofSize: 13, weight: .semibold)
-        titleLabel.alignment = .center
-
-        let button = NSButton(
-            title: "截取 \(name) 窗口",
-            target: self,
-            action: #selector(performCapture)
+        let panel = NSPanel(
+            contentRect: .zero,
+            styleMask: [.borderless, .nonactivatingPanel],
+            backing: .buffered,
+            defer: false
         )
-        button.bezelStyle = .rounded
-        button.controlSize = .regular
-        button.keyEquivalent = "\r"
-        button.isEnabled = target != nil
+        panel.isOpaque = true
+        panel.backgroundColor = .windowBackgroundColor
+        panel.hasShadow = true
+        panel.level = .floating
+        panel.collectionBehavior = [.canJoinAllSpaces, .stationary, .ignoresCycle]
+        panel.hidesOnDeactivate = false
+        panel.becomesKeyOnlyIfNeeded = true
+        self.panel?.addChildWindow(panel, ordered: .above)
+        actionPanel = panel
+        installMenuPage()
+        panel.makeKeyAndOrderFront(nil)
+    }
+
+    private func closeActionPanel() {
+        if let actionPanel {
+            panel?.removeChildWindow(actionPanel)
+            actionPanel.orderOut(nil)
+        }
+        actionPanel = nil
+        recordButton = nil
+    }
+
+    private func positionActionPanel() {
+        guard let actionPanel, let panel else { return }
+        let screen = NSScreen.screens.first { $0.frame.intersects(panel.frame) }
+            ?? NSScreen.main
+            ?? NSScreen.screens.first
+        guard let visibleFrame = screen?.visibleFrame else { return }
+
+        let horizontalInset: CGFloat = 8
+        let verticalInset: CGFloat = 8
+        let x = min(
+            max(panel.frame.midX - actionPanel.frame.width / 2, visibleFrame.minX + horizontalInset),
+            visibleFrame.maxX - actionPanel.frame.width - horizontalInset
+        )
+        var y = panel.frame.maxY + verticalInset
+        if y + actionPanel.frame.height > visibleFrame.maxY - verticalInset {
+            y = panel.frame.minY - actionPanel.frame.height - verticalInset
+        }
+        y = min(
+            max(y, visibleFrame.minY + verticalInset),
+            visibleFrame.maxY - actionPanel.frame.height - verticalInset
+        )
+        actionPanel.setFrameOrigin(NSPoint(x: x, y: y))
+    }
+
+    // MARK: - 一级菜单页
+
+    private func installMenuPage() {
+        guard let actionPanel else { return }
+        let container = makeMenuContentView()
+        let size = NSSize(width: Self.menuPageWidth, height: container.fittingSize.height)
+        container.frame = NSRect(origin: .zero, size: size)
+        actionPanel.contentView = container
+        actionPanel.setContentSize(size)
+        positionActionPanel()
+    }
+
+    private func makeMenuContentView() -> NSView {
+        let snapshotButton = NSButton(
+            title: "应用快照",
+            target: self,
+            action: #selector(openApplicationSnapshot)
+        )
+        snapshotButton.bezelStyle = .rounded
 
         let recordButton = NSButton(
-            title: "录制 \(name) 窗口",
+            title: "录制",
             target: self,
             action: #selector(performRecord)
         )
         recordButton.bezelStyle = .rounded
-        recordButton.controlSize = .regular
-        recordButton.isEnabled = target != nil
+        self.recordButton = recordButton
+        configureRecordButton(recordButton)
 
-        stack.addArrangedSubview(titleLabel)
-        stack.addArrangedSubview(button)
-        stack.addArrangedSubview(recordButton)
+        let isPolishing = onPolishBusy()
+        let promptButton = NSButton(
+            title: isPolishing ? "停止润色" : "润色 Prompt",
+            target: self,
+            action: #selector(polishPrompt)
+        )
+        promptButton.bezelStyle = .rounded
+        promptButton.toolTip = isPolishing
+            ? "取消当前润色请求，剪切板不会被改动"
+            : "读取剪切板文字，确认后润色并写回剪切板"
+
+        var buttons = [snapshotButton, recordButton, promptButton]
+
+        if onCanUndoPolish() {
+            let undoButton = NSButton(
+                title: "撤销润色",
+                target: self,
+                action: #selector(undoPolish)
+            )
+            undoButton.bezelStyle = .rounded
+            undoButton.toolTip = "恢复润色前的剪切板内容"
+            buttons.append(undoButton)
+        }
+
+        let stack = NSStackView(views: buttons)
+        stack.orientation = .vertical
+        stack.spacing = 10
+        stack.alignment = .centerX
+        stack.edgeInsets = NSEdgeInsets(top: 16, left: 16, bottom: 16, right: 16)
         stack.translatesAutoresizingMaskIntoConstraints = false
 
+        // 等宽约束必须在按钮加入 stack 之后激活，否则两个按钮没有共同祖先，
+        // AppKit 会抛 NSGenericException，导致整个功能菜单建不出来。
+        for button in buttons.dropFirst() {
+            button.widthAnchor.constraint(equalTo: buttons[0].widthAnchor).isActive = true
+        }
+        buttons[0].widthAnchor.constraint(greaterThanOrEqualToConstant: 208).isActive = true
+
         let container = NSView()
-        container.translatesAutoresizingMaskIntoConstraints = false
         container.addSubview(stack)
         NSLayoutConstraint.activate([
+            container.widthAnchor.constraint(equalToConstant: Self.menuPageWidth),
             stack.topAnchor.constraint(equalTo: container.topAnchor),
             stack.leadingAnchor.constraint(equalTo: container.leadingAnchor),
             stack.trailingAnchor.constraint(equalTo: container.trailingAnchor),
             stack.bottomAnchor.constraint(equalTo: container.bottomAnchor)
         ])
-
-        let popover = NSPopover()
-        popover.behavior = .transient
-        popover.contentViewController = NSViewController()
-        popover.contentViewController?.view = container
-        popover.contentViewController?.view.frame = NSRect(x: 0, y: 0, width: 200, height: 120)
-        self.popover = popover
-
-        guard let petView else { return }
-        popover.show(relativeTo: petView.bounds, of: petView, preferredEdge: .maxY)
+        return container
     }
 
-    private func closePopover() {
-        popover?.close()
-        popover = nil
+    private func configureRecordButton(_ button: NSButton) {
+        let title: String
+        let subtitle: String
+        let toolTip: String?
+        let isEnabled: Bool
+
+        switch onRecordingState() {
+        case .idle:
+            title = "录制"
+            if let target {
+                let name = target.localizedName ?? "应用"
+                subtitle = "\(name) 的窗口"
+                toolTip = "录制 \(name) 窗口"
+                isEnabled = true
+            } else {
+                subtitle = "未找到可录制的应用"
+                toolTip = nil
+                isEnabled = false
+            }
+        case .starting:
+            title = "录制"
+            subtitle = "正在开始录制…"
+            toolTip = nil
+            isEnabled = false
+        case .recording:
+            title = "停止录制"
+            subtitle = "结束当前录制"
+            toolTip = "停止录制"
+            isEnabled = true
+        case .stopping:
+            title = "录制"
+            subtitle = "正在保存录制…"
+            toolTip = nil
+            isEnabled = false
+        }
+
+        let paragraph = NSMutableParagraphStyle()
+        paragraph.alignment = .center
+        let attributedTitle = NSMutableAttributedString(
+            string: "\(title)\n",
+            attributes: [
+                .font: NSFont.systemFont(ofSize: 13, weight: .semibold),
+                .foregroundColor: NSColor.labelColor,
+                .paragraphStyle: paragraph
+            ]
+        )
+        attributedTitle.append(NSAttributedString(
+            string: subtitle,
+            attributes: [
+                .font: NSFont.systemFont(ofSize: 10),
+                .foregroundColor: NSColor.secondaryLabelColor,
+                .paragraphStyle: paragraph
+            ]
+        ))
+        button.attributedTitle = attributedTitle
+        button.toolTip = toolTip
+        button.isEnabled = isEnabled
     }
 
-    @objc private func performCapture() {
-        closePopover()
-        guard let target else { return }
-        onCapture(target)
+    // MARK: - 应用快照列表页
+
+    private func installApplicationsPage() {
+        guard let actionPanel else { return }
+        let controller = snapshotListController ?? makeSnapshotListController()
+        snapshotListController = controller
+
+        let size = Self.applicationsPageSize
+        controller.view.frame = NSRect(origin: .zero, size: size)
+        actionPanel.contentView = controller.view
+        actionPanel.setContentSize(size)
+        positionActionPanel()
+        controller.reload()
+    }
+
+    private func makeSnapshotListController() -> ApplicationSnapshotViewController {
+        let controller = ApplicationSnapshotViewController(applicationService: applicationService)
+        controller.onSelect = { [weak self] application in
+            self?.handleSelectApplication(application)
+        }
+        controller.onBack = { [weak self] in
+            self?.installMenuPage()
+        }
+        controller.onOpenScreenRecordingSettings = { [weak self] in
+            self?.handleOpenScreenRecordingSettings()
+        }
+        return controller
+    }
+
+    private func handleSelectApplication(_ application: CapturableApplication) {
+        closeActionPanel()
+        onCapture(application.runningApplication)
+    }
+
+    private func handleOpenScreenRecordingSettings() {
+        closeActionPanel()
+        onOpenScreenRecordingSettings()
+    }
+
+    @objc private func openApplicationSnapshot() {
+        installApplicationsPage()
+    }
+
+    @objc private func polishPrompt() {
+        closeActionPanel()
+        onPolishPrompt()
+    }
+
+    @objc private func undoPolish() {
+        closeActionPanel()
+        onUndoPolish()
     }
 
     @objc private func performRecord() {
-        closePopover()
-        guard let target else { return }
-        onRecord(target)
+        switch onRecordingState() {
+        case .idle:
+            guard let target else { return }
+            closeActionPanel()
+            onRecord(target)
+        case .recording:
+            closeActionPanel()
+            onStopRecording()
+        case .starting, .stopping:
+            break
+        }
     }
 
     private func savedOrDefaulPosition() -> NSPoint {
@@ -204,6 +417,10 @@ private final class DesktopPetView: NSView {
             let rendered = fallback.withSymbolConfiguration(config) ?? fallback
             rendered.draw(in: rect, from: .zero, operation: .sourceOver, fraction: 1.0, respectFlipped: true, hints: nil)
         }
+    }
+
+    override func acceptsFirstMouse(for event: NSEvent?) -> Bool {
+        true
     }
 
     override func mouseDown(with event: NSEvent) {
