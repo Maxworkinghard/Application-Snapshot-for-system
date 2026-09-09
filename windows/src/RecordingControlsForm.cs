@@ -72,7 +72,8 @@ namespace AppSnapshot
             Controls.Add(stopButton);
             Controls.Add(timeLabel);
 
-            Rectangle workingArea = Screen.PrimaryScreen.WorkingArea;
+            // 跟随悬浮球所在屏幕（多显示器时不再总是落到主屏）
+            Rectangle workingArea = ToastForm.AnchorScreen().WorkingArea;
             Location = new Point(
                 workingArea.Left + (workingArea.Width - Width) / 2,
                 workingArea.Bottom - Height - 48);

@@ -25,7 +25,9 @@ macOS 版的 Windows 移植。常驻后台，功能与 macOS 端对齐：全局�
 
 - **快捷键**：点击组合键框后按下新组合即可记录，「×」清除绑定（留空即不启用）；被其他应用占用的组合会提示并保留原快捷键
 - **润色提示词**：内置改写规则常驻；可新建/编辑/删除自定义提示词并随时切换（切换即生效，不替换内置）；选「内置」点「编辑」可基于内置文本另存自定义版本，自定义提示词存 `%APPDATA%\AppSnapshot\prompts.json`
-- **润色服务（LLM Provider）**：协议（OpenAI 兼容接口如 DeepSeek `https://api.deepseek.com`，或 Anthropic）/ Base URL / 模型名 / API Key（保存在 Windows 凭据管理器，输入框留空表示沿用已保存的 Key）
+- **润色服务（LLM Provider）**：协议 / Base URL / 模型名 / API Key（保存在 Windows 凭据管理器，输入框留空表示沿用已保存的 Key）
+  - **OpenAI 兼容**：Base URL 填服务根地址，如 DeepSeek `https://api.deepseek.com`（自动拼 `/v1/chat/completions`；URL 已含 `/v1` 则只拼 `/chat/completions`），模型如 `deepseek-chat`
+  - **Anthropic**：Base URL 填 `https://api.anthropic.com`（自动拼 `/v1/messages`），模型如 `claude-sonnet-4-5`，Key 为 Anthropic Console 的 API Key；请求自动携带 `x-api-key` 与 `anthropic-version: 2023-06-01` 头
 
 参数与 macOS / Linux 端一致：`max_tokens = 16384`、`temperature = 0.3`、超时 180 秒。
 

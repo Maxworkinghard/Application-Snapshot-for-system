@@ -2,7 +2,6 @@
 using System.Drawing;
 using System.Drawing.Drawing2D;
 using System.Drawing.Imaging;
-using System.Threading;
 using System.Windows.Forms;
 
 namespace AppSnapshot
@@ -277,7 +276,13 @@ namespace AppSnapshot
             }
         }
 
-        /// <summary>截取指定窗口并复制到剪贴板（悬浮窗短暂隐藏避免入镜）。</summary>
+        private bool _capturePending;
+
+        /// <summary>
+        /// 截取指定窗口并复制到剪贴板（悬浮窗短暂隐藏避免入镜）。
+        /// 隐藏后用一个一次性 Timer 延迟执行截图：返回消息循环让窗口完成隐藏重绘，
+        /// 而不是 DoEvents()+Sleep()——后者会重入消息泵，让热键/托盘事件穿插进截图流程。
+        /// </summary>
         internal void CaptureWindow(IntPtr windowHandle)
         {
             if (windowHandle == IntPtr.Zero
@@ -286,30 +291,49 @@ namespace AppSnapshot
                 App.Toast.Show("没有找到可截取的窗口", ToastKind.Warning);
                 return;
             }
+            if (_capturePending)
+            {
+                return;
+            }
 
+            _capturePending = true;
             Hide();
-            Application.DoEvents();
-            Thread.Sleep(100);
 
-            try
+            var delayTimer = new System.Windows.Forms.Timer { Interval = 150 };
+            delayTimer.Tick += delegate
             {
-                _snapshotClipboardSequence = CaptureService.CaptureWindowToClipboard(windowHandle);
-                _clipboardClearTimer.Stop();
-                _clipboardClearTimer.Start();
-                string applicationName = _target != null && _target.WindowHandle == windowHandle
-                    ? _target.ProcessName
-                    : App.WindowProcessName(windowHandle);
-                ShutterSound.Play();
-                App.Toast.Show("已复制 " + applicationName + " 窗口，60 秒后自动清空", ToastKind.Success);
-            }
-            catch
-            {
-                App.Toast.Show("截取失败，请稍后重试", ToastKind.Error);
-            }
-            finally
-            {
-                Show();
-            }
+                delayTimer.Stop();
+                delayTimer.Dispose();
+                if (IsDisposed || Disposing)
+                {
+                    return;
+                }
+                _capturePending = false;
+
+                try
+                {
+                    _snapshotClipboardSequence = CaptureService.CaptureWindowToClipboard(windowHandle);
+                    _clipboardClearTimer.Stop();
+                    _clipboardClearTimer.Start();
+                    string applicationName = _target != null && _target.WindowHandle == windowHandle
+                        ? _target.ProcessName
+                        : App.WindowProcessName(windowHandle);
+                    ShutterSound.Play();
+                    App.Toast.Show("已复制 " + applicationName + " 窗口，60 秒后自动清空", ToastKind.Success);
+                }
+                catch
+                {
+                    App.Toast.Show("截取失败，请稍后重试", ToastKind.Error);
+                }
+                finally
+                {
+                    if (!IsDisposed && !Disposing)
+                    {
+                        Show();
+                    }
+                }
+            };
+            delayTimer.Start();
         }
 
         // ---------- 位置持久化与钳制（对应 macOS 端 clampToVisibleArea） ----------
