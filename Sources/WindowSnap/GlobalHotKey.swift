@@ -170,27 +170,83 @@ struct ShortcutConfiguration: Equatable {
     }
 }
 
+/// 全部可配置快捷键：截取当前应用 / 录制 / 截取上一个应用 / 润色提示词。
+struct ShortcutSet: Equatable {
+    var capture: ShortcutConfiguration
+    var record: ShortcutConfiguration
+    var capturePrevious: ShortcutConfiguration
+    var polish: ShortcutConfiguration
+
+    static let `default` = ShortcutSet(
+        capture: ShortcutConfiguration.default,
+        record: ShortcutConfiguration(
+            keyCode: UInt32(kVK_ANSI_R),
+            modifiers: UInt32(optionKey | shiftKey)
+        ),
+        capturePrevious: ShortcutConfiguration(
+            keyCode: UInt32(kVK_ANSI_P),
+            modifiers: UInt32(optionKey | shiftKey)
+        ),
+        polish: ShortcutConfiguration(
+            keyCode: UInt32(kVK_ANSI_M),
+            modifiers: UInt32(optionKey | shiftKey)
+        )
+    )
+
+    var all: [ShortcutConfiguration] {
+        [capture, record, capturePrevious, polish]
+    }
+
+    /// 组内是否存在完全相同的组合。
+    var hasConflict: Bool {
+        let keys = all.map { "\($0.keyCode)-\($0.modifiers)" }
+        return Set(keys).count != keys.count
+    }
+}
+
 final class ShortcutStore {
-    private let keyCodeKey = "shortcut.keyCode"
-    private let modifiersKey = "shortcut.modifiers"
+    private let prefixes: [String: String] = [
+        "capture": "shortcut",
+        "record": "shortcut.record",
+        "capturePrevious": "shortcut.previousApp",
+        "polish": "shortcut.polish",
+    ]
 
-    var configuration: ShortcutConfiguration {
+    var configuration: ShortcutSet {
+        var set = ShortcutSet.default
+        set.capture = loadConfiguration(prefix: prefixes["capture"]!, fallback: set.capture)
+        set.record = loadConfiguration(prefix: prefixes["record"]!, fallback: set.record)
+        set.capturePrevious = loadConfiguration(prefix: prefixes["capturePrevious"]!, fallback: set.capturePrevious)
+        set.polish = loadConfiguration(prefix: prefixes["polish"]!, fallback: set.polish)
+        return set
+    }
+
+    func save(_ set: ShortcutSet) {
+        saveConfiguration(set.capture, prefix: prefixes["capture"]!)
+        saveConfiguration(set.record, prefix: prefixes["record"]!)
+        saveConfiguration(set.capturePrevious, prefix: prefixes["capturePrevious"]!)
+        saveConfiguration(set.polish, prefix: prefixes["polish"]!)
+    }
+
+    private func loadConfiguration(
+        prefix: String,
+        fallback: ShortcutConfiguration
+    ) -> ShortcutConfiguration {
         let defaults = UserDefaults.standard
-        guard defaults.object(forKey: keyCodeKey) != nil,
-              defaults.object(forKey: modifiersKey) != nil else {
-            return .default
+        guard defaults.object(forKey: "\(prefix).keyCode") != nil,
+              defaults.object(forKey: "\(prefix).modifiers") != nil else {
+            return fallback
         }
-
         return ShortcutConfiguration(
-            keyCode: UInt32(defaults.integer(forKey: keyCodeKey)),
-            modifiers: UInt32(defaults.integer(forKey: modifiersKey))
+            keyCode: UInt32(defaults.integer(forKey: "\(prefix).keyCode")),
+            modifiers: UInt32(defaults.integer(forKey: "\(prefix).modifiers"))
         )
     }
 
-    func save(_ configuration: ShortcutConfiguration) {
+    private func saveConfiguration(_ configuration: ShortcutConfiguration, prefix: String) {
         let defaults = UserDefaults.standard
-        defaults.set(Int(configuration.keyCode), forKey: keyCodeKey)
-        defaults.set(Int(configuration.modifiers), forKey: modifiersKey)
+        defaults.set(Int(configuration.keyCode), forKey: "\(prefix).keyCode")
+        defaults.set(Int(configuration.modifiers), forKey: "\(prefix).modifiers")
     }
 }
 
