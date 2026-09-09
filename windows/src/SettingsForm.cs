@@ -68,7 +68,7 @@ namespace AppSnapshot
                 ForeColor = SystemColors.GrayText
             };
 
-            int top = 102;
+            int top = 104;
             for (int i = 0; i < ShortcutNames.Length; i++)
             {
                 var label = new Label
@@ -197,7 +197,7 @@ namespace AppSnapshot
             };
             Controls.Add(promptHint);
 
-            row += 56;
+            row += 52;
             _kindBox = new ComboBox
             {
                 DropDownStyle = ComboBoxStyle.DropDownList,
