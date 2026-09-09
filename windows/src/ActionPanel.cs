@@ -130,6 +130,11 @@ namespace AppSnapshot
         internal void BuildMenuPage(int width)
         {
             SuspendLayout();
+            // Controls.Clear() 只移除不 Dispose，旧列表的图标 GDI 句柄会泄漏
+            foreach (Control control in Controls)
+            {
+                control.Dispose();
+            }
             Controls.Clear();
 
             var buttons = new List<Button>();
@@ -186,6 +191,11 @@ namespace AppSnapshot
         internal void BuildListPage(Size size)
         {
             SuspendLayout();
+            // Controls.Clear() 只移除不 Dispose，旧列表的图标 GDI 句柄会泄漏
+            foreach (Control control in Controls)
+            {
+                control.Dispose();
+            }
             Controls.Clear();
 
             var header = new Label
@@ -276,14 +286,42 @@ namespace AppSnapshot
                     }
                 }
 
-                panel.Invoke(new Action(delegate
+                Action populate = delegate
                 {
+                    if (panel.IsDisposed || list.IsDisposed || !panel.IsHandleCreated)
+                    {
+                        // 面板已关闭：释放后台加载的图标，避免泄漏
+                        var released = new HashSet<Bitmap>();
+                        foreach (WindowListItem item in items)
+                        {
+                            if (item.Icon != null && released.Add(item.Icon))
+                            {
+                                item.Icon.Dispose();
+                            }
+                        }
+                        return;
+                    }
                     foreach (WindowListItem item in items)
                     {
                         list.Items.Add(item);
                     }
                     list.Invalidate();
-                }));
+                };
+
+                if (panel.IsDisposed || !panel.IsHandleCreated)
+                {
+                    populate();
+                    return;
+                }
+                try
+                {
+                    panel.Invoke(populate);
+                }
+                catch (InvalidOperationException)
+                {
+                    // 句柄在 Invoke 途中销毁
+                    populate();
+                }
             });
         }
 
@@ -336,58 +374,66 @@ namespace AppSnapshot
 
             NativeMethods.EnumWindowsDelegate callback = delegate(IntPtr window, IntPtr lParam)
             {
-                if (!NativeMethods.IsWindowVisible(window) || NativeMethods.IsIconic(window))
-                {
-                    return true;
-                }
-
-                // 只保留真正的顶层窗口（GetAncestor(GA_ROOT) == 自身）
-                if (NativeMethods.GetAncestor(window, 2) != window)
-                {
-                    return true;
-                }
-
-                uint processId;
-                NativeMethods.GetWindowThreadProcessId(window, out processId);
-                if (processId == 0 || processId == ownProcessId)
-                {
-                    return true;
-                }
-
-                // 排除无 GUI 的后台进程：无法获取 MainModule 的通常是系统服务
+                // 回调内任何异常都会沿 EnumWindows 栈崩溃进程，必须整体兜底
                 try
                 {
-                    var process = System.Diagnostics.Process.GetProcessById((int)processId);
-                    if (process.MainModule == null || string.IsNullOrEmpty(process.MainModule.FileName))
+                    if (!NativeMethods.IsWindowVisible(window) || NativeMethods.IsIconic(window))
                     {
                         return true;
                     }
+
+                    // 只保留真正的顶层窗口（GetAncestor(GA_ROOT) == 自身）
+                    if (NativeMethods.GetAncestor(window, 2) != window)
+                    {
+                        return true;
+                    }
+
+                    uint processId;
+                    NativeMethods.GetWindowThreadProcessId(window, out processId);
+                    if (processId == 0 || processId == ownProcessId)
+                    {
+                        return true;
+                    }
+
+                    // 排除无 GUI 的后台进程：无法获取 MainModule 的通常是系统服务
+                    try
+                    {
+                        var process = System.Diagnostics.Process.GetProcessById((int)processId);
+                        if (process.MainModule == null || string.IsNullOrEmpty(process.MainModule.FileName))
+                        {
+                            return true;
+                        }
+                    }
+                    catch
+                    {
+                        return true;
+                    }
+
+                    long extended = NativeMethods.GetWindowLongPtr(window, NativeMethods.GwlExStyle).ToInt64();
+                    if ((extended & NativeMethods.WsExToolWindowCheck) != 0)
+                    {
+                        return true;
+                    }
+
+                    int length = NativeMethods.GetWindowTextLength(window);
+                    if (length <= 0)
+                    {
+                        return true;
+                    }
+                    var text = new StringBuilder(length + 1);
+                    NativeMethods.GetWindowText(window, text, text.Capacity);
+                    string title = text.ToString();
+                    if (title.Length == 0)
+                    {
+                        return true;
+                    }
+
+                    entries.Add(new WindowEntry { Handle = window, Title = title });
                 }
                 catch
                 {
-                    return true;
+                    // 单个窗口属性读取失败（如窗口恰好销毁），跳过继续枚举
                 }
-
-                long extended = NativeMethods.GetWindowLongPtr(window, NativeMethods.GwlExStyle).ToInt64();
-                if ((extended & NativeMethods.WsExToolWindowCheck) != 0)
-                {
-                    return true;
-                }
-
-                int length = NativeMethods.GetWindowTextLength(window);
-                if (length <= 0)
-                {
-                    return true;
-                }
-                var text = new StringBuilder(length + 1);
-                NativeMethods.GetWindowText(window, text, text.Capacity);
-                string title = text.ToString();
-                if (title.Length == 0)
-                {
-                    return true;
-                }
-
-                entries.Add(new WindowEntry { Handle = window, Title = title });
                 return true;
             };
 
@@ -585,6 +631,7 @@ namespace AppSnapshot
         {
             if (disposing)
             {
+                ReleaseItemIcons();
                 _titleFont.Dispose();
                 _subFont.Dispose();
                 _titleBrush.Dispose();
@@ -593,6 +640,21 @@ namespace AppSnapshot
                 _separatorPen.Dispose();
             }
             base.Dispose(disposing);
+        }
+
+        /// <summary>释放所有列表项的图标 GDI 句柄，重新填充或销毁前必须调用。</summary>
+        internal void ReleaseItemIcons()
+        {
+            var released = new HashSet<Bitmap>();
+            foreach (WindowListItem item in Items)
+            {
+                if (item.Icon != null && released.Add(item.Icon))
+                {
+                    item.Icon.Dispose();
+                }
+                item.Icon = null;
+            }
+            Items.Clear();
         }
     }
 }

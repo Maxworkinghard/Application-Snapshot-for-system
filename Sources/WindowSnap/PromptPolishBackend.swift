@@ -356,10 +356,15 @@ final class RemotePromptPolishingService: PromptPolishingService {
 
     /// baseURL 若已包含版本号路径（如 /v1）则只追加子路径，否则补上默认版本化路径，避免拼出 /v1/v1/...。
     private static func joinEndpoint(base: URL, versionedPath: String, path: String) -> URL {
-        if base.path.range(of: #"/v\d+$"#, options: .regularExpression) != nil {
-            return base.appendingPathComponent(path)
+        // 先剥掉尾部斜杠：/v1/ 与 /v1 应等价，否则正则失配会拼出 /v1/v1/...
+        let trimmedPath = base.path.replacingOccurrences(of: "/+$", with: "", options: .regularExpression)
+        var components = URLComponents(url: base, resolvingAgainstBaseURL: false)
+        components?.path = trimmedPath
+        let normalized = components?.url ?? base
+        if trimmedPath.range(of: #"/v\d+$"#, options: .regularExpression) != nil {
+            return normalized.appendingPathComponent(path)
         }
-        return base.appendingPathComponent(versionedPath)
+        return normalized.appendingPathComponent(versionedPath)
     }
 
     private static func extractText(from data: Data, kind: PolishBackendProtocolKind) -> String? {
@@ -371,9 +376,17 @@ final class RemotePromptPolishingService: PromptPolishingService {
                   let content = message["content"] as? String else { return nil }
             return Self.normalize(content)
         case .anthropic:
-            guard let content = json["content"] as? [[String: Any]],
-                  let text = content.first?["text"] as? String else { return nil }
-            return Self.normalize(text)
+            // content 正常为 [{type,text},...]，但网关/代理可能返回字符串或混入非 text 块
+            if let blocks = json["content"] as? [[String: Any]] {
+                let text = blocks
+                    .compactMap { $0["text"] as? String }
+                    .joined()
+                return text.isEmpty ? nil : Self.normalize(text)
+            }
+            if let text = json["content"] as? String {
+                return Self.normalize(text)
+            }
+            return nil
         }
     }
 

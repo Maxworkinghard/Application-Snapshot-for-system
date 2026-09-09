@@ -345,6 +345,38 @@ namespace AppSnapshot
             });
         }
 
+        /// <summary>应用退出时调用：尽力优雅收尾 ffmpeg，超时强杀，避免孤儿进程。</summary>
+        internal void ShutdownOnAppExit()
+        {
+            Process process = ffmpeg;
+            if (process == null)
+            {
+                return;
+            }
+            try
+            {
+                if (!process.HasExited)
+                {
+                    try
+                    {
+                        process.StandardInput.WriteLine("q");
+                    }
+                    catch
+                    {
+                    }
+                    if (!process.WaitForExit(2500))
+                    {
+                        process.Kill();
+                        process.WaitForExit(2000);
+                    }
+                }
+            }
+            catch
+            {
+            }
+            ffmpeg = null;
+        }
+
         private bool ResolveFfmpeg()
         {
             lock (syncRoot)
