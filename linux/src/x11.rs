@@ -43,6 +43,15 @@ enum ClipContent {
     Text(Arc<String>),
 }
 
+/// 全局热键对应的动作（可选绑定，由用户在设置中决定）。
+#[derive(Clone, Copy, PartialEq, Eq)]
+pub enum HotkeyAction {
+    Capture,
+    Record,
+    PreviousApp,
+    Polish,
+}
+
 pub struct X11Backend {
     conn: RustConnection,
     screen_num: usize,
@@ -52,6 +61,8 @@ pub struct X11Backend {
     content: Mutex<Option<ClipContent>>,
     /// 是否仍持有 CLIPBOARD 所有权
     owned: AtomicBool,
+    /// 已注册热键：keycode + 归一化修饰键（去 NumLock/CapsLock）→ 动作
+    hotkeys: Mutex<std::collections::HashMap<(u8, u16), HotkeyAction>>,
 }
 
 impl X11Backend {
@@ -84,6 +95,7 @@ impl X11Backend {
             clip_win,
             content: Mutex::new(None),
             owned: AtomicBool::new(false),
+            hotkeys: Mutex::new(std::collections::HashMap::new()),
         }))
     }
 
@@ -93,7 +105,7 @@ impl X11Backend {
 
     // ---------- 快捷键 ----------
 
-    pub fn grab_hotkey(&self, shortcut: &str) -> Result<()> {
+    pub fn grab_hotkey(&self, shortcut: &str, action: HotkeyAction) -> Result<()> {
         let (mods, keysym) = parse_shortcut(shortcut)?;
         let keycode = self
             .keysym_to_keycode(keysym)?
@@ -118,8 +130,33 @@ impl X11Backend {
                 .check()
                 .map_err(|_| format!("快捷键 {shortcut} 可能已被其他程序占用"))?;
         }
+        self.hotkeys
+            .lock()
+            .unwrap()
+            .insert((keycode, u16::from(mods)), action);
         self.conn.flush()?;
         Ok(())
+    }
+
+    /// 解除全部已注册热键（设置变更后重新注册前调用）。
+    pub fn ungrab_all(&self) {
+        let hotkeys = {
+            let mut guard = self.hotkeys.lock().unwrap();
+            std::mem::take(&mut *guard)
+        };
+        for (keycode, mods) in hotkeys.keys() {
+            for extra in [
+                ModMask::default(),
+                ModMask::M2,
+                ModMask::LOCK,
+                ModMask::M2 | ModMask::LOCK,
+            ] {
+                let _ = self
+                    .conn
+                    .ungrab_key(*keycode, self.root(), *mods | extra);
+            }
+        }
+        let _ = self.conn.flush();
     }
 
     fn keysym_to_keycode(&self, keysym: u32) -> Result<Option<u8>> {
@@ -168,9 +205,25 @@ impl X11Backend {
 
     fn handle_event(&self, event: Event, tx: Option<&Sender<Msg>>) {
         match event {
-            Event::KeyPress(_) => {
+            Event::KeyPress(press) => {
                 if let Some(tx) = tx {
-                    let _ = tx.send(Msg::Capture);
+                    // 归一化修饰键（去掉 CapsLock 0x2 / NumLock 0x10）后查已注册热键
+                    let state = u16::from(press.state) & !0x12;
+                    let action = self
+                        .hotkeys
+                        .lock()
+                        .unwrap()
+                        .get(&(press.detail, state))
+                        .copied();
+                    if let Some(action) = action {
+                        let msg = match action {
+                            HotkeyAction::Capture => Msg::Capture,
+                            HotkeyAction::Record => Msg::ToggleRecording,
+                            HotkeyAction::PreviousApp => Msg::CapturePreviousApp,
+                            HotkeyAction::Polish => Msg::Polish,
+                        };
+                        let _ = tx.send(msg);
+                    }
                 }
             }
             Event::SelectionRequest(req) => {

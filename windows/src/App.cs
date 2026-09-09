@@ -91,6 +91,18 @@ namespace AppSnapshot
             }));
         }
 
+        /// <summary>截取「上一个前台应用」窗口（悬浮球当前显示图标的目标应用）。</summary>
+        internal static void CapturePreviousApp()
+        {
+            TargetAppTracker.TargetInfo target = Tracker != null ? Tracker.Previous : null;
+            if (target == null || target.WindowHandle == IntPtr.Zero)
+            {
+                Toast.Show("还没有上一个应用可截取", ToastKind.Warning);
+                return;
+            }
+            CaptureWindow(target.WindowHandle);
+        }
+
         /// <summary>录制开关：面板/托盘/热键共用。</summary>
         internal static void ToggleRecording()
         {

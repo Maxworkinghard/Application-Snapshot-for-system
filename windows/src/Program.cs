@@ -38,18 +38,61 @@ namespace AppSnapshot
                     {
                         App.ToggleRecording();
                     };
+                    App.HotKeys.PreviousAppPressed += delegate
+                    {
+                        App.CapturePreviousApp();
+                    };
+                    App.HotKeys.PolishPressed += delegate
+                    {
+                        App.Polish.ToggleFromMenu();
+                    };
 
                     var mainForm = new SnapshotBubbleForm();
                     App.MainForm = mainForm;
                     App.Tracker = mainForm.Tracker;
 
-                    App.HotKeys.RegisterAll();
+                    ApplyStartupShortcuts();
 
                     Application.Run(mainForm);
 
                     App.MainForm = null;
                 }
             }
+        }
+
+        /// <summary>
+        /// 启动时应用已保存的快捷键（可选绑定，未绑定项直接跳过）；
+        /// 被占用的组合降级为不启用并提示，其余快捷键照常生效。
+        /// </summary>
+        private static void ApplyStartupShortcuts()
+        {
+            var specs = new[]
+            {
+                HotKeyPreferences.Capture,
+                HotKeyPreferences.Record,
+                HotKeyPreferences.PreviousApp,
+                HotKeyPreferences.Polish
+            };
+            int[] failures = App.HotKeys.Apply(specs[0], specs[1], specs[2], specs[3]);
+            if (failures == null)
+            {
+                return;
+            }
+            foreach (int index in failures)
+            {
+                specs[index] = null;
+            }
+            App.HotKeys.Apply(specs[0], specs[1], specs[2], specs[3]);
+
+            var names = new[] { "截取当前应用", "录制", "截取上一个应用", "润色" };
+            var occupied = new System.Collections.Generic.List<string>();
+            foreach (int index in failures)
+            {
+                occupied.Add(names[index]);
+            }
+            App.Toast.Show(
+                string.Join("、", occupied.ToArray()) + " 的快捷键被占用，已暂时停用，可在设置中更换",
+                ToastKind.Warning);
         }
 
         /// <summary>

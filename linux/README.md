@@ -7,7 +7,10 @@ macOS 版的 Linux 移植。常驻后台，功能与 macOS / Windows 端对齐�
 ## 功能
 
 - **快捷键截图**：默认 `Alt+Shift+2`，截取当前活动窗口并复制到剪贴板，成功时播放快门声，60 秒后自动清空（期间复制过别的内容则跳过）
-- **悬浮球**：圆形悬浮图标，显示上一个前台应用的图标；点击弹出操作菜单，可拖动，位置记忆
+- **快捷键录制**：默认 `Alt+Shift+R`，开始 / 停止录制当前活动窗口
+- **可选绑定**：截取上一个前台应用窗口、润色当前剪切板提示词——默认不绑定，在设置中自行决定
+- **悬浮球**：圆形悬浮图标，显示上一个前台应用的图标；点击弹出操作菜单，可拖动，位置记忆；右键打开「设置…」
+- **设置**：右键悬浮球或托盘菜单 `设置…` 打开 zenity 表单（快捷键绑定 + 润色服务），保存后即时生效（润色配置更新内存，快捷键重新注册；仅 X11）
 - **应用快照**：从窗口列表选择任意窗口截图
 - **窗口录制**：`ffmpeg` 录制当前活动窗口为 MP4，保存到配置目录（仅 X11）
 - **润色 Prompt**：读取剪贴板中的文字草稿 → 确认 → 大模型改写 → 结果写回剪贴板，处理中可停止
@@ -23,6 +26,7 @@ macOS 版的 Linux 移植。常驻后台，功能与 macOS / Windows 端对齐�
 | `curl` | 润色时调用大模型 API | 仅润色需要 |
 | `ffmpeg` | 窗口录制（x11grab） | 仅录制需要 |
 | `zenity` 或 `kdialog` | 润色确认 / 窗口选择 / 悬浮球菜单 | 悬浮球与快照列表需要 |
+| `zenity` | 设置表单（多字段，kdialog 不支持） | 设置界面需要；缺失时可直接编辑 config.toml |
 | `canberra-gtk-play`（或 `paplay` / `pw-play`） | 截图快门声（freedesktop camera-shutter 事件） | 可选，缺失时静默 |
 
 未安装时对应功能会报错提示，不影响截图主流程。
@@ -38,6 +42,7 @@ macOS 版的 Linux 移植。常驻后台，功能与 macOS / Windows 端对齐�
 | 桌面宠物 | 悬浮球 | X11：圆形悬浮窗（shape 扩展 + `_NET_WM_ICON`） |
 | 窗口录制 MP4 | 窗口录制 MP4 | `ffmpeg` x11grab（仅 X11；Wayland 下无标准窗口级录制接口） |
 | 润色 Prompt | 润色 Prompt | 剪贴板草稿 → 确认 → API 改写 → 写回，处理中可停止 |
+| 统一设置窗口 | 统一设置窗口 | zenity `--forms` 表单（快捷键 + 润色服务，右键悬浮球或托盘打开） |
 | Toast 提示 | Toast 提示 | `org.freedesktop.Notifications` 桌面通知 |
 | 60 秒自动清空 | 同 | 同款逻辑（仍持有剪贴板且未被覆盖才清空） |
 
@@ -89,6 +94,9 @@ systemctl --user enable --now windowsnap.service
 
 ```toml
 shortcut = "Alt+Shift+2"          # X11 下生效；Wayland 由 GlobalShortcuts portal 或桌面环境绑定
+shortcut_record = "Alt+Shift+R"   # 录制快捷键；留空 = 不绑定
+shortcut_previous_app = ""        # 截取上一个应用；默认不绑定
+shortcut_polish = ""              # 润色提示词；默认不绑定
 save_dir = "~/Videos/应用快照"     # 录制文件保存目录（~ 不会自动展开，建议写绝对路径）
 pet_x = "1896"                    # 悬浮球位置（拖动后自动写回）
 pet_y = "78"
@@ -100,7 +108,7 @@ polish.api_key = "sk-..."
 
 润色默认参数与 macOS / Windows 端一致：`max_tokens = 16384`、`temperature = 0.3`、超时 180 秒。
 
-修饰键支持 `Ctrl` / `Alt` / `Shift` / `Super`，主键支持字母、数字、F1–F24 及常用符号。改完重启进程生效。
+修饰键支持 `Ctrl` / `Alt` / `Shift` / `Super`，主键支持字母、数字、F1–F24 及常用符号。直接改文件需重启进程生效；走「设置…」表单保存则即时生效（X11 会重新注册快捷键，润色配置更新内存）。
 
 ## X11 与 Wayland 的行为差异
 
@@ -144,3 +152,4 @@ linux/
 6. 悬浮球在各 WM 下的 shape 圆形裁剪、`_NET_WM_ICON` 图标读取与拖动手感
 7. ffmpeg 录制参数（crf / preset）在不同机器上的实际效果
 8. 润色流程中 zenity / kdialog 的弹窗焦点与取消路径
+9. 设置表单（zenity `--forms`）保存后 X11 快捷键重新注册与生效路径
