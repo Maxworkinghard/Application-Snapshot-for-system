@@ -154,7 +154,7 @@ namespace AppSnapshot
             }
             else
             {
-                SetWindowLong32(hWnd, index, value.ToInt32());
+                SetWindowLong32(hWnd, index, unchecked((int)value.ToInt64()));
             }
         }
 
