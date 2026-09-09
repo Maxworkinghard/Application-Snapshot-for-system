@@ -134,6 +134,7 @@ pub fn settings_form(values: &SettingsFormValues) -> Option<SettingsFormValues> 
             };
             let hint = format!(
                 "当前：截取当前应用={}，录制={}，截取上一个应用={}，润色={}；协议={}，模型={}，Base URL={}\n\
+                 润色提示词（切换 / 自定义）：托盘菜单「管理润色提示词…」\n\
                  每项留空表示保持不变；快捷键填 none 表示解除绑定；快捷键格式如 Alt+Shift+2",
                 current_shortcut(&values.shortcut),
                 current_shortcut(&values.shortcut_record),
@@ -179,6 +180,191 @@ pub fn settings_form(values: &SettingsFormValues) -> Option<SettingsFormValues> 
             zenity_only();
             None
         }
+    }
+}
+
+// ---------- 润色提示词管理（内置 + 自定义，可切换不替换） ----------
+
+/// 提示词管理主循环：列表选中点「切换」即时生效；新建 / 编辑 / 删除走额外按钮。
+/// 内置只读——「编辑」里提供「基于内置新建…」入口。需要 zenity（多行编辑只有它支持）。
+pub fn manage_prompts() {
+    if !tool_runs("zenity", &["--version"]) {
+        crate::notify::notify(
+            "无法管理润色提示词",
+            "需要 zenity（多行文本编辑仅 zenity 支持），请安装后再试",
+        );
+        return;
+    }
+    loop {
+        let active = crate::prompts::active_name();
+        let custom = crate::prompts::custom_list();
+        let mark = |name: &str| if name == active { "当前使用" } else { "" };
+
+        let mut command = Command::new("zenity");
+        command
+            .args(["--list", "--title", "润色提示词", "--width", "440", "--height", "340"])
+            .args(["--text", "选中一行点「切换」即生效；管理用额外按钮"])
+            .args(["--column", "提示词", "--column", "状态"])
+            .args(["--ok-label", "切换", "--cancel-label", "关闭"])
+            .args(["--extra-button", "新建"])
+            .args(["--extra-button", "编辑"])
+            .args(["--extra-button", "删除"]);
+        command
+            .arg(crate::prompts::BUILTIN_NAME)
+            .arg(mark(crate::prompts::BUILTIN_NAME));
+        for prompt in &custom {
+            command.arg(&prompt.name).arg(mark(&prompt.name));
+        }
+        let Ok(output) = command.output() else { return };
+        let text = String::from_utf8_lossy(&output.stdout).trim().to_string();
+        match output.status.code() {
+            Some(0) => {
+                if !text.is_empty() {
+                    crate::prompts::set_active(&text);
+                    crate::notify::notify("已切换润色提示词", &format!("当前使用：{text}"));
+                }
+            }
+            // zenity 约定：额外按钮退出码 5，stdout 为按钮文字
+            Some(5) => match text.as_str() {
+                "新建" => create_prompt(""),
+                "编辑" => edit_prompt(),
+                "删除" => delete_prompt(),
+                _ => return,
+            },
+            _ => return,
+        }
+    }
+}
+
+/// 新建并保存成功后自动切换为当前使用（与 macOS / Windows 一致）。
+fn create_prompt(prefill: &str) {
+    let Some(name) = entry_prompt_name("") else { return };
+    let Some(text) = edit_prompt_text(&name, prefill) else { return };
+    if crate::prompts::save(&name, &text, None) {
+        crate::prompts::set_active(name.trim());
+        crate::notify::notify("已保存并切换", &format!("当前使用：{}", name.trim()));
+    } else {
+        crate::notify::notify(
+            "保存失败",
+            "名称为空、与内置重名或已存在同名提示词",
+        );
+    }
+}
+
+/// 编辑自定义项（可改名）；没有自定义项时直接引导「基于内置新建…」。
+fn edit_prompt() {
+    let custom = crate::prompts::custom_list();
+    if custom.is_empty() {
+        create_prompt(crate::polish::SYSTEM_PROMPT);
+        return;
+    }
+    let mut command = Command::new("zenity");
+    command
+        .args(["--list", "--title", "编辑润色提示词", "--width", "380", "--height", "300"])
+        .args(["--text", "选择要编辑的提示词"])
+        .args(["--column", "名称"]);
+    for prompt in &custom {
+        command.arg(&prompt.name);
+    }
+    command.arg("（基于内置新建…）");
+    let Ok(output) = command.output() else { return };
+    if !output.status.success() {
+        return;
+    }
+    let selected = String::from_utf8_lossy(&output.stdout).trim().to_string();
+    if selected.is_empty() {
+        return;
+    }
+    if selected == "（基于内置新建…）" {
+        create_prompt(crate::polish::SYSTEM_PROMPT);
+        return;
+    }
+    let Some(prompt) = custom.iter().find(|p| p.name == selected) else {
+        return;
+    };
+    let Some(new_name) = entry_prompt_name(&prompt.name) else { return };
+    let Some(new_text) = edit_prompt_text(&prompt.name, &prompt.text) else { return };
+    if crate::prompts::save(&new_name, &new_text, Some(&prompt.name)) {
+        crate::notify::notify("已保存", &format!("提示词「{}」已更新", new_name.trim()));
+    } else {
+        crate::notify::notify(
+            "保存失败",
+            "名称为空、与内置重名或已存在同名提示词",
+        );
+    }
+}
+
+fn delete_prompt() {
+    let custom = crate::prompts::custom_list();
+    if custom.is_empty() {
+        crate::notify::notify("没有自定义提示词", "内置提示词不可删除");
+        return;
+    }
+    let mut command = Command::new("zenity");
+    command
+        .args(["--list", "--title", "删除润色提示词", "--width", "380", "--height", "300"])
+        .args(["--text", "选择要删除的提示词"])
+        .args(["--column", "名称"]);
+    for prompt in &custom {
+        command.arg(&prompt.name);
+    }
+    let Ok(output) = command.output() else { return };
+    if !output.status.success() {
+        return;
+    }
+    let selected = String::from_utf8_lossy(&output.stdout).trim().to_string();
+    let Some(prompt) = custom.iter().find(|p| p.name == selected) else {
+        return;
+    };
+    let confirmed = Command::new("zenity")
+        .args(["--question", "--title", "应用快照", "--width", "420"])
+        .args([
+            "--text",
+            &format!(
+                "删除提示词「{}」？\n删除后不可恢复；若它是当前使用的提示词，将切回内置。",
+                prompt.name
+            ),
+        ])
+        .args(["--ok-label", "删除", "--cancel-label", "取消"])
+        .output()
+        .map(|output| output.status.success())
+        .unwrap_or(false);
+    if confirmed {
+        crate::prompts::delete(&prompt.name);
+    }
+}
+
+/// 名称输入（可带默认值）；取消返回 None。
+fn entry_prompt_name(default: &str) -> Option<String> {
+    let output = Command::new("zenity")
+        .args(["--entry", "--title", "润色提示词", "--width", "380"])
+        .args(["--text", "名称（不能与「内置」重复）"])
+        .args(["--entry-text", default])
+        .output()
+        .ok()?;
+    if output.status.success() {
+        Some(String::from_utf8_lossy(&output.stdout).trim().to_string())
+    } else {
+        None
+    }
+}
+
+/// 多行正文编辑：临时文件 + zenity --text-info --editable，stdout 即编辑后内容。
+fn edit_prompt_text(title: &str, initial: &str) -> Option<String> {
+    let mut path = std::env::temp_dir();
+    path.push(format!("windowsnap-prompt-{}.txt", std::process::id()));
+    std::fs::write(&path, initial).ok()?;
+    let output = Command::new("zenity")
+        .args(["--text-info", "--title", title, "--width", "640", "--height", "480"])
+        .args(["--editable", "--filename"])
+        .arg(&path)
+        .output();
+    let _ = std::fs::remove_file(&path);
+    let output = output.ok()?;
+    if output.status.success() {
+        Some(String::from_utf8_lossy(&output.stdout).trim_end().to_string())
+    } else {
+        None
     }
 }
 

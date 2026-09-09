@@ -95,6 +95,15 @@ impl ksni::Tray for Tray {
         }
         .into();
 
+        let manage_prompts = StandardItem {
+            label: "管理润色提示词…".into(),
+            activate: Box::new(|tray: &mut Self| {
+                let _ = tray.tx.send(Msg::ManagePrompts);
+            }),
+            ..Default::default()
+        }
+        .into();
+
         let settings = StandardItem {
             label: "设置…".into(),
             activate: Box::new(|tray: &mut Self| {
@@ -118,6 +127,7 @@ impl ksni::Tray for Tray {
             list,
             record,
             polish,
+            manage_prompts,
             settings,
             ksni::MenuItem::Separator,
             quit,

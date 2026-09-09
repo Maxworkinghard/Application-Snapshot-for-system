@@ -26,6 +26,8 @@ namespace AppSnapshot
         private TextBox _modelBox;
         private TextBox _apiKeyBox;
         private Label _errorLabel;
+        private ComboBox _promptBox;
+        private Button _deletePromptButton;
 
         public SettingsForm()
         {
@@ -36,7 +38,7 @@ namespace AppSnapshot
             StartPosition = FormStartPosition.CenterScreen;
             ShowInTaskbar = false;
             Font = new Font("Microsoft YaHei UI", 9F);
-            ClientSize = new Size(500, 646);
+            ClientSize = new Size(500, 702);
             AutoScaleMode = AutoScaleMode.Dpi;
 
             var titleLabel = new Label
@@ -131,7 +133,71 @@ namespace AppSnapshot
                 ForeColor = SystemColors.GrayText
             };
 
+            // ---- 润色提示词（内置 + 自定义，可切换不替换）----
+
             int row = polishTop + 46;
+            _promptBox = new ComboBox
+            {
+                DropDownStyle = ComboBoxStyle.DropDownList,
+                Location = new Point(170, row - 3),
+                Size = new Size(150, 25)
+            };
+            _promptBox.SelectedIndexChanged += delegate
+            {
+                string selected = _promptBox.SelectedItem as string;
+                if (selected != null)
+                {
+                    PolishPromptLibrary.SetActive(selected);
+                    UpdatePromptButtons();
+                }
+            };
+            Controls.Add(MakeRowLabel("提示词", row));
+            Controls.Add(_promptBox);
+
+            var newPromptButton = new Button
+            {
+                Text = "新建",
+                AutoSize = false,
+                Size = new Size(48, 25),
+                Location = new Point(326, row - 3),
+                FlatStyle = FlatStyle.Flat
+            };
+            newPromptButton.Click += delegate { EditPrompt(null, ""); };
+            Controls.Add(newPromptButton);
+
+            var editPromptButton = new Button
+            {
+                Text = "编辑",
+                AutoSize = false,
+                Size = new Size(48, 25),
+                Location = new Point(378, row - 3),
+                FlatStyle = FlatStyle.Flat
+            };
+            editPromptButton.Click += delegate { EditSelectedPrompt(); };
+            Controls.Add(editPromptButton);
+
+            _deletePromptButton = new Button
+            {
+                Text = "删除",
+                AutoSize = false,
+                Size = new Size(48, 25),
+                Location = new Point(430, row - 3),
+                FlatStyle = FlatStyle.Flat
+            };
+            _deletePromptButton.Click += delegate { DeleteSelectedPrompt(); };
+            Controls.Add(_deletePromptButton);
+
+            var promptHint = new Label
+            {
+                Text = "切换即生效。选「内置」点「编辑」可基于内置文本另存自定义版本。",
+                AutoSize = false,
+                Size = new Size(452, 18),
+                Location = new Point(24, row + 26),
+                ForeColor = SystemColors.GrayText
+            };
+            Controls.Add(promptHint);
+
+            row += 56;
             _kindBox = new ComboBox
             {
                 DropDownStyle = ComboBoxStyle.DropDownList,
@@ -227,6 +293,7 @@ namespace AppSnapshot
 
             RefreshShortcutFields();
             RefreshPolishFields();
+            RefreshPromptFields();
         }
 
         private static Label MakeRowLabel(string text, int top)
@@ -353,6 +420,79 @@ namespace AppSnapshot
             _modelBox.Text = configuration != null ? (configuration.Model ?? "") : "";
             _apiKeyBox.Text = "";
             _errorLabel.Text = "";
+        }
+
+        // ---- 润色提示词管理（切换即时生效，不依赖「保存」按钮）----
+
+        private void RefreshPromptFields()
+        {
+            _promptBox.Items.Clear();
+            _promptBox.Items.Add(PolishPromptLibrary.BuiltinName);
+            foreach (PolishPromptLibrary.CustomPrompt prompt in PolishPromptLibrary.Custom)
+            {
+                _promptBox.Items.Add(prompt.Name);
+            }
+            _promptBox.SelectedItem = PolishPromptLibrary.ActiveName;
+            UpdatePromptButtons();
+        }
+
+        private void UpdatePromptButtons()
+        {
+            string selected = _promptBox.SelectedItem as string;
+            _deletePromptButton.Enabled = selected != null && selected != PolishPromptLibrary.BuiltinName;
+        }
+
+        private void EditSelectedPrompt()
+        {
+            string name = _promptBox.SelectedItem as string;
+            if (name == null)
+            {
+                return;
+            }
+            if (name == PolishPromptLibrary.BuiltinName)
+            {
+                EditPrompt(null, PolishPrompt.SystemPrompt);
+                return;
+            }
+            PolishPromptLibrary.CustomPrompt original = PolishPromptLibrary.Custom.Find(
+                delegate (PolishPromptLibrary.CustomPrompt p) { return p.Name == name; });
+            if (original != null)
+            {
+                EditPrompt(original, original.Text);
+            }
+        }
+
+        private void EditPrompt(PolishPromptLibrary.CustomPrompt original, string prefill)
+        {
+            using (var editor = new PolishPromptEditorForm(original, prefill))
+            {
+                if (editor.ShowDialog(this) != DialogResult.OK)
+                {
+                    return;
+                }
+                bool isNew = original == null;
+                if (PolishPromptLibrary.Save(editor.Prompt, original == null ? null : original.Name) && isNew)
+                {
+                    PolishPromptLibrary.SetActive(editor.Prompt.Name.Trim());
+                }
+                RefreshPromptFields();
+            }
+        }
+
+        private void DeleteSelectedPrompt()
+        {
+            string name = _promptBox.SelectedItem as string;
+            if (name == null || name == PolishPromptLibrary.BuiltinName)
+            {
+                return;
+            }
+            if (MessageBox.Show(this,
+                "删除提示词「" + name + "」？\n删除后不可恢复；若它是当前使用的提示词，将切回内置。",
+                "应用快照", MessageBoxButtons.YesNo, MessageBoxIcon.Question) == DialogResult.Yes)
+            {
+                PolishPromptLibrary.Delete(name);
+                RefreshPromptFields();
+            }
         }
 
         /// <summary>快捷键录入框：聚焦后按下组合键即记录；无修饰键的组合忽略。</summary>
