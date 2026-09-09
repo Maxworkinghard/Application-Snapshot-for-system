@@ -233,25 +233,47 @@ namespace AppSnapshot
             System.Threading.ThreadPool.QueueUserWorkItem(delegate
             {
                 var entries = EnumerateCapturableWindows();
-                var items = new List<WindowListItem>();
+
+                // 按进程分组：组内窗口缩进，进程名只显示一次
+                var groups = new Dictionary<uint, List<WindowEntry>>();
                 foreach (WindowEntry entry in entries)
                 {
-                    uint processId;
-                    NativeMethods.GetWindowThreadProcessId(entry.Handle, out processId);
-                    Bitmap icon = WindowIconLoader.LoadWindowIcon(entry.Handle, (int)processId, 32);
+                    uint pid;
+                    NativeMethods.GetWindowThreadProcessId(entry.Handle, out pid);
+                    if (!groups.ContainsKey(pid))
+                    {
+                        groups[pid] = new List<WindowEntry>();
+                    }
+                    groups[pid].Add(entry);
+                }
+
+                var items = new List<WindowListItem>();
+                foreach (var pair in groups)
+                {
+                    uint pid = pair.Key;
+                    List<WindowEntry> windows = pair.Value;
                     string processName = "";
                     try
                     {
-                        processName = System.Diagnostics.Process.GetProcessById((int)processId).ProcessName;
+                        processName = System.Diagnostics.Process.GetProcessById((int)pid).ProcessName;
                     }
                     catch { }
-                    items.Add(new WindowListItem
+
+                    Bitmap icon = windows.Count > 0
+                        ? WindowIconLoader.LoadWindowIcon(windows[0].Handle, (int)pid, 32)
+                        : null;
+
+                    for (int i = 0; i < windows.Count; i++)
                     {
-                        Handle = entry.Handle,
-                        Title = entry.Title,
-                        ProcessName = processName,
-                        Icon = icon
-                    });
+                        items.Add(new WindowListItem
+                        {
+                            Handle = windows[i].Handle,
+                            Title = windows[i].Title,
+                            ProcessName = i == 0 ? processName : "",
+                            Icon = i == 0 ? icon : null,
+                            IsGroupChild = i > 0
+                        });
+                    }
                 }
 
                 panel.Invoke(new Action(delegate
@@ -312,15 +334,32 @@ namespace AppSnapshot
             var entries = new List<WindowEntry>();
             var ownProcessId = (uint)System.Diagnostics.Process.GetCurrentProcess().Id;
 
+            // 先收集有 GUI 的进程 ID（MainWindowHandle != 0），排除纯后台进程
+            var guiProcessIds = new HashSet<uint>();
+            try
+            {
+                foreach (System.Diagnostics.Process process in System.Diagnostics.Process.GetProcesses())
+                {
+                    try
+                    {
+                        if (process.MainWindowHandle != IntPtr.Zero)
+                        {
+                            guiProcessIds.Add((uint)process.Id);
+                        }
+                    }
+                    catch { }
+                }
+            }
+            catch { }
+
             NativeMethods.EnumWindowsDelegate callback = delegate(IntPtr window, IntPtr lParam)
             {
-                if (NativeMethods.IsIconic(window))
+                if (!NativeMethods.IsWindowVisible(window) || NativeMethods.IsIconic(window))
                 {
                     return true;
                 }
 
-                // 只保留真正的顶层窗口（GetAncestor(GA_ROOT) == 自身），
-                // 排除子窗口、悬浮工具窗等嵌套句柄
+                // 只保留真正的顶层窗口（GetAncestor(GA_ROOT) == 自身）
                 if (NativeMethods.GetAncestor(window, 2) != window)
                 {
                     return true;
@@ -328,7 +367,7 @@ namespace AppSnapshot
 
                 uint processId;
                 NativeMethods.GetWindowThreadProcessId(window, out processId);
-                if (processId == 0 || processId == ownProcessId)
+                if (processId == 0 || processId == ownProcessId || !guiProcessIds.Contains(processId))
                 {
                     return true;
                 }
@@ -384,6 +423,7 @@ namespace AppSnapshot
         public string Title;
         public string ProcessName;
         public Bitmap Icon;
+        public bool IsGroupChild;
     }
 
     /// <summary>自绘窗口列表：大图标 + 标题 + 进程名两行，悬停高亮，点击回调。</summary>
@@ -436,7 +476,7 @@ namespace AppSnapshot
                     }
 
                     WindowListItem item = Items[i];
-                    if (item.Icon != null)
+                    if (item.Icon != null && !item.IsGroupChild)
                     {
                         e.Graphics.DrawImage(
                             item.Icon,
@@ -448,19 +488,34 @@ namespace AppSnapshot
 
                     int textX = IconPadding + IconSize + 10;
                     int textWidth = Width - textX - 8;
-                    var titleRect = new RectangleF(textX, y + 7, textWidth, 20);
-                    var subRect = new RectangleF(textX, y + 27, textWidth, 16);
 
-                    e.Graphics.DrawString(
-                        Truncate(item.Title, 36),
-                        _titleFont,
-                        _titleBrush,
-                        titleRect);
-                    e.Graphics.DrawString(
-                        item.ProcessName,
-                        _subFont,
-                        _subBrush,
-                        subRect);
+                    if (item.IsGroupChild)
+                    {
+                        // 子窗口缩进显示，不画图标和进程名
+                        textX += 20;
+                        textWidth -= 20;
+                        var titleRect = new RectangleF(textX, y + 7, textWidth, 20);
+                        e.Graphics.DrawString(
+                            "  " + Truncate(item.Title, 32),
+                            _titleFont,
+                            _titleBrush,
+                            titleRect);
+                    }
+                    else
+                    {
+                        var titleRect = new RectangleF(textX, y + 7, textWidth, 20);
+                        var subRect = new RectangleF(textX, y + 27, textWidth, 16);
+                        e.Graphics.DrawString(
+                            Truncate(item.Title, 36),
+                            _titleFont,
+                            _titleBrush,
+                            titleRect);
+                        e.Graphics.DrawString(
+                            item.ProcessName,
+                            _subFont,
+                            _subBrush,
+                            subRect);
+                    }
 
                     if (i < Items.Count - 1)
                     {
