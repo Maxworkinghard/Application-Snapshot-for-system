@@ -23,9 +23,13 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     private var statusItem: NSStatusItem?
     private var captureMenuItem: NSMenuItem?
     private var recordMenuItem: NSMenuItem?
+    private var capturePreviousMenuItem: NSMenuItem?
+    private var polishMenuItem: NSMenuItem?
     private var hotKey: GlobalHotKey?
     private var recordingHotKey: GlobalHotKey?
-    private var shortcutConfiguration = ShortcutConfiguration.default
+    private var previousAppHotKey: GlobalHotKey?
+    private var polishHotKey: GlobalHotKey?
+    private var shortcutSet = ShortcutSet.default
     private var shortcutSettingsController: ShortcutSettingsController?
     private var promptPolishSettingsController: PromptPolishSettingsController?
     private var workspaceObserver: NSObjectProtocol?
@@ -48,23 +52,32 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         rememberFrontmostApplication()
         observeApplicationChanges()
         observeApplicationTermination()
-        shortcutConfiguration = shortcutStore.configuration
+        shortcutSet = shortcutStore.configuration
         configureStatusItem()
         configureDesktopPet()
 
-        if !registerShortcut(shortcutConfiguration) {
-            shortcutConfiguration = .default
-            shortcutStore.save(shortcutConfiguration)
-            updateCaptureMenuShortcut()
+        if !registerCaptureShortcut(shortcutSet.capture) {
+            shortcutSet.capture = ShortcutConfiguration.default
+            shortcutStore.save(shortcutSet)
+            updateMenuShortcuts()
 
-            if !registerShortcut(shortcutConfiguration) {
+            if !registerCaptureShortcut(shortcutSet.capture) {
                 toastController.show(message: "快捷键注册失败，请从菜单栏截取", symbolName: "exclamationmark.triangle")
             } else {
                 toastController.show(message: "原快捷键被占用，已恢复默认快捷键", symbolName: "exclamationmark.triangle")
             }
         }
 
-        _ = registerRecordingShortcut()
+        if !registerRecordShortcut(shortcutSet.record) {
+            toastController.show(message: "录制快捷键 \(shortcutSet.record.displayString) 被占用", symbolName: "exclamationmark.triangle")
+        }
+        if !registerPreviousAppShortcut(shortcutSet.capturePrevious) {
+            toastController.show(message: "截取上一个应用的快捷键被占用，可右键悬浮窗修改", symbolName: "exclamationmark.triangle")
+        }
+        if !registerPolishShortcut(shortcutSet.polish) {
+            toastController.show(message: "润色快捷键被占用，可右键悬浮窗修改", symbolName: "exclamationmark.triangle")
+        }
+        updateMenuShortcuts()
     }
 
     func applicationWillTerminate(_ notification: Notification) {
@@ -94,6 +107,15 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
             return
         }
         NSSound(named: NSSound.Name("Tink"))?.play()
+    }
+
+    /// 截取「上一个前台应用」窗口（悬浮球当前显示图标的目标应用）。
+    @objc private func capturePreviousAppWindow() {
+        guard let application = previousExternalApplication else {
+            toastController.show(message: "还没有上一个应用可截取", symbolName: "exclamationmark.triangle")
+            return
+        }
+        captureWindow(of: application)
     }
 
     private func captureWindow(of application: NSRunningApplication?) {
@@ -225,22 +247,9 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
 
         recordMenuItem?.title = title
         recordMenuItem?.isEnabled = isEnabled
-        recordMenuItem?.keyEquivalentModifierMask = [.option, .shift]
-        recordMenuItem?.keyEquivalent = "r"
+        recordMenuItem?.keyEquivalentModifierMask = shortcutSet.record.menuModifierMask
+        recordMenuItem?.keyEquivalent = shortcutSet.record.menuKeyEquivalent
         petController?.updateRecordingState()
-    }
-
-    private func registerRecordingShortcut() -> Bool {
-        let config = ShortcutConfiguration(
-            keyCode: UInt32(kVK_ANSI_R),
-            modifiers: UInt32(optionKey | shiftKey)
-        )
-        let hotKey = GlobalHotKey(configuration: config) { [weak self] in
-            self?.toggleRecording()
-        }
-        guard let hotKey else { return false }
-        recordingHotKey = hotKey
-        return true
     }
 
     @objc private func chooseWindow() {
@@ -321,12 +330,12 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     @objc private func openShortcutSettings() {
         if shortcutSettingsController == nil {
             shortcutSettingsController = ShortcutSettingsController(
-                currentConfiguration: shortcutConfiguration
-            ) { [weak self] configuration in
-                self?.applyShortcut(configuration) ?? false
+                currentSet: shortcutSet
+            ) { [weak self] set in
+                self?.applyShortcuts(set) ?? false
             }
         }
-        shortcutSettingsController?.currentConfiguration = shortcutConfiguration
+        shortcutSettingsController?.currentSet = shortcutSet
         shortcutSettingsController?.show()
     }
 
@@ -359,7 +368,26 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         captureItem.target = self
         menu.addItem(captureItem)
         captureMenuItem = captureItem
-        updateCaptureMenuShortcut()
+
+        let capturePreviousItem = NSMenuItem(
+            title: "截取上一个应用窗口",
+            action: #selector(capturePreviousAppWindow),
+            keyEquivalent: "p"
+        )
+        capturePreviousItem.keyEquivalentModifierMask = [.option, .shift]
+        capturePreviousItem.target = self
+        menu.addItem(capturePreviousItem)
+        capturePreviousMenuItem = capturePreviousItem
+
+        let polishItem = NSMenuItem(
+            title: "润色提示词",
+            action: #selector(polishPromptFromClipboard),
+            keyEquivalent: "m"
+        )
+        polishItem.keyEquivalentModifierMask = [.option, .shift]
+        polishItem.target = self
+        menu.addItem(polishItem)
+        polishMenuItem = polishItem
 
         let recordItem = NSMenuItem(
             title: "录制当前应用窗口",
@@ -427,31 +455,86 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         statusItem = item
     }
 
-    private func registerShortcut(_ configuration: ShortcutConfiguration) -> Bool {
-        guard let newHotKey = GlobalHotKey(
+    private func registerCaptureShortcut(_ configuration: ShortcutConfiguration) -> Bool {
+        guard let hotKey = GlobalHotKey(
             configuration: configuration,
             action: { [weak self] in self?.captureFrontWindow() }
         ) else {
             return false
         }
-        hotKey = newHotKey
+        self.hotKey = hotKey
         return true
     }
 
-    private func applyShortcut(_ configuration: ShortcutConfiguration) -> Bool {
-        guard configuration != shortcutConfiguration else { return true }
-        guard registerShortcut(configuration) else { return false }
-
-        shortcutConfiguration = configuration
-        shortcutStore.save(configuration)
-        updateCaptureMenuShortcut()
-        toastController.show(message: "快捷键已设为 \(configuration.displayString)", symbolName: "checkmark")
+    private func registerRecordShortcut(_ configuration: ShortcutConfiguration) -> Bool {
+        guard let hotKey = GlobalHotKey(
+            configuration: configuration,
+            action: { [weak self] in self?.toggleRecording() }
+        ) else {
+            return false
+        }
+        recordingHotKey = hotKey
         return true
     }
 
-    private func updateCaptureMenuShortcut() {
-        captureMenuItem?.keyEquivalent = shortcutConfiguration.menuKeyEquivalent
-        captureMenuItem?.keyEquivalentModifierMask = shortcutConfiguration.menuModifierMask
+    private func registerPreviousAppShortcut(_ configuration: ShortcutConfiguration) -> Bool {
+        guard let hotKey = GlobalHotKey(
+            configuration: configuration,
+            action: { [weak self] in self?.capturePreviousAppWindow() }
+        ) else {
+            return false
+        }
+        previousAppHotKey = hotKey
+        return true
+    }
+
+    private func registerPolishShortcut(_ configuration: ShortcutConfiguration) -> Bool {
+        guard let hotKey = GlobalHotKey(
+            configuration: configuration,
+            action: { [weak self] in self?.polishPromptFromClipboard() }
+        ) else {
+            return false
+        }
+        polishHotKey = hotKey
+        return true
+    }
+
+    /// 设置窗口保存时整组应用：四个组合全部注册成功才替换旧热键并落盘；
+    /// 任一失败则丢弃本次新建的热键（deinit 自动注销），旧快捷键原样保留。
+    private func applyShortcuts(_ set: ShortcutSet) -> Bool {
+        guard !set.hasConflict else { return false }
+        guard let capture = GlobalHotKey(configuration: set.capture, action: { [weak self] in self?.captureFrontWindow() }),
+              let record = GlobalHotKey(configuration: set.record, action: { [weak self] in self?.toggleRecording() }),
+              let previous = GlobalHotKey(configuration: set.capturePrevious, action: { [weak self] in self?.capturePreviousAppWindow() }),
+              let polish = GlobalHotKey(configuration: set.polish, action: { [weak self] in self?.polishPromptFromClipboard() })
+        else {
+            return false
+        }
+
+        hotKey = capture
+        recordingHotKey = record
+        previousAppHotKey = previous
+        polishHotKey = polish
+
+        shortcutSet = set
+        shortcutStore.save(set)
+        updateMenuShortcuts()
+        toastController.show(message: "快捷键已保存", symbolName: "checkmark")
+        return true
+    }
+
+    private func updateMenuShortcuts() {
+        captureMenuItem?.keyEquivalent = shortcutSet.capture.menuKeyEquivalent
+        captureMenuItem?.keyEquivalentModifierMask = shortcutSet.capture.menuModifierMask
+
+        recordMenuItem?.keyEquivalent = shortcutSet.record.menuKeyEquivalent
+        recordMenuItem?.keyEquivalentModifierMask = shortcutSet.record.menuModifierMask
+
+        capturePreviousMenuItem?.keyEquivalent = shortcutSet.capturePrevious.menuKeyEquivalent
+        capturePreviousMenuItem?.keyEquivalentModifierMask = shortcutSet.capturePrevious.menuModifierMask
+
+        polishMenuItem?.keyEquivalent = shortcutSet.polish.menuKeyEquivalent
+        polishMenuItem?.keyEquivalentModifierMask = shortcutSet.polish.menuModifierMask
     }
 
     private func observeApplicationChanges() {
@@ -512,6 +595,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         controller.onPolishPrompt = { [weak self] in self?.polishPromptFromClipboard() }
         controller.onPolishBusy = { [weak self] in self?.isPolishBusy() ?? false }
         controller.onOpenScreenRecordingSettings = { [weak self] in self?.openScreenRecordingSettings() }
+        controller.onOpenShortcutSettings = { [weak self] in self?.openShortcutSettings() }
         controller.show()
         controller.updateTarget(previousExternalApplication)
         petController = controller
@@ -534,7 +618,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
 
     /// 润色流程：剪切板文字 → 用户确认 → 服务润色 → 结果写回剪切板（替换原文）。
     /// 处理中再次点击视为取消；写回前会校验剪切板未被外部改动，避免用旧结果覆盖用户新复制的内容。
-    private func polishPromptFromClipboard() {
+    @objc private func polishPromptFromClipboard() {
         if case .polishing(let task, _) = polishRuntimeState {
             task.cancel()
             polishRuntimeState = .idle

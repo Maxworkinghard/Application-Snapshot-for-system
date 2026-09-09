@@ -2,16 +2,24 @@ import AppKit
 import Carbon
 
 final class ShortcutSettingsController: NSObject, NSWindowDelegate {
-    var currentConfiguration: ShortcutConfiguration
-    private let onSave: (ShortcutConfiguration) -> Bool
+    var currentSet: ShortcutSet
+    private let onSave: (ShortcutSet) -> Bool
     private var window: NSWindow?
-    private var recorder: ShortcutRecorderView?
+    private var recorders: [ShortcutRecorderView] = []
+    private var statusLabel: NSTextField?
+
+    private static let functionNames = [
+        "截取当前应用窗口",
+        "录制当前应用窗口",
+        "截取上一个应用窗口",
+        "润色提示词",
+    ]
 
     init(
-        currentConfiguration: ShortcutConfiguration,
-        onSave: @escaping (ShortcutConfiguration) -> Bool
+        currentSet: ShortcutSet,
+        onSave: @escaping (ShortcutSet) -> Bool
     ) {
-        self.currentConfiguration = currentConfiguration
+        self.currentSet = currentSet
         self.onSave = onSave
     }
 
@@ -22,16 +30,51 @@ final class ShortcutSettingsController: NSObject, NSWindowDelegate {
             return
         }
 
-        let recorder = ShortcutRecorderView(configuration: currentConfiguration)
-        recorder.translatesAutoresizingMaskIntoConstraints = false
-        self.recorder = recorder
+        let configurations = [
+            currentSet.capture,
+            currentSet.record,
+            currentSet.capturePrevious,
+            currentSet.polish,
+        ]
+
+        var rowViews: [NSView] = []
+        recorders = []
+        for (index, name) in Self.functionNames.enumerated() {
+            let recorder = ShortcutRecorderView(configuration: configurations[index])
+            recorder.translatesAutoresizingMaskIntoConstraints = false
+            recorders.append(recorder)
+
+            let label = NSTextField(labelWithString: name)
+            label.font = .systemFont(ofSize: 13)
+            label.textColor = .labelColor
+            label.translatesAutoresizingMaskIntoConstraints = false
+
+            let row = NSView()
+            row.translatesAutoresizingMaskIntoConstraints = false
+            row.addSubview(label)
+            row.addSubview(recorder)
+            NSLayoutConstraint.activate([
+                label.leadingAnchor.constraint(equalTo: row.leadingAnchor),
+                label.centerYAnchor.constraint(equalTo: row.centerYAnchor),
+                recorder.trailingAnchor.constraint(equalTo: row.trailingAnchor),
+                recorder.centerYAnchor.constraint(equalTo: row.centerYAnchor),
+                recorder.leadingAnchor.constraint(greaterThanOrEqualTo: label.trailingAnchor, constant: 16),
+                row.heightAnchor.constraint(equalToConstant: 44)
+            ])
+            rowViews.append(row)
+        }
 
         let title = NSTextField(labelWithString: "快捷键")
         title.font = .systemFont(ofSize: 20, weight: .semibold)
 
-        let description = NSTextField(labelWithString: "按下你想使用的组合键")
+        let description = NSTextField(labelWithString: "点击右侧组合键，再按下想使用的新组合")
         description.textColor = .secondaryLabelColor
         description.font = .systemFont(ofSize: 13)
+
+        let status = NSTextField(labelWithString: "")
+        status.font = .systemFont(ofSize: 12, weight: .medium)
+        status.textColor = .systemRed
+        status.translatesAutoresizingMaskIntoConstraints = false
 
         let cancelButton = NSButton(
             title: "取消",
@@ -53,11 +96,17 @@ final class ShortcutSettingsController: NSObject, NSWindowDelegate {
         buttons.spacing = 8
         buttons.alignment = .centerY
 
+        let rows = NSStackView(views: rowViews)
+        rows.orientation = .vertical
+        rows.spacing = 6
+        rows.translatesAutoresizingMaskIntoConstraints = false
+
         let content = NSView()
         content.translatesAutoresizingMaskIntoConstraints = false
         content.addSubview(title)
         content.addSubview(description)
-        content.addSubview(recorder)
+        content.addSubview(rows)
+        content.addSubview(status)
         content.addSubview(buttons)
 
         NSLayoutConstraint.activate([
@@ -67,18 +116,21 @@ final class ShortcutSettingsController: NSObject, NSWindowDelegate {
             description.topAnchor.constraint(equalTo: title.bottomAnchor, constant: 6),
             description.leadingAnchor.constraint(equalTo: title.leadingAnchor),
             description.trailingAnchor.constraint(equalTo: title.trailingAnchor),
-            recorder.topAnchor.constraint(equalTo: description.bottomAnchor, constant: 20),
-            recorder.leadingAnchor.constraint(equalTo: title.leadingAnchor),
-            recorder.trailingAnchor.constraint(equalTo: title.trailingAnchor),
-            recorder.heightAnchor.constraint(equalToConstant: 48),
-            buttons.topAnchor.constraint(equalTo: recorder.bottomAnchor, constant: 24),
+            rows.topAnchor.constraint(equalTo: description.bottomAnchor, constant: 18),
+            rows.leadingAnchor.constraint(equalTo: title.leadingAnchor),
+            rows.trailingAnchor.constraint(equalTo: title.trailingAnchor),
+            status.topAnchor.constraint(equalTo: rows.bottomAnchor, constant: 10),
+            status.leadingAnchor.constraint(equalTo: title.leadingAnchor),
+            status.trailingAnchor.constraint(equalTo: title.trailingAnchor),
+            status.heightAnchor.constraint(equalToConstant: 16),
+            buttons.topAnchor.constraint(equalTo: status.bottomAnchor, constant: 14),
             buttons.trailingAnchor.constraint(equalTo: title.trailingAnchor),
             buttons.bottomAnchor.constraint(equalTo: content.bottomAnchor, constant: -20),
-            content.widthAnchor.constraint(equalToConstant: 360)
+            content.widthAnchor.constraint(equalToConstant: 380)
         ])
 
         let window = NSWindow(
-            contentRect: NSRect(x: 0, y: 0, width: 360, height: 196),
+            contentRect: NSRect(x: 0, y: 0, width: 380, height: 400),
             styleMask: [.titled, .closable],
             backing: .buffered,
             defer: false
@@ -91,7 +143,7 @@ final class ShortcutSettingsController: NSObject, NSWindowDelegate {
         window.makeKeyAndOrderFront(nil)
         NSApp.activate(ignoringOtherApps: true)
         self.window = window
-        recorder.window?.makeFirstResponder(recorder)
+        self.statusLabel = status
     }
 
     @objc private func cancel() {
@@ -99,18 +151,32 @@ final class ShortcutSettingsController: NSObject, NSWindowDelegate {
     }
 
     @objc private func save() {
-        guard let configuration = recorder?.configuration else { return }
-        guard onSave(configuration) else {
-            NSSound.beep()
-            recorder?.showError("这个快捷键已被占用，请换一个组合")
+        guard recorders.count == 4 else { return }
+        var set = currentSet
+        set.capture = recorders[0].configuration
+        set.record = recorders[1].configuration
+        set.capturePrevious = recorders[2].configuration
+        set.polish = recorders[3].configuration
+
+        if set.hasConflict {
+            showStatus("存在重复的快捷键组合，请调整")
+            return
+        }
+        guard onSave(set) else {
+            showStatus("有快捷键已被其他应用占用，请换一个组合")
             return
         }
         window?.close()
     }
 
+    private func showStatus(_ message: String) {
+        statusLabel?.stringValue = message
+    }
+
     func windowWillClose(_ notification: Notification) {
         window = nil
-        recorder = nil
+        recorders = []
+        statusLabel = nil
     }
 }
 
@@ -130,13 +196,15 @@ private final class ShortcutRecorderView: NSView {
         layer?.backgroundColor = NSColor.controlBackgroundColor.cgColor
 
         label.alignment = .center
-        label.font = .systemFont(ofSize: 17, weight: .medium)
+        label.font = .systemFont(ofSize: 15, weight: .medium)
         label.translatesAutoresizingMaskIntoConstraints = false
         addSubview(label)
         NSLayoutConstraint.activate([
-            label.leadingAnchor.constraint(equalTo: leadingAnchor, constant: 12),
-            label.trailingAnchor.constraint(equalTo: trailingAnchor, constant: -12),
-            label.centerYAnchor.constraint(equalTo: centerYAnchor)
+            label.leadingAnchor.constraint(equalTo: leadingAnchor, constant: 10),
+            label.trailingAnchor.constraint(equalTo: trailingAnchor, constant: -10),
+            label.centerYAnchor.constraint(equalTo: centerYAnchor),
+            heightAnchor.constraint(equalToConstant: 34),
+            widthAnchor.constraint(equalToConstant: 140)
         ])
         updateLabel()
     }
@@ -195,13 +263,13 @@ private final class ShortcutRecorderView: NSView {
     func showError(_ message: String) {
         label.stringValue = message
         label.textColor = .systemRed
-        label.font = .systemFont(ofSize: 12, weight: .medium)
+        label.font = .systemFont(ofSize: 11, weight: .medium)
     }
 
     private func updateLabel() {
         label.stringValue = configuration.displayString
         label.textColor = .labelColor
-        label.font = .systemFont(ofSize: 17, weight: .medium)
+        label.font = .systemFont(ofSize: 15, weight: .medium)
     }
 
     private func carbonModifiers(from flags: NSEvent.ModifierFlags) -> UInt32 {
