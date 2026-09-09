@@ -72,10 +72,23 @@ namespace AppSnapshot
                 | ControlStyles.UserPaint,
                 true);
 
-            Rectangle workingArea = Screen.PrimaryScreen.WorkingArea;
+            // 跟随悬浮球所在屏幕（多显示器时不再总是落到主屏）
+            Rectangle workingArea = AnchorScreen().WorkingArea;
             Location = new Point(
                 workingArea.Right - Width - 16,
                 workingArea.Bottom - Height - 12);
+        }
+
+        internal static Screen AnchorScreen()
+        {
+            Form bubble = App.MainForm;
+            if (bubble != null && !bubble.IsDisposed)
+            {
+                Rectangle bounds = bubble.Bounds;
+                var center = new Point(bounds.Left + bounds.Width / 2, bounds.Top + bounds.Height / 2);
+                return Screen.FromPoint(center);
+            }
+            return Screen.FromPoint(Cursor.Position);
         }
 
         protected override bool ShowWithoutActivation

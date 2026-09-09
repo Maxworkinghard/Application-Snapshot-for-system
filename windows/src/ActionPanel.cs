@@ -325,15 +325,6 @@ namespace AppSnapshot
             });
         }
 
-        private static string TruncateTitle(string title)
-        {
-            if (title != null && title.Length > 60)
-            {
-                return title.Substring(0, 60) + "…";
-            }
-            return title;
-        }
-
         private void SetBoundsCore(int width, int height)
         {
             ClientSize = new Size(width, height);
