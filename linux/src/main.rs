@@ -430,6 +430,9 @@ impl Daemon {
             return;
         }
 
+        // 先留一份旧配置：新快捷键注册失败时回滚，保持原有绑定可用
+        let old_settings = settings::load();
+
         settings::save_shortcuts(&shortcut, &shortcut_record, &shortcut_previous_app, &shortcut_polish);
         settings::save_polish(&polish_kind, &polish_base_url, &polish_model, &polish_api_key);
         self.polish_config = polish::PolishConfig {
@@ -451,7 +454,13 @@ impl Daemon {
                 if failures.is_empty() {
                     notify::notify("设置已保存", "快捷键与润色配置已生效");
                 } else {
-                    notify::notify("部分快捷键注册失败", &failures.join("；"));
+                    // 回滚到旧绑定，避免半绑定状态（新配置已存盘，下次启动仍会尝试）
+                    backend.ungrab_all();
+                    let _ = register_hotkeys(backend, &old_settings);
+                    notify::notify(
+                        "部分快捷键注册失败",
+                        &format!("{}；已恢复之前的快捷键绑定", failures.join("；")),
+                    );
                 }
             }
             None => notify::notify("设置已保存", "润色配置已生效；Wayland 下快捷键由桌面环境管理"),

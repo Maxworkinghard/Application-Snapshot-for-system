@@ -250,14 +250,24 @@ namespace AppSnapshot
                 var old = new[] { _capture, _record, _previousApp, _polish };
                 for (int i = 0; i < old.Length; i++)
                 {
-                    if (old[i] != null)
+                    if (old[i] == null)
                     {
-                        NativeMethods.RegisterHotKey(
+                        continue;
+                    }
+                    // 恢复旧组合也可能失败（间隙中被其他程序抢占）：
+                    // 失败的项置空，保持记录与实际注册状态一致
+                    if (!NativeMethods.RegisterHotKey(
                             Handle, i + 1,
                             old[i].Modifiers | NativeMethods.ModNoRepeat,
-                            old[i].Vk);
+                            old[i].Vk))
+                    {
+                        old[i] = null;
                     }
                 }
+                _capture = old[0];
+                _record = old[1];
+                _previousApp = old[2];
+                _polish = old[3];
                 return failures.ToArray();
             }
 
