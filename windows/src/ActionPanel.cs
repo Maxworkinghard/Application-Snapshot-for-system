@@ -463,71 +463,73 @@ namespace AppSnapshot
         {
             base.OnPaint(e);
             e.Graphics.Clear(BackColor);
+            e.Graphics.TextRenderingHint = System.Drawing.Text.TextRenderingHint.ClearTypeGridFit;
 
-            int y = -_scrollOffset;
             for (int i = 0; i < Items.Count; i++)
             {
-                var bounds = new Rectangle(0, y, Width, ItemHeight);
-                if (bounds.Bottom >= 0 && bounds.Top <= Height)
+                int itemTop = i * ItemHeight - _scrollOffset;
+                if (itemTop + ItemHeight < 0 || itemTop > Height)
                 {
-                    if (i == _hoverIndex)
-                    {
-                        e.Graphics.FillRectangle(_hoverBrush, bounds);
-                    }
+                    continue;
+                }
 
-                    WindowListItem item = Items[i];
-                    if (item.Icon != null && !item.IsGroupChild)
+                var bounds = new Rectangle(0, itemTop, Width, ItemHeight);
+                WindowListItem item = Items[i];
+
+                if (i == _hoverIndex)
+                {
+                    e.Graphics.FillRectangle(_hoverBrush, bounds);
+                }
+
+                int textX;
+                if (item.IsGroupChild)
+                {
+                    // 子窗口：缩进，单行显示标题
+                    textX = IconPadding + IconSize + 30;
+                    var titleRect = new RectangleF(textX, itemTop + 14, Width - textX - 8, 20);
+                    e.Graphics.DrawString(
+                        Truncate(item.Title, 32),
+                        _titleFont,
+                        _titleBrush,
+                        titleRect);
+                }
+                else
+                {
+                    // 首窗口：图标 + 标题 + 进程名两行
+                    if (item.Icon != null)
                     {
                         e.Graphics.DrawImage(
                             item.Icon,
                             IconPadding,
-                            y + (ItemHeight - IconSize) / 2,
+                            itemTop + (ItemHeight - IconSize) / 2,
                             IconSize,
                             IconSize);
                     }
-
-                    int textX = IconPadding + IconSize + 10;
+                    textX = IconPadding + IconSize + 10;
                     int textWidth = Width - textX - 8;
-
-                    if (item.IsGroupChild)
-                    {
-                        // 子窗口缩进显示，不画图标和进程名
-                        textX += 20;
-                        textWidth -= 20;
-                        var titleRect = new RectangleF(textX, y + 7, textWidth, 20);
-                        e.Graphics.DrawString(
-                            "  " + Truncate(item.Title, 32),
-                            _titleFont,
-                            _titleBrush,
-                            titleRect);
-                    }
-                    else
-                    {
-                        var titleRect = new RectangleF(textX, y + 7, textWidth, 20);
-                        var subRect = new RectangleF(textX, y + 27, textWidth, 16);
-                        e.Graphics.DrawString(
-                            Truncate(item.Title, 36),
-                            _titleFont,
-                            _titleBrush,
-                            titleRect);
-                        e.Graphics.DrawString(
-                            item.ProcessName,
-                            _subFont,
-                            _subBrush,
-                            subRect);
-                    }
-
-                    if (i < Items.Count - 1)
-                    {
-                        e.Graphics.DrawLine(
-                            _separatorPen,
-                            textX,
-                            y + ItemHeight - 1,
-                            Width - 8,
-                            y + ItemHeight - 1);
-                    }
+                    var titleRect = new RectangleF(textX, itemTop + 7, textWidth, 20);
+                    var subRect = new RectangleF(textX, itemTop + 27, textWidth, 16);
+                    e.Graphics.DrawString(
+                        Truncate(item.Title, 36),
+                        _titleFont,
+                        _titleBrush,
+                        titleRect);
+                    e.Graphics.DrawString(
+                        item.ProcessName,
+                        _subFont,
+                        _subBrush,
+                        subRect);
                 }
-                y += ItemHeight;
+
+                if (i < Items.Count - 1)
+                {
+                    e.Graphics.DrawLine(
+                        _separatorPen,
+                        textX,
+                        itemTop + ItemHeight - 1,
+                        Width - 8,
+                        itemTop + ItemHeight - 1);
+                }
             }
         }
 
