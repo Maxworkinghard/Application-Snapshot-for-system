@@ -20,6 +20,8 @@
     <Compile Include="src\HotKeys.cs" />
     <Compile Include="src\NativeMethods.cs" />
     <Compile Include="src\PolishController.cs" />
+    <Compile Include="src\PolishPromptLibrary.cs" />
+    <Compile Include="src\PolishPromptEditorForm.cs" />
     <Compile Include="src\PolishService.cs" />
     <Compile Include="src\SettingsForm.cs" />
     <Compile Include="src\Program.cs" />
