@@ -36,7 +36,11 @@ impl ksni::Tray for Tray {
         let polishing = self.polishing.load(Ordering::SeqCst);
 
         let capture = StandardItem {
-            label: format!("截取当前应用窗口（{}）", self.shortcut),
+            label: if self.shortcut.is_empty() {
+                "截取当前应用窗口".into()
+            } else {
+                format!("截取当前应用窗口（{}）", self.shortcut)
+            },
             activate: Box::new(|tray: &mut Self| {
                 let _ = tray.tx.send(Msg::Capture);
             }),
@@ -91,6 +95,15 @@ impl ksni::Tray for Tray {
         }
         .into();
 
+        let settings = StandardItem {
+            label: "设置…".into(),
+            activate: Box::new(|tray: &mut Self| {
+                let _ = tray.tx.send(Msg::OpenSettings);
+            }),
+            ..Default::default()
+        }
+        .into();
+
         let quit = StandardItem {
             label: "退出应用快照".into(),
             activate: Box::new(|tray: &mut Self| {
@@ -105,6 +118,7 @@ impl ksni::Tray for Tray {
             list,
             record,
             polish,
+            settings,
             ksni::MenuItem::Separator,
             quit,
         ]

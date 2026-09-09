@@ -21,7 +21,7 @@
     <Compile Include="src\NativeMethods.cs" />
     <Compile Include="src\PolishController.cs" />
     <Compile Include="src\PolishService.cs" />
-    <Compile Include="src\PolishSettingsForm.cs" />
+    <Compile Include="src\SettingsForm.cs" />
     <Compile Include="src\Program.cs" />
     <Compile Include="src\RecordingControlsForm.cs" />
     <Compile Include="src\RecordingService.cs" />

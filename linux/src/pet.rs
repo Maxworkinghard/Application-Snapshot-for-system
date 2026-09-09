@@ -54,6 +54,13 @@ struct PetControl {
 
 static PET_CONTROL: Mutex<Option<PetControl>> = Mutex::new(None);
 
+/// 「上一个前台应用」窗口 ID（悬浮球当前显示图标的目标），供「截取上一个应用」快捷键使用。
+static PREVIOUS_WINDOW: std::sync::atomic::AtomicU32 = std::sync::atomic::AtomicU32::new(0);
+
+pub fn previous_window() -> u32 {
+    PREVIOUS_WINDOW.load(std::sync::atomic::Ordering::SeqCst)
+}
+
 pub fn set_pet_visible(visible: bool) {
     if let Ok(guard) = PET_CONTROL.lock() {
         if let Some(control) = guard.as_ref() {
@@ -239,6 +246,10 @@ impl Pet {
                 Event::Expose(_) => {
                     self.copy_pixmap();
                 }
+                Event::ButtonPress(event) if event.detail == 3 => {
+                    // 右键：打开统一设置（快捷键绑定 + 润色服务）
+                    let _ = tx.send(Msg::OpenSettings);
+                }
                 Event::ButtonPress(event) if event.detail == 1 => {
                     // X 在按钮按下时自动独占指针，松开前事件都发给我们
                     let geometry = self.conn.get_geometry(self.window)?.reply()?;
@@ -297,6 +308,7 @@ impl Pet {
         if active != self.current {
             self.previous = self.current;
             self.current = active;
+            PREVIOUS_WINDOW.store(self.previous, std::sync::atomic::Ordering::SeqCst);
             if self.previous != x11rb::NONE {
                 match self.window_icon(self.previous) {
                     Some((width, height, pixels)) => self.paint_icon(width, height, &pixels),
