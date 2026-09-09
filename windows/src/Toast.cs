@@ -62,7 +62,8 @@ namespace AppSnapshot
             TopMost = true;
             BackColor = Color.FromArgb(32, 32, 36);
             ForeColor = Color.White;
-            ClientSize = new Size(340, 46);
+            // 常量是 96 DPI 设计值，经 UiScale 换算成当前屏幕的物理像素
+            ClientSize = UiScale.Px(340, 46);
             Font = new Font("Microsoft YaHei UI", 9F);
 
             SetStyle(
@@ -75,8 +76,8 @@ namespace AppSnapshot
             // 跟随悬浮球所在屏幕（多显示器时不再总是落到主屏）
             Rectangle workingArea = AnchorScreen().WorkingArea;
             Location = new Point(
-                workingArea.Right - Width - 16,
-                workingArea.Bottom - Height - 12);
+                workingArea.Right - Width - UiScale.Px(16),
+                workingArea.Bottom - Height - UiScale.Px(12));
         }
 
         internal static Screen AnchorScreen()
@@ -116,7 +117,7 @@ namespace AppSnapshot
 
             using (var path = new GraphicsPath())
             {
-                int radius = 10;
+                int radius = UiScale.Px(10);
                 var rect = new Rectangle(1, 1, ClientSize.Width - 2, ClientSize.Height - 2);
                 path.AddArc(rect.X, rect.Y, radius * 2, radius * 2, 180, 90);
                 path.AddArc(rect.Right - radius * 2, rect.Y, radius * 2, radius * 2, 270, 90);
@@ -172,16 +173,19 @@ namespace AppSnapshot
             using (var iconBrush = new SolidBrush(iconColor))
             using (var iconFont = new Font(Font.FontFamily, 13F, FontStyle.Bold))
             {
-                e.Graphics.FillEllipse(iconBrush, new Rectangle(14, 12, 22, 22));
+                int iconX = UiScale.Px(14);
+                int iconY = UiScale.Px(12);
+                int iconDiameter = UiScale.Px(22);
+                e.Graphics.FillEllipse(iconBrush, new Rectangle(iconX, iconY, iconDiameter, iconDiameter));
                 var iconSize = e.Graphics.MeasureString(iconText, iconFont);
                 e.Graphics.DrawString(
                     iconText, iconFont, Brushes.White,
-                    new RectangleF(14 + (22 - iconSize.Width) / 2f, 12 + (22 - iconSize.Height) / 2f, iconSize.Width, iconSize.Height));
+                    new RectangleF(iconX + (iconDiameter - iconSize.Width) / 2f, iconY + (iconDiameter - iconSize.Height) / 2f, iconSize.Width, iconSize.Height));
             }
 
             using (var textBrush = new SolidBrush(Color.FromArgb(238, 238, 240)))
             {
-                var bounds = new RectangleF(48, 0, ClientSize.Width - 48 - 14, ClientSize.Height);
+                var bounds = new RectangleF(UiScale.Px(48), 0, ClientSize.Width - UiScale.Px(48) - UiScale.Px(14), ClientSize.Height);
                 var format = new StringFormat
                 {
                     Alignment = StringAlignment.Near,

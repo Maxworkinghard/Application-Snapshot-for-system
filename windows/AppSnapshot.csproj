@@ -32,6 +32,7 @@
     <Compile Include="src\TargetAppTracker.cs" />
     <Compile Include="src\Toast.cs" />
     <Compile Include="src\TrayController.cs" />
+    <Compile Include="src\UiScale.cs" />
     <Compile Include="src\WindowIconLoader.cs" />
   </ItemGroup>
   <ItemGroup>

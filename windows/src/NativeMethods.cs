@@ -28,6 +28,12 @@ namespace AppSnapshot
         internal const uint CredTypeGeneric = 1;
         internal const uint CredPersistLocalMachine = 2;
 
+        internal const int DwmwaCloaked = 14;
+        internal const int SwRestore = 9;
+        internal const int SwMinimize = 6;
+        internal const int GwOwner = 4;
+        internal const int WsExAppWindow = 0x00040000;
+
         internal const int WmHotkey = 0x0312;
         internal const uint ModAlt = 0x0001;
         internal const uint ModControl = 0x0002;
@@ -127,6 +133,12 @@ namespace AppSnapshot
         [DllImport("dwmapi.dll")]
         internal static extern int DwmGetWindowAttribute(IntPtr hWnd, int attribute, out Rect value, int size);
 
+        [DllImport("dwmapi.dll", EntryPoint = "DwmGetWindowAttribute")]
+        internal static extern int DwmGetWindowAttributeInt(IntPtr hWnd, int attribute, out int value, int size);
+
+        [DllImport("user32.dll")]
+        internal static extern bool ShowWindow(IntPtr hWnd, int command);
+
         [DllImport("user32.dll", EntryPoint = "GetWindowLong")]
         internal static extern int GetWindowLong32(IntPtr hWnd, int index);
 
@@ -208,5 +220,8 @@ namespace AppSnapshot
 
         [DllImport("user32.dll")]
         internal static extern IntPtr GetAncestor(IntPtr hWnd, uint flags);
+
+        [DllImport("user32.dll")]
+        internal static extern IntPtr GetWindow(IntPtr hWnd, uint command);
     }
 }
