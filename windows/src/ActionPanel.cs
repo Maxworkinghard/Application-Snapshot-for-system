@@ -298,7 +298,14 @@ namespace AppSnapshot
 
             NativeMethods.EnumWindowsDelegate callback = delegate(IntPtr window, IntPtr lParam)
             {
-                if (!NativeMethods.IsWindowVisible(window) || NativeMethods.IsIconic(window))
+                if (NativeMethods.IsIconic(window))
+                {
+                    return true;
+                }
+
+                // 只保留真正的顶层窗口（GetAncestor(GA_ROOT) == 自身），
+                // 排除子窗口、悬浮工具窗等嵌套句柄
+                if (NativeMethods.GetAncestor(window, 2) != window)
                 {
                     return true;
                 }
@@ -310,11 +317,8 @@ namespace AppSnapshot
                     return true;
                 }
 
-                // 样式值可能含高位标志（如 WS_POPUP=0x80000000），ToInt32 会抛 OverflowException
-                long style = NativeMethods.GetWindowLongPtr(window, NativeMethods.GwlStyle).ToInt64();
                 long extended = NativeMethods.GetWindowLongPtr(window, NativeMethods.GwlExStyle).ToInt64();
-                if ((extended & NativeMethods.WsExToolWindowCheck) != 0
-                    || (style & NativeMethods.WsVisible) == 0)
+                if ((extended & NativeMethods.WsExToolWindowCheck) != 0)
                 {
                     return true;
                 }
@@ -332,7 +336,6 @@ namespace AppSnapshot
                     return true;
                 }
 
-                // 每个可见顶层窗口都列出，不再按进程去重（多窗口应用每个窗口都可单独截取）
                 entries.Add(new WindowEntry { Handle = window, Title = title });
                 return true;
             };
