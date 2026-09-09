@@ -334,24 +334,6 @@ namespace AppSnapshot
             var entries = new List<WindowEntry>();
             var ownProcessId = (uint)System.Diagnostics.Process.GetCurrentProcess().Id;
 
-            // 先收集有 GUI 的进程 ID（MainWindowHandle != 0），排除纯后台进程
-            var guiProcessIds = new HashSet<uint>();
-            try
-            {
-                foreach (System.Diagnostics.Process process in System.Diagnostics.Process.GetProcesses())
-                {
-                    try
-                    {
-                        if (process.MainWindowHandle != IntPtr.Zero)
-                        {
-                            guiProcessIds.Add((uint)process.Id);
-                        }
-                    }
-                    catch { }
-                }
-            }
-            catch { }
-
             NativeMethods.EnumWindowsDelegate callback = delegate(IntPtr window, IntPtr lParam)
             {
                 if (!NativeMethods.IsWindowVisible(window) || NativeMethods.IsIconic(window))
@@ -367,7 +349,21 @@ namespace AppSnapshot
 
                 uint processId;
                 NativeMethods.GetWindowThreadProcessId(window, out processId);
-                if (processId == 0 || processId == ownProcessId || !guiProcessIds.Contains(processId))
+                if (processId == 0 || processId == ownProcessId)
+                {
+                    return true;
+                }
+
+                // 排除无 GUI 的后台进程：无法获取 MainModule 的通常是系统服务
+                try
+                {
+                    var process = System.Diagnostics.Process.GetProcessById((int)processId);
+                    if (process.MainModule == null || string.IsNullOrEmpty(process.MainModule.FileName))
+                    {
+                        return true;
+                    }
+                }
+                catch
                 {
                     return true;
                 }
