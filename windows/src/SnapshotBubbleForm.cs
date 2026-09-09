@@ -295,6 +295,7 @@ namespace AppSnapshot
                 string applicationName = _target != null && _target.WindowHandle == windowHandle
                     ? _target.ProcessName
                     : App.WindowProcessName(windowHandle);
+                ShutterSound.Play();
                 App.Toast.Show("已复制 " + applicationName + " 窗口，60 秒后自动清空", ToastKind.Success);
             }
             catch
