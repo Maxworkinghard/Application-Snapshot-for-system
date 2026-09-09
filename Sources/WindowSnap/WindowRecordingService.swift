@@ -153,13 +153,14 @@ final class WindowRecordingService: NSObject {
                 return
             }
 
-            // 先在 outputQueue 上封口：之后到达的帧一律丢弃，避免与 markAsFinished 竞态
+            // 在 outputQueue 上封口并 markAsFinished：
+            // append 也发生在 outputQueue，同队列执行避免与写入竞态
             var didStartSession = false
             self.outputQueue.sync {
                 self.isFinishing = true
                 didStartSession = self.didStartSession
+                self.writerInput?.markAsFinished()
             }
-            self.writerInput?.markAsFinished()
 
             let writer = self.assetWriter
             let url = self.outputURL

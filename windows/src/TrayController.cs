@@ -40,7 +40,15 @@ namespace AppSnapshot
 
             var quitItem = new ToolStripMenuItem(
                 "退出应用快照", null,
-                delegate { Application.Exit(); });
+                delegate
+                {
+                    // 录制中退出需先收尾 ffmpeg，否则子进程成为孤儿继续写盘
+                    if (App.Recording != null)
+                    {
+                        App.Recording.ShutdownOnAppExit();
+                    }
+                    Application.Exit();
+                });
 
             var menu = new ContextMenuStrip();
             menu.Items.Add(captureItem);
