@@ -7,8 +7,6 @@ final class DesktopPetController {
     var onRecordingState: () -> RecordingState = { .idle }
     var onPolishPrompt: () -> Void = {}
     var onPolishBusy: () -> Bool = { false }
-    var onCanUndoPolish: () -> Bool = { false }
-    var onUndoPolish: () -> Void = {}
     var onOpenScreenRecordingSettings: () -> Void = {}
 
     private let applicationService: CapturableApplicationService
@@ -169,18 +167,7 @@ final class DesktopPetController {
             ? "取消当前润色请求，剪切板不会被改动"
             : "读取剪切板文字，确认后润色并写回剪切板"
 
-        var buttons = [snapshotButton, recordButton, promptButton]
-
-        if onCanUndoPolish() {
-            let undoButton = NSButton(
-                title: "撤销润色",
-                target: self,
-                action: #selector(undoPolish)
-            )
-            undoButton.bezelStyle = .rounded
-            undoButton.toolTip = "恢复润色前的剪切板内容"
-            buttons.append(undoButton)
-        }
+        let buttons = [snapshotButton, recordButton, promptButton]
 
         let stack = NSStackView(views: buttons)
         stack.orientation = .vertical
@@ -313,11 +300,6 @@ final class DesktopPetController {
     @objc private func polishPrompt() {
         closeActionPanel()
         onPolishPrompt()
-    }
-
-    @objc private func undoPolish() {
-        closeActionPanel()
-        onUndoPolish()
     }
 
     @objc private func performRecord() {
