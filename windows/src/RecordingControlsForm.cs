@@ -26,7 +26,8 @@ namespace AppSnapshot
             StartPosition = FormStartPosition.Manual;
             TopMost = true;
             BackColor = Color.FromArgb(32, 32, 36);
-            ClientSize = new Size(228, 42);
+            // 常量是 96 DPI 设计值，经 UiScale 换算成当前屏幕的物理像素
+            ClientSize = UiScale.Px(228, 42);
             Font = new Font("Microsoft YaHei UI", 9F);
 
             SetStyle(
@@ -40,8 +41,8 @@ namespace AppSnapshot
             {
                 Text = "停止",
                 AutoSize = false,
-                Size = new Size(64, 28),
-                Location = new Point(ClientSize.Width - 72, 7),
+                Size = UiScale.Px(64, 28),
+                Location = new Point(ClientSize.Width - UiScale.Px(72), UiScale.Px(7)),
                 FlatStyle = FlatStyle.Flat,
                 BackColor = Color.FromArgb(196, 43, 28),
                 ForeColor = Color.White,
@@ -62,8 +63,8 @@ namespace AppSnapshot
             {
                 Text = "00:00",
                 AutoSize = false,
-                Size = new Size(60, 42),
-                Location = new Point(96, 0),
+                Size = UiScale.Px(60, 42),
+                Location = new Point(UiScale.Px(96), 0),
                 ForeColor = Color.White,
                 TextAlign = ContentAlignment.MiddleCenter,
                 Font = new Font("Consolas", 11F, FontStyle.Bold)
@@ -76,7 +77,7 @@ namespace AppSnapshot
             Rectangle workingArea = ToastForm.AnchorScreen().WorkingArea;
             Location = new Point(
                 workingArea.Left + (workingArea.Width - Width) / 2,
-                workingArea.Bottom - Height - 48);
+                workingArea.Bottom - Height - UiScale.Px(48));
 
             tickTimer = new Timer { Interval = 500 };
             tickTimer.Tick += delegate { UpdateElapsed(); };
@@ -104,7 +105,7 @@ namespace AppSnapshot
             base.OnShown(e);
             using (var path = new GraphicsPath())
             {
-                int radius = 21;
+                int radius = UiScale.Px(21);
                 var rect = new Rectangle(1, 1, ClientSize.Width - 2, ClientSize.Height - 2);
                 path.AddArc(rect.X, rect.Y, radius * 2, radius * 2, 180, 90);
                 path.AddArc(rect.Right - radius * 2, rect.Y, radius * 2, radius * 2, 270, 90);
