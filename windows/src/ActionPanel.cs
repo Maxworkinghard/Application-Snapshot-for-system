@@ -57,6 +57,15 @@ namespace AppSnapshot
             ShowForm();
         }
 
+        /// <summary>悬浮球被拖动时调用，让打开的面板跟随锚定位置。</summary>
+        internal void Reposition()
+        {
+            if (form != null && !form.IsDisposed)
+            {
+                form.PositionNextToBubble();
+            }
+        }
+
         private void ShowForm()
         {
             var panel = form;
@@ -274,7 +283,7 @@ namespace AppSnapshot
             PositionNextToBubble();
         }
 
-        private void PositionNextToBubble()
+        internal void PositionNextToBubble()
         {
             Form bubble = App.MainForm;
             Rectangle bubbleRect = bubble != null
@@ -321,9 +330,10 @@ namespace AppSnapshot
                     return true;
                 }
 
-                int style = NativeMethods.GetWindowLongPtr(window, NativeMethods.GwlStyle).ToInt32();
-                IntPtr extended = NativeMethods.GetWindowLongPtr(window, NativeMethods.GwlExStyle);
-                if ((extended.ToInt32() & NativeMethods.WsExToolWindowCheck) != 0
+                // 样式值可能含高位标志（如 WS_POPUP=0x80000000），ToInt32 会抛 OverflowException
+                long style = NativeMethods.GetWindowLongPtr(window, NativeMethods.GwlStyle).ToInt64();
+                long extended = NativeMethods.GetWindowLongPtr(window, NativeMethods.GwlExStyle).ToInt64();
+                if ((extended & NativeMethods.WsExToolWindowCheck) != 0
                     || (style & NativeMethods.WsVisible) == 0)
                 {
                     return true;
