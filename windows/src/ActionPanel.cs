@@ -192,7 +192,7 @@ namespace AppSnapshot
             {
                 Text = "选择要截取的窗口",
                 AutoSize = false,
-                Bounds = new Rectangle(12, 12, 190, 22),
+                Bounds = new Rectangle(12, 10, 190, 24),
                 Font = new Font("Microsoft YaHei UI", 10.5F, FontStyle.Bold),
                 TextAlign = ContentAlignment.MiddleLeft
             };
@@ -201,7 +201,7 @@ namespace AppSnapshot
             {
                 Text = "返回",
                 AutoSize = false,
-                Bounds = new Rectangle(size.Width - 84, 8, 72, 30),
+                Bounds = new Rectangle(size.Width - 84, 8, 72, 28),
                 FlatStyle = FlatStyle.Standard
             };
             backButton.Click += delegate
@@ -209,55 +209,36 @@ namespace AppSnapshot
                 App.Panels.ShowMenu();
             };
 
-            var list = new ListView
+            var list = new WindowListBox
             {
-                Bounds = new Rectangle(12, 46, size.Width - 24, size.Height - 58),
-                View = View.Details,
-                FullRowSelect = true,
-                HeaderStyle = ColumnHeaderStyle.None,
-                HideSelection = true,
-                BorderStyle = BorderStyle.FixedSingle,
-                MultiSelect = false,
-                Scrollable = true
+                Bounds = new Rectangle(12, 44, size.Width - 24, size.Height - 56),
+                BackColor = Color.White
             };
-            var imageList = new ImageList
-            {
-                ImageSize = new Size(32, 32),
-                ColorDepth = ColorDepth.Depth32Bit
-            };
-            list.SmallImageList = imageList;
 
-            var column = new ColumnHeader { Width = size.Width - 40 - 34 };
-            list.Columns.Add(column);
-
-            int index = 0;
             foreach (WindowEntry entry in EnumerateCapturableWindows())
             {
                 uint processId;
                 NativeMethods.GetWindowThreadProcessId(entry.Handle, out processId);
                 Bitmap icon = WindowIconLoader.LoadWindowIcon(entry.Handle, (int)processId, 32);
-                string key = "w" + index;
-                imageList.Images.Add(key, icon);
-                var item = new ListViewItem(TruncateTitle(entry.Title))
+                string processName = "";
+                try
                 {
-                    ImageKey = key,
-                    Tag = entry.Handle,
-                    ToolTipText = entry.Title
-                };
-                list.Items.Add(item);
-                index++;
+                    processName = System.Diagnostics.Process.GetProcessById((int)processId).ProcessName;
+                }
+                catch { }
+                list.Items.Add(new WindowListItem
+                {
+                    Handle = entry.Handle,
+                    Title = entry.Title,
+                    ProcessName = processName,
+                    Icon = icon
+                });
             }
 
-            list.Click += delegate
+            list.ItemActivated += delegate(WindowListItem item)
             {
-                ListView.SelectedListViewItemCollection selected = list.SelectedItems;
-                if (selected.Count == 0)
-                {
-                    return;
-                }
-                IntPtr handle = (IntPtr)selected[0].Tag;
                 Close();
-                App.CaptureWindow(handle);
+                App.CaptureWindow(item.Handle);
             };
 
             Controls.Add(header);
@@ -313,7 +294,6 @@ namespace AppSnapshot
         private static List<WindowEntry> EnumerateCapturableWindows()
         {
             var entries = new List<WindowEntry>();
-            var seenProcesses = new HashSet<uint>();
             var ownProcessId = (uint)System.Diagnostics.Process.GetCurrentProcess().Id;
 
             NativeMethods.EnumWindowsDelegate callback = delegate(IntPtr window, IntPtr lParam)
@@ -352,10 +332,8 @@ namespace AppSnapshot
                     return true;
                 }
 
-                if (seenProcesses.Add(processId))
-                {
-                    entries.Add(new WindowEntry { Handle = window, Title = title });
-                }
+                // 每个可见顶层窗口都列出，不再按进程去重（多窗口应用每个窗口都可单独截取）
+                entries.Add(new WindowEntry { Handle = window, Title = title });
                 return true;
             };
 
@@ -377,6 +355,172 @@ namespace AppSnapshot
                 ForeColor = SystemColors.ControlText,
                 Font = new Font("Microsoft YaHei UI", 9.5F)
             };
+        }
+    }
+
+    /// <summary>窗口列表项数据。</summary>
+    internal sealed class WindowListItem
+    {
+        public IntPtr Handle;
+        public string Title;
+        public string ProcessName;
+        public Bitmap Icon;
+    }
+
+    /// <summary>自绘窗口列表：大图标 + 标题 + 进程名两行，悬停高亮，点击回调。</summary>
+    internal sealed class WindowListBox : Control
+    {
+        internal delegate void ItemActivatedHandler(WindowListItem item);
+        internal event ItemActivatedHandler ItemActivated;
+
+        internal readonly List<WindowListItem> Items = new List<WindowListItem>();
+
+        private const int ItemHeight = 48;
+        private const int IconSize = 32;
+        private const int IconPadding = 8;
+
+        private int _hoverIndex = -1;
+        private int _scrollOffset;
+        private readonly Font _titleFont = new Font("Microsoft YaHei UI", 9.5F);
+        private readonly Font _subFont = new Font("Microsoft YaHei UI", 8F);
+        private readonly SolidBrush _titleBrush = new SolidBrush(Color.FromArgb(30, 30, 30));
+        private readonly SolidBrush _subBrush = new SolidBrush(Color.FromArgb(120, 120, 120));
+        private readonly SolidBrush _hoverBrush = new SolidBrush(Color.FromArgb(240, 244, 252));
+        private readonly Pen _separatorPen = new Pen(Color.FromArgb(230, 230, 230));
+
+        internal WindowListBox()
+        {
+            SetStyle(
+                ControlStyles.AllPaintingInWmPaint
+                | ControlStyles.OptimizedDoubleBuffer
+                | ControlStyles.UserPaint
+                | ControlStyles.ResizeRedraw
+                | ControlStyles.Selectable,
+                true);
+            TabStop = true;
+        }
+
+        protected override void OnPaint(PaintEventArgs e)
+        {
+            base.OnPaint(e);
+            e.Graphics.Clear(BackColor);
+
+            int y = -_scrollOffset;
+            for (int i = 0; i < Items.Count; i++)
+            {
+                var bounds = new Rectangle(0, y, Width, ItemHeight);
+                if (bounds.Bottom >= 0 && bounds.Top <= Height)
+                {
+                    if (i == _hoverIndex)
+                    {
+                        e.Graphics.FillRectangle(_hoverBrush, bounds);
+                    }
+
+                    WindowListItem item = Items[i];
+                    if (item.Icon != null)
+                    {
+                        e.Graphics.DrawImage(
+                            item.Icon,
+                            IconPadding,
+                            y + (ItemHeight - IconSize) / 2,
+                            IconSize,
+                            IconSize);
+                    }
+
+                    int textX = IconPadding + IconSize + 10;
+                    int textWidth = Width - textX - 8;
+                    var titleRect = new RectangleF(textX, y + 7, textWidth, 20);
+                    var subRect = new RectangleF(textX, y + 27, textWidth, 16);
+
+                    e.Graphics.DrawString(
+                        Truncate(item.Title, 36),
+                        _titleFont,
+                        _titleBrush,
+                        titleRect);
+                    e.Graphics.DrawString(
+                        item.ProcessName,
+                        _subFont,
+                        _subBrush,
+                        subRect);
+
+                    if (i < Items.Count - 1)
+                    {
+                        e.Graphics.DrawLine(
+                            _separatorPen,
+                            textX,
+                            y + ItemHeight - 1,
+                            Width - 8,
+                            y + ItemHeight - 1);
+                    }
+                }
+                y += ItemHeight;
+            }
+        }
+
+        protected override void OnMouseMove(MouseEventArgs e)
+        {
+            base.OnMouseMove(e);
+            int index = HitTest(e.Y);
+            if (index != _hoverIndex)
+            {
+                _hoverIndex = index;
+                Invalidate();
+            }
+        }
+
+        protected override void OnMouseLeave(EventArgs e)
+        {
+            base.OnMouseLeave(e);
+            _hoverIndex = -1;
+            Invalidate();
+        }
+
+        protected override void OnMouseClick(MouseEventArgs e)
+        {
+            base.OnMouseClick(e);
+            int index = HitTest(e.Y);
+            if (index >= 0 && index < Items.Count && ItemActivated != null)
+            {
+                ItemActivated(Items[index]);
+            }
+        }
+
+        protected override void OnMouseWheel(MouseEventArgs e)
+        {
+            base.OnMouseWheel(e);
+            int delta = e.Delta > 0 ? -ItemHeight : ItemHeight;
+            _scrollOffset = Math.Max(0,
+                Math.Min(_scrollOffset + delta, Math.Max(0, Items.Count * ItemHeight - Height)));
+            Invalidate();
+        }
+
+        private int HitTest(int mouseY)
+        {
+            int index = (mouseY + _scrollOffset) / ItemHeight;
+            return index >= 0 && index < Items.Count ? index : -1;
+        }
+
+        private static string Truncate(string text, int max)
+        {
+            if (text != null && text.Length > max)
+            {
+                return text.Substring(0, max) + "…";
+            }
+            return text;
+        }
+
+        protected override void Dispose(bool disposing)
+        {
+            if (disposing)
+            {
+                _titleFont.Dispose();
+                _subFont.Dispose();
+                _titleBrush.Dispose();
+                _subBrush.Dispose();
+                _hoverBrush.Dispose();
+                _separatorPen.Dispose();
+            }
+            base.Dispose(disposing);
         }
     }
 }
