@@ -10,7 +10,12 @@ namespace AppSnapshot
     // Current/Previous behavior follows Maxworkinghard/quick's desktop pet.
     internal sealed class SnapshotBubbleForm : Form
     {
-        private const int BubbleSize = 168;
+        // 绘制坐标系的设计尺寸：OnPaint 里所有常量都基于 168x168 的设计稿，
+        // 通过 ScaleTransform 等比缩放到实际大小，调整外观尺寸只改 BubbleSize。
+        private const int DesignSize = 168;
+        // 逻辑尺寸（96 DPI 设计值，UiScale 换算成物理像素）。
+        // 168 在 200% 缩放屏幕上视觉接近 4.5cm，用户反馈太大；96 约 2.5cm。
+        private const int BubbleSize = 96;
         private const int DragThreshold = 4;
         private const int PositionMargin = 8;
 
@@ -38,7 +43,7 @@ namespace AppSnapshot
 
             AutoScaleMode = AutoScaleMode.Dpi;
             BackColor = Color.White;
-            ClientSize = new Size(BubbleSize, BubbleSize);
+            ClientSize = new Size(UiScale.Px(BubbleSize), UiScale.Px(BubbleSize));
             FormBorderStyle = FormBorderStyle.None;
             MaximizeBox = false;
             MinimizeBox = false;
@@ -53,7 +58,10 @@ namespace AppSnapshot
             // into the edge and produced the colored halo seen on screen.
             using (var bubblePath = new GraphicsPath())
             {
-                bubblePath.AddEllipse(new Rectangle(8, 8, 152, 152));
+                // 与设计稿 8px 边距等比换算
+                int margin = ClientSize.Width * 8 / DesignSize;
+                int diameter = ClientSize.Width - margin * 2;
+                bubblePath.AddEllipse(new Rectangle(margin, margin, diameter, diameter));
                 Region = new Region(bubblePath);
             }
 
@@ -137,6 +145,11 @@ namespace AppSnapshot
             e.Graphics.PixelOffsetMode = PixelOffsetMode.HighQuality;
             e.Graphics.CompositingQuality = CompositingQuality.HighQuality;
 
+            // 把 168x168 设计坐标系等比缩放到实际尺寸，
+            // 下面的常量全部是设计稿像素，不随 BubbleSize 改动。
+            float scale = ClientSize.Width / (float)DesignSize;
+            e.Graphics.ScaleTransform(scale, scale);
+
             Rectangle body = new Rectangle(8, 8, 152, 152);
             using (var fill = new SolidBrush(Color.White))
             {
@@ -180,7 +193,7 @@ namespace AppSnapshot
                 int deltaX = current.X - _pointerDown.X;
                 int deltaY = current.Y - _pointerDown.Y;
                 if (!_dragging
-                    && (Math.Abs(deltaX) >= DragThreshold || Math.Abs(deltaY) >= DragThreshold))
+                    && (Math.Abs(deltaX) >= UiScale.Px(DragThreshold) || Math.Abs(deltaY) >= UiScale.Px(DragThreshold)))
                 {
                     _dragging = true;
                 }
@@ -263,7 +276,9 @@ namespace AppSnapshot
                 return;
             }
 
-            Bitmap icon = WindowIconLoader.LoadWindowIcon(target.WindowHandle, (int)target.ProcessId, 112);
+            // 图标按实际绘制大小加载：设计稿 112px 随 BubbleSize 等比换算
+            Bitmap icon = WindowIconLoader.LoadWindowIcon(
+                target.WindowHandle, (int)target.ProcessId, UiScale.Px(BubbleSize * 112 / DesignSize));
             Bitmap previousIcon = _targetIcon;
             _target = target;
             _targetIcon = icon;
@@ -282,6 +297,9 @@ namespace AppSnapshot
         /// 截取指定窗口并复制到剪贴板（悬浮窗短暂隐藏避免入镜）。
         /// 隐藏后用一个一次性 Timer 延迟执行截图：返回消息循环让窗口完成隐藏重绘，
         /// 而不是 DoEvents()+Sleep()——后者会重入消息泵，让热键/托盘事件穿插进截图流程。
+        /// 最小化的窗口没有渲染内容（GetWindowRect 落在 -32000 且 PrintWindow 得到空白），
+        /// 必须先 SW_RESTORE 还原，并把延迟拉长到还原动画和重绘完成之后再截；
+        /// 截取完毕再 SW_MINIMIZE 恢复原状——最小化只是技术细节，对用户不可见。
         /// </summary>
         internal void CaptureWindow(IntPtr windowHandle)
         {
@@ -296,10 +314,16 @@ namespace AppSnapshot
                 return;
             }
 
+            bool wasMinimized = NativeMethods.IsIconic(windowHandle);
+            if (wasMinimized)
+            {
+                NativeMethods.ShowWindow(windowHandle, NativeMethods.SwRestore);
+            }
+
             _capturePending = true;
             Hide();
 
-            var delayTimer = new System.Windows.Forms.Timer { Interval = 150 };
+            var delayTimer = new System.Windows.Forms.Timer { Interval = wasMinimized ? 450 : 150 };
             delayTimer.Tick += delegate
             {
                 delayTimer.Stop();
@@ -327,6 +351,11 @@ namespace AppSnapshot
                 }
                 finally
                 {
+                    // 恢复最小化：还原只是截取的技术需要，不该改变窗口的原始状态
+                    if (wasMinimized && NativeMethods.IsWindow(windowHandle))
+                    {
+                        NativeMethods.ShowWindow(windowHandle, NativeMethods.SwMinimize);
+                    }
                     if (!IsDisposed && !Disposing)
                     {
                         Show();
@@ -342,10 +371,11 @@ namespace AppSnapshot
         {
             Screen screen = Screen.FromPoint(anchor);
             Rectangle working = screen.WorkingArea;
-            int x = Math.Max(working.Left + PositionMargin,
-                Math.Min(origin.X, working.Right - size.Width - PositionMargin));
-            int y = Math.Max(working.Top + PositionMargin,
-                Math.Min(origin.Y, working.Bottom - size.Height - PositionMargin));
+            int margin = UiScale.Px(PositionMargin);
+            int x = Math.Max(working.Left + margin,
+                Math.Min(origin.X, working.Right - size.Width - margin));
+            int y = Math.Max(working.Top + margin,
+                Math.Min(origin.Y, working.Bottom - size.Height - margin));
             return new Point(x, y);
         }
 
@@ -380,8 +410,8 @@ namespace AppSnapshot
 
             Rectangle workingArea = Screen.PrimaryScreen.WorkingArea;
             return new Point(
-                workingArea.Right - Width - 16,
-                workingArea.Bottom - Height - 16);
+                workingArea.Right - Width - UiScale.Px(16),
+                workingArea.Bottom - Height - UiScale.Px(16));
         }
 
         private static void SavePosition(Point location)

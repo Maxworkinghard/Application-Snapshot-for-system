@@ -14,8 +14,10 @@ namespace AppSnapshot
     /// </summary>
     internal sealed class ActionPanelController
     {
-        private static readonly int MenuWidth = 248;
-        private static readonly Size ListPageSize = new Size(328, 420);
+        // 加宽到 380：标题省略号按像素截断后，更宽的面板能放下更多有效字符。
+        // 常量是 96 DPI 设计值，UiScale 负责换算成当前屏幕的物理像素。
+        private static int MenuWidth { get { return UiScale.Px(248); } }
+        private static Size ListPageSize { get { return UiScale.Px(380, 460); } }
 
         private ActionPanelForm form;
 
@@ -164,15 +166,15 @@ namespace AppSnapshot
             };
             buttons.Add(polishButton);
 
-            int top = 16;
+            int top = UiScale.Px(16);
             foreach (Button button in buttons)
             {
-                button.SetBounds(16, top, width - 32, 40);
+                button.SetBounds(UiScale.Px(16), top, width - UiScale.Px(32), UiScale.Px(40));
                 Controls.Add(button);
-                top += 48;
+                top += UiScale.Px(48);
             }
 
-            int height = top + 8;
+            int height = top + UiScale.Px(8);
             SetBoundsCore(width, height);
             ResumeLayout();
         }
@@ -202,7 +204,7 @@ namespace AppSnapshot
             {
                 Text = "选择要截取的窗口",
                 AutoSize = false,
-                Bounds = new Rectangle(12, 10, 190, 24),
+                Bounds = new Rectangle(UiScale.Px(12), UiScale.Px(10), UiScale.Px(190), UiScale.Px(24)),
                 Font = new Font("Microsoft YaHei UI", 10.5F, FontStyle.Bold),
                 TextAlign = ContentAlignment.MiddleLeft
             };
@@ -211,7 +213,7 @@ namespace AppSnapshot
             {
                 Text = "返回",
                 AutoSize = false,
-                Bounds = new Rectangle(size.Width - 84, 8, 72, 28),
+                Bounds = new Rectangle(size.Width - UiScale.Px(84), UiScale.Px(8), UiScale.Px(72), UiScale.Px(28)),
                 FlatStyle = FlatStyle.Standard
             };
             backButton.Click += delegate
@@ -221,7 +223,7 @@ namespace AppSnapshot
 
             var list = new WindowListBox
             {
-                Bounds = new Rectangle(12, 44, size.Width - 24, size.Height - 56),
+                Bounds = new Rectangle(UiScale.Px(12), UiScale.Px(44), size.Width - UiScale.Px(24), size.Height - UiScale.Px(56)),
                 BackColor = Color.White
             };
 
@@ -358,6 +360,11 @@ namespace AppSnapshot
             Show();
         }
 
+        /// <summary>
+        /// 枚举用户可截取的窗口，对齐任务栏口径：
+        /// 可见顶层窗口 + 非 cloaked（UWP 挂起幽灵窗口）+ 有标题；
+        /// 最小化窗口保留（任务栏也显示它们），由调用方决定还原后再截取。
+        /// </summary>
         private static List<WindowEntry> EnumerateCapturableWindows()
         {
             var entries = new List<WindowEntry>();
@@ -368,7 +375,7 @@ namespace AppSnapshot
                 // 回调内任何异常都会沿 EnumWindows 栈崩溃进程，必须整体兜底
                 try
                 {
-                    if (!NativeMethods.IsWindowVisible(window) || NativeMethods.IsIconic(window))
+                    if (!NativeMethods.IsWindowVisible(window))
                     {
                         return true;
                     }
@@ -386,26 +393,15 @@ namespace AppSnapshot
                         return true;
                     }
 
-                    // 排除无 GUI 的后台进程：无法获取 MainModule 的通常是系统服务
-                    try
-                    {
-                        var process = System.Diagnostics.Process.GetProcessById((int)processId);
-                        if (process.MainModule == null || string.IsNullOrEmpty(process.MainModule.FileName))
-                        {
-                            return true;
-                        }
-                    }
-                    catch
+                    // UWP 挂起/壳托管的幽灵窗口（如 Windows 输入体验）会被 DWM 标记 cloaked，任务栏同样不显示
+                    int cloaked;
+                    if (NativeMethods.DwmGetWindowAttributeInt(window, NativeMethods.DwmwaCloaked, out cloaked, 4) == 0
+                        && cloaked != 0)
                     {
                         return true;
                     }
 
-                    long extended = NativeMethods.GetWindowLongPtr(window, NativeMethods.GwlExStyle).ToInt64();
-                    if ((extended & NativeMethods.WsExToolWindowCheck) != 0)
-                    {
-                        return true;
-                    }
-
+                    // 无标题窗口（如 Program Manager）没有截取意义
                     int length = NativeMethods.GetWindowTextLength(window);
                     if (length <= 0)
                     {
@@ -419,7 +415,28 @@ namespace AppSnapshot
                         return true;
                     }
 
-                    entries.Add(new WindowEntry { Handle = window, Title = title });
+                    // 任务栏口径：有 WS_EX_APPWINDOW 的窗口强制显示；
+                    // 否则排除工具窗口和有主窗口（owner）的弹窗。
+                    // 注意不能用 Process.MainModule 过滤后台进程——对提权进程会抛访问被拒，误杀正常应用。
+                    long extended = NativeMethods.GetWindowLongPtr(window, NativeMethods.GwlExStyle).ToInt64();
+                    bool appWindow = (extended & NativeMethods.WsExAppWindow) != 0;
+                    if (!appWindow)
+                    {
+                        if ((extended & NativeMethods.WsExToolWindowCheck) != 0)
+                        {
+                            return true;
+                        }
+                        if (NativeMethods.GetWindow(window, NativeMethods.GwOwner) != IntPtr.Zero)
+                        {
+                            return true;
+                        }
+                    }
+
+                    entries.Add(new WindowEntry
+                    {
+                        Handle = window,
+                        Title = title
+                    });
                 }
                 catch
                 {
@@ -429,6 +446,7 @@ namespace AppSnapshot
             };
 
             NativeMethods.EnumWindows(callback, IntPtr.Zero);
+            // 按标题排序；最小化与否只是截取时的技术细节，不在列表里区分
             entries.Sort(delegate(WindowEntry left, WindowEntry right)
             {
                 return string.Compare(left.Title, right.Title, StringComparison.CurrentCultureIgnoreCase);
@@ -467,9 +485,10 @@ namespace AppSnapshot
 
         internal readonly List<WindowListItem> Items = new List<WindowListItem>();
 
-        private const int ItemHeight = 48;
-        private const int IconSize = 32;
-        private const int IconPadding = 8;
+        private readonly int _itemHeight = UiScale.Px(48);
+        private readonly int _iconSize = UiScale.Px(32);
+        private readonly int _iconPadding = UiScale.Px(8);
+        private readonly int _textMargin = UiScale.Px(8);
 
         private int _hoverIndex = -1;
         private int _scrollOffset;
@@ -479,6 +498,12 @@ namespace AppSnapshot
         private readonly SolidBrush _subBrush = new SolidBrush(Color.FromArgb(120, 120, 120));
         private readonly SolidBrush _hoverBrush = new SolidBrush(Color.FromArgb(240, 244, 252));
         private readonly Pen _separatorPen = new Pen(Color.FromArgb(230, 230, 230));
+        // 单行 + 像素级省略号：默认 DrawString 会换行，长标题折行后与进程名叠在一起
+        private readonly StringFormat _lineFormat = new StringFormat
+        {
+            Trimming = StringTrimming.EllipsisCharacter,
+            FormatFlags = StringFormatFlags.NoWrap | StringFormatFlags.LineLimit
+        };
 
         internal WindowListBox()
         {
@@ -500,13 +525,13 @@ namespace AppSnapshot
 
             for (int i = 0; i < Items.Count; i++)
             {
-                int itemTop = i * ItemHeight - _scrollOffset;
-                if (itemTop + ItemHeight < 0 || itemTop > Height)
+                int itemTop = i * _itemHeight - _scrollOffset;
+                if (itemTop + _itemHeight < 0 || itemTop > Height)
                 {
                     continue;
                 }
 
-                var bounds = new Rectangle(0, itemTop, Width, ItemHeight);
+                var bounds = new Rectangle(0, itemTop, Width, _itemHeight);
                 WindowListItem item = Items[i];
 
                 if (i == _hoverIndex)
@@ -518,13 +543,14 @@ namespace AppSnapshot
                 if (item.IsGroupChild)
                 {
                     // 子窗口：缩进，单行显示标题
-                    textX = IconPadding + IconSize + 30;
-                    var titleRect = new RectangleF(textX, itemTop + 14, Width - textX - 8, 20);
+                    textX = _iconPadding + _iconSize + UiScale.Px(30);
+                    var titleRect = new RectangleF(textX, itemTop + UiScale.Px(14), Width - textX - _textMargin, UiScale.Px(20));
                     e.Graphics.DrawString(
-                        Truncate(item.Title, 32),
+                        item.Title,
                         _titleFont,
                         _titleBrush,
-                        titleRect);
+                        titleRect,
+                        _lineFormat);
                 }
                 else
                 {
@@ -533,25 +559,27 @@ namespace AppSnapshot
                     {
                         e.Graphics.DrawImage(
                             item.Icon,
-                            IconPadding,
-                            itemTop + (ItemHeight - IconSize) / 2,
-                            IconSize,
-                            IconSize);
+                            _iconPadding,
+                            itemTop + (_itemHeight - _iconSize) / 2,
+                            _iconSize,
+                            _iconSize);
                     }
-                    textX = IconPadding + IconSize + 10;
-                    int textWidth = Width - textX - 8;
-                    var titleRect = new RectangleF(textX, itemTop + 7, textWidth, 20);
-                    var subRect = new RectangleF(textX, itemTop + 27, textWidth, 16);
+                    textX = _iconPadding + _iconSize + UiScale.Px(10);
+                    int textWidth = Width - textX - _textMargin;
+                    var titleRect = new RectangleF(textX, itemTop + UiScale.Px(7), textWidth, UiScale.Px(20));
+                    var subRect = new RectangleF(textX, itemTop + UiScale.Px(27), textWidth, UiScale.Px(16));
                     e.Graphics.DrawString(
-                        Truncate(item.Title, 36),
+                        item.Title,
                         _titleFont,
                         _titleBrush,
-                        titleRect);
+                        titleRect,
+                        _lineFormat);
                     e.Graphics.DrawString(
                         item.ProcessName,
                         _subFont,
                         _subBrush,
-                        subRect);
+                        subRect,
+                        _lineFormat);
                 }
 
                 if (i < Items.Count - 1)
@@ -559,9 +587,9 @@ namespace AppSnapshot
                     e.Graphics.DrawLine(
                         _separatorPen,
                         textX,
-                        itemTop + ItemHeight - 1,
-                        Width - 8,
-                        itemTop + ItemHeight - 1);
+                        itemTop + _itemHeight - 1,
+                        Width - _textMargin,
+                        itemTop + _itemHeight - 1);
                 }
             }
         }
@@ -597,25 +625,16 @@ namespace AppSnapshot
         protected override void OnMouseWheel(MouseEventArgs e)
         {
             base.OnMouseWheel(e);
-            int delta = e.Delta > 0 ? -ItemHeight : ItemHeight;
+            int delta = e.Delta > 0 ? -_itemHeight : _itemHeight;
             _scrollOffset = Math.Max(0,
-                Math.Min(_scrollOffset + delta, Math.Max(0, Items.Count * ItemHeight - Height)));
+                Math.Min(_scrollOffset + delta, Math.Max(0, Items.Count * _itemHeight - Height)));
             Invalidate();
         }
 
         private int HitTest(int mouseY)
         {
-            int index = (mouseY + _scrollOffset) / ItemHeight;
+            int index = (mouseY + _scrollOffset) / _itemHeight;
             return index >= 0 && index < Items.Count ? index : -1;
-        }
-
-        private static string Truncate(string text, int max)
-        {
-            if (text != null && text.Length > max)
-            {
-                return text.Substring(0, max) + "…";
-            }
-            return text;
         }
 
         protected override void Dispose(bool disposing)
