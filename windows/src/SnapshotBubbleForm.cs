@@ -192,6 +192,10 @@ namespace AppSnapshot
                         new Point(_windowDown.X + deltaX, _windowDown.Y + deltaY),
                         Size,
                         current);
+                    if (App.Panels != null)
+                    {
+                        App.Panels.Reposition();
+                    }
                 }
             }
 
