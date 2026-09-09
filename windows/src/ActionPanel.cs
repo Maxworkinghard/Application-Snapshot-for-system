@@ -9,7 +9,7 @@ namespace AppSnapshot
 {
     /// <summary>
     /// 悬浮球点击后的操作面板（对应 macOS 端的菜单页 + 应用快照列表页）。
-    /// 一级菜单：应用快照 / 录制 / 润色 Prompt / 撤销润色；
+    /// 一级菜单：应用快照 / 录制 / 润色 Prompt；
     /// 二级页：窗口列表，点击即截取该窗口。
     /// </summary>
     internal sealed class ActionPanelController
@@ -149,17 +149,6 @@ namespace AppSnapshot
                 App.Polish.ToggleFromMenu();
             };
             buttons.Add(polishButton);
-
-            if (App.Polish.HasUndoState)
-            {
-                var undoButton = MakeButton("撤销润色");
-                undoButton.Click += delegate
-                {
-                    Close();
-                    App.Polish.Undo();
-                };
-                buttons.Add(undoButton);
-            }
 
             int top = 16;
             foreach (Button button in buttons)

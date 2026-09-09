@@ -496,8 +496,6 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         controller.onRecordingState = { [weak self] in self?.recordingState ?? .idle }
         controller.onPolishPrompt = { [weak self] in self?.polishPromptFromClipboard() }
         controller.onPolishBusy = { [weak self] in self?.isPolishBusy() ?? false }
-        controller.onCanUndoPolish = { [weak self] in self?.canUndoPolish() ?? false }
-        controller.onUndoPolish = { [weak self] in self?.undoPolish() }
         controller.onOpenScreenRecordingSettings = { [weak self] in self?.openScreenRecordingSettings() }
         controller.show()
         controller.updateTarget(previousExternalApplication)
@@ -512,22 +510,11 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         case polishing(task: PromptPolishingTask, requestID: UUID)
     }
 
-    private struct PolishUndoState {
-        let originalText: String
-        let changeCountAfterWrite: Int
-    }
-
     private var polishRuntimeState: PolishRuntimeState = .idle
-    private var lastPolishUndo: PolishUndoState?
 
     private func isPolishBusy() -> Bool {
         if case .polishing = polishRuntimeState { return true }
         return false
-    }
-
-    private func canUndoPolish() -> Bool {
-        guard let lastPolishUndo else { return false }
-        return NSPasteboard.general.changeCount == lastPolishUndo.changeCountAfterWrite
     }
 
     /// 润色流程：剪切板文字 → 用户确认 → 服务润色 → 结果写回剪切板（替换原文）。
@@ -580,7 +567,6 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
                 }
                 pasteboard.clearContents()
                 pasteboard.setString(response.polishedText, forType: .string)
-                self.lastPolishUndo = PolishUndoState(originalText: text, changeCountAfterWrite: pasteboard.changeCount)
                 self.toastController.show(
                     message: "润色完成，结果已替换剪切板",
                     symbolName: "checkmark"
@@ -593,23 +579,6 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
             }
         }
         polishRuntimeState = .polishing(task: task, requestID: requestID)
-    }
-
-    /// 撤销上一次润色：仅当剪切板自写回后未被外部改动时才恢复原文。
-    private func undoPolish() {
-        guard let undo = lastPolishUndo else {
-            toastController.show(message: "没有可撤销的润色", symbolName: "exclamationmark.triangle")
-            return
-        }
-        let pasteboard = NSPasteboard.general
-        lastPolishUndo = nil
-        guard pasteboard.changeCount == undo.changeCountAfterWrite else {
-            toastController.show(message: "剪切板内容已变化，无法撤销", symbolName: "exclamationmark.triangle")
-            return
-        }
-        pasteboard.clearContents()
-        pasteboard.setString(undo.originalText, forType: .string)
-        toastController.show(message: "已撤销，剪切板已恢复原文", symbolName: "arrow.uturn.backward")
     }
 
     /// 系统确认弹窗（非独立编辑窗口）：用户确认后才会覆盖剪切板内容。
