@@ -3,6 +3,7 @@ mod dialog;
 mod notify;
 mod pet;
 mod polish;
+mod prompts;
 mod record;
 mod settings;
 mod tray;
@@ -33,6 +34,7 @@ pub enum Msg {
     ToggleRecording,
     TogglePanel,
     OpenSettings,
+    ManagePrompts,
     Quit,
 }
 
@@ -155,6 +157,7 @@ impl Daemon {
             Msg::ToggleRecording => self.toggle_recording(),
             Msg::TogglePanel => self.open_panel(),
             Msg::OpenSettings => self.open_settings(),
+            Msg::ManagePrompts => dialog::manage_prompts(),
             Msg::Quit => return false,
         }
         true

@@ -14,6 +14,8 @@ final class AppSettingsController: NSObject, NSWindowDelegate {
     private var baseURLField: NSTextField?
     private var modelField: NSTextField?
     private var apiKeyField: NSSecureTextField?
+    private var promptPopUp: NSPopUpButton?
+    private var deletePromptButton: NSButton?
 
     private static let shortcutNames = [
         "截取当前应用窗口",
@@ -36,6 +38,7 @@ final class AppSettingsController: NSObject, NSWindowDelegate {
         if let window {
             refreshShortcutFields()
             refreshPolishFields()
+            refreshPromptFields()
             window.makeKeyAndOrderFront(nil)
             NSApp.activate(ignoringOtherApps: true)
             return
@@ -43,6 +46,7 @@ final class AppSettingsController: NSObject, NSWindowDelegate {
         buildWindow()
         refreshShortcutFields()
         refreshPolishFields()
+        refreshPromptFields()
     }
 
     private func buildWindow() {
@@ -142,6 +146,50 @@ final class AppSettingsController: NSObject, NSWindowDelegate {
         let apiKeyField = NSSecureTextField(string: "")
         self.apiKeyField = apiKeyField
 
+        // MARK: 润色提示词（内置 + 自定义，可切换不替换）
+
+        let promptPopUp = NSPopUpButton()
+        promptPopUp.target = self
+        promptPopUp.action = #selector(promptSelected)
+        self.promptPopUp = promptPopUp
+
+        let newPromptButton = NSButton(title: "新建", target: self, action: #selector(newPrompt))
+        newPromptButton.bezelStyle = .rounded
+        newPromptButton.controlSize = .small
+
+        let editPromptButton = NSButton(title: "编辑", target: self, action: #selector(editPrompt))
+        editPromptButton.bezelStyle = .rounded
+        editPromptButton.controlSize = .small
+
+        let deletePromptButton = NSButton(title: "删除", target: self, action: #selector(deletePrompt))
+        deletePromptButton.bezelStyle = .rounded
+        deletePromptButton.controlSize = .small
+        self.deletePromptButton = deletePromptButton
+
+        let promptButtons = NSStackView(views: [newPromptButton, editPromptButton, deletePromptButton])
+        promptButtons.orientation = .horizontal
+        promptButtons.spacing = 6
+
+        let promptLabel = NSTextField(labelWithString: "提示词")
+        promptLabel.font = .systemFont(ofSize: 13)
+        promptLabel.alignment = .right
+        promptLabel.translatesAutoresizingMaskIntoConstraints = false
+        promptLabel.widthAnchor.constraint(equalToConstant: 72).isActive = true
+
+        promptPopUp.setContentHuggingPriority(.defaultLow, for: .horizontal)
+        promptPopUp.translatesAutoresizingMaskIntoConstraints = false
+
+        let promptRow = NSStackView(views: [promptLabel, promptPopUp, promptButtons])
+        promptRow.orientation = .horizontal
+        promptRow.spacing = 10
+        promptRow.alignment = .centerY
+        promptRow.translatesAutoresizingMaskIntoConstraints = false
+
+        let promptHint = NSTextField(wrappingLabelWithString: "切换即生效。选「内置」点「编辑」可基于内置文本另存自定义版本。")
+        promptHint.textColor = .secondaryLabelColor
+        promptHint.font = .systemFont(ofSize: 11)
+        promptHint.translatesAutoresizingMaskIntoConstraints = false
+
         let polishForm = NSStackView(views: [
             makeRow(label: "协议", field: kindPopUp),
             makeRow(label: "Base URL", field: baseURLField),
@@ -184,6 +232,8 @@ final class AppSettingsController: NSObject, NSWindowDelegate {
         content.addSubview(shortcutDivider)
         content.addSubview(polishHeader)
         content.addSubview(polishHint)
+        content.addSubview(promptRow)
+        content.addSubview(promptHint)
         content.addSubview(polishForm)
         content.addSubview(status)
         content.addSubview(clearPolishButton)
@@ -218,7 +268,15 @@ final class AppSettingsController: NSObject, NSWindowDelegate {
             polishHint.leadingAnchor.constraint(equalTo: title.leadingAnchor),
             polishHint.trailingAnchor.constraint(equalTo: title.trailingAnchor),
 
-            polishForm.topAnchor.constraint(equalTo: polishHint.bottomAnchor, constant: 12),
+            promptRow.topAnchor.constraint(equalTo: polishHint.bottomAnchor, constant: 12),
+            promptRow.leadingAnchor.constraint(equalTo: title.leadingAnchor),
+            promptRow.trailingAnchor.constraint(equalTo: title.trailingAnchor),
+
+            promptHint.topAnchor.constraint(equalTo: promptRow.bottomAnchor, constant: 4),
+            promptHint.leadingAnchor.constraint(equalTo: title.leadingAnchor),
+            promptHint.trailingAnchor.constraint(equalTo: title.trailingAnchor),
+
+            polishForm.topAnchor.constraint(equalTo: promptHint.bottomAnchor, constant: 12),
             polishForm.leadingAnchor.constraint(equalTo: title.leadingAnchor),
             polishForm.trailingAnchor.constraint(equalTo: title.trailingAnchor),
 
@@ -238,7 +296,7 @@ final class AppSettingsController: NSObject, NSWindowDelegate {
         ])
 
         let window = NSWindow(
-            contentRect: NSRect(x: 0, y: 0, width: 460, height: 640),
+            contentRect: NSRect(x: 0, y: 0, width: 460, height: 700),
             styleMask: [.titled, .closable],
             backing: .buffered,
             defer: false
@@ -261,6 +319,8 @@ final class AppSettingsController: NSObject, NSWindowDelegate {
         baseURLField = nil
         modelField = nil
         apiKeyField = nil
+        promptPopUp = nil
+        deletePromptButton = nil
     }
 
     // MARK: - 动作
@@ -280,6 +340,56 @@ final class AppSettingsController: NSObject, NSWindowDelegate {
         polishStore.clear()
         refreshPolishFields()
         showStatus("润色配置已清除")
+    }
+
+    // MARK: 润色提示词管理（切换即时生效，不依赖「保存」按钮）
+
+    @objc private func promptSelected(_ sender: NSPopUpButton) {
+        guard let name = sender.titleOfSelectedItem else { return }
+        PolishPromptLibrary.setActive(name)
+        updatePromptButtons()
+    }
+
+    @objc private func newPrompt() {
+        presentPromptEditor(original: nil, prefill: "")
+    }
+
+    /// 编辑自定义项；选「内置」时以内置文本为底稿另存新版本（内置本身不可改）。
+    @objc private func editPrompt() {
+        guard let name = promptPopUp?.titleOfSelectedItem else { return }
+        if name == PolishPromptLibrary.builtinName {
+            presentPromptEditor(original: nil, prefill: PolishPromptTemplates.systemPrompt)
+            return
+        }
+        if let prompt = PolishPromptLibrary.customPrompts.first(where: { $0.name == name }) {
+            presentPromptEditor(original: prompt, prefill: prompt.text)
+        }
+    }
+
+    @objc private func deletePrompt() {
+        guard let name = promptPopUp?.titleOfSelectedItem,
+              name != PolishPromptLibrary.builtinName else { return }
+        let alert = NSAlert()
+        alert.messageText = "删除提示词「\(name)」？"
+        alert.informativeText = "删除后不可恢复；若它是当前使用的提示词，将切回内置。"
+        alert.addButton(withTitle: "删除")
+        alert.addButton(withTitle: "取消")
+        guard alert.runModal() == .alertFirstButtonReturn else { return }
+        PolishPromptLibrary.delete(name)
+        refreshPromptFields()
+    }
+
+    private func presentPromptEditor(original: PolishPromptLibrary.CustomPrompt?, prefill: String) {
+        guard let settingsWindow = window else { return }
+        let sheet = PolishPromptEditorSheet(original: original, prefill: prefill)
+        settingsWindow.beginSheet(sheet.window) { [weak self] response in
+            guard response == .OK, let self else { return }
+            let name = sheet.prompt.name.trimmingCharacters(in: .whitespacesAndNewlines)
+            if PolishPromptLibrary.save(sheet.prompt, originalName: original?.name), original == nil {
+                PolishPromptLibrary.setActive(name)
+            }
+            self.refreshPromptFields()
+        }
     }
 
     @objc private func save() {
@@ -352,6 +462,19 @@ final class AppSettingsController: NSObject, NSWindowDelegate {
         modelField?.stringValue = configuration.model
         apiKeyField?.stringValue = ""
         apiKeyField?.placeholderString = configuration.apiKey.isEmpty ? "sk-..." : "已保存，留空则保持不变"
+    }
+
+    private func refreshPromptFields() {
+        guard let promptPopUp else { return }
+        let names = [PolishPromptLibrary.builtinName] + PolishPromptLibrary.customPrompts.map(\.name)
+        promptPopUp.removeAllItems()
+        promptPopUp.addItems(withTitles: names)
+        promptPopUp.selectItem(withTitle: PolishPromptLibrary.activeName)
+        updatePromptButtons()
+    }
+
+    private func updatePromptButtons() {
+        deletePromptButton?.isEnabled = promptPopUp?.titleOfSelectedItem != PolishPromptLibrary.builtinName
     }
 
     private func showStatus(_ message: String) {
@@ -485,5 +608,136 @@ private final class ShortcutRecorderView: NSView {
         if flags.contains(.control) { modifiers |= UInt32(controlKey) }
         if flags.contains(.shift) { modifiers |= UInt32(shiftKey) }
         return modifiers
+    }
+}
+
+/// 提示词编辑 sheet：名称 + 全文。「保存」校验通过后以 .OK 结束，由调用方写库。
+private final class PolishPromptEditorSheet: NSObject {
+    let window: NSWindow
+    let originalName: String?
+    private let nameField = NSTextField()
+    private let textView = NSTextView()
+
+    init(original: PolishPromptLibrary.CustomPrompt?, prefill: String) {
+        originalName = original?.name
+
+        window = NSWindow(
+            contentRect: NSRect(x: 0, y: 0, width: 500, height: 460),
+            styleMask: [.titled],
+            backing: .buffered,
+            defer: false
+        )
+        window.title = "润色提示词"
+        window.isReleasedWhenClosed = false
+        super.init()
+
+        let title = NSTextField(labelWithString: original == nil ? "新建润色提示词" : "编辑润色提示词")
+        title.font = .systemFont(ofSize: 15, weight: .semibold)
+        title.translatesAutoresizingMaskIntoConstraints = false
+
+        let nameLabel = NSTextField(labelWithString: "名称")
+        nameLabel.font = .systemFont(ofSize: 13)
+        nameLabel.alignment = .right
+        nameLabel.translatesAutoresizingMaskIntoConstraints = false
+        nameLabel.widthAnchor.constraint(equalToConstant: 72).isActive = true
+
+        nameField.stringValue = original?.name ?? ""
+        nameField.placeholderString = "如：精简风格"
+        nameField.translatesAutoresizingMaskIntoConstraints = false
+
+        let nameRow = NSStackView(views: [nameLabel, nameField])
+        nameRow.orientation = .horizontal
+        nameRow.spacing = 10
+        nameRow.translatesAutoresizingMaskIntoConstraints = false
+
+        let textLabel = NSTextField(labelWithString: "提示词全文")
+        textLabel.font = .systemFont(ofSize: 13)
+        textLabel.textColor = .secondaryLabelColor
+        textLabel.translatesAutoresizingMaskIntoConstraints = false
+
+        textView.font = .systemFont(ofSize: 12)
+        textView.isRichText = false
+        textView.allowsUndo = true
+        textView.string = prefill
+        textView.autoresizingMask = [.width]
+        let scrollView = NSScrollView()
+        scrollView.documentView = textView
+        scrollView.hasVerticalScroller = true
+        scrollView.translatesAutoresizingMaskIntoConstraints = false
+
+        let cancelButton = NSButton(title: "取消", target: self, action: #selector(cancel))
+        cancelButton.bezelStyle = .rounded
+
+        let saveButton = NSButton(title: "保存", target: self, action: #selector(save))
+        saveButton.bezelStyle = .rounded
+        saveButton.keyEquivalent = "\r"
+
+        let buttons = NSStackView(views: [cancelButton, saveButton])
+        buttons.orientation = .horizontal
+        buttons.spacing = 8
+        buttons.translatesAutoresizingMaskIntoConstraints = false
+
+        let content = NSView()
+        content.translatesAutoresizingMaskIntoConstraints = false
+        content.addSubview(title)
+        content.addSubview(nameRow)
+        content.addSubview(textLabel)
+        content.addSubview(scrollView)
+        content.addSubview(buttons)
+
+        NSLayoutConstraint.activate([
+            title.topAnchor.constraint(equalTo: content.topAnchor, constant: 20),
+            title.leadingAnchor.constraint(equalTo: content.leadingAnchor, constant: 20),
+            title.trailingAnchor.constraint(equalTo: content.trailingAnchor, constant: -20),
+
+            nameRow.topAnchor.constraint(equalTo: title.bottomAnchor, constant: 16),
+            nameRow.leadingAnchor.constraint(equalTo: title.leadingAnchor),
+            nameRow.trailingAnchor.constraint(equalTo: title.trailingAnchor),
+
+            textLabel.topAnchor.constraint(equalTo: nameRow.bottomAnchor, constant: 14),
+            textLabel.leadingAnchor.constraint(equalTo: title.leadingAnchor),
+
+            scrollView.topAnchor.constraint(equalTo: textLabel.bottomAnchor, constant: 6),
+            scrollView.leadingAnchor.constraint(equalTo: title.leadingAnchor),
+            scrollView.trailingAnchor.constraint(equalTo: title.trailingAnchor),
+            scrollView.bottomAnchor.constraint(equalTo: buttons.topAnchor, constant: -14),
+
+            buttons.trailingAnchor.constraint(equalTo: title.trailingAnchor),
+            buttons.bottomAnchor.constraint(equalTo: content.bottomAnchor, constant: -20)
+        ])
+
+        window.contentView = content
+    }
+
+    var prompt: PolishPromptLibrary.CustomPrompt {
+        PolishPromptLibrary.CustomPrompt(name: nameField.stringValue, text: textView.string)
+    }
+
+    @objc private func save() {
+        let name = nameField.stringValue.trimmingCharacters(in: .whitespacesAndNewlines)
+        if name.isEmpty {
+            alert("名称不能为空")
+            return
+        }
+        if name == PolishPromptLibrary.builtinName {
+            alert("名称不能与「\(PolishPromptLibrary.builtinName)」相同")
+            return
+        }
+        let others = PolishPromptLibrary.customPrompts.map(\.name).filter { $0 != originalName }
+        if others.contains(name) {
+            alert("已存在同名提示词「\(name)」")
+            return
+        }
+        window.sheetParent?.endSheet(window, returnCode: .OK)
+    }
+
+    @objc private func cancel() {
+        window.sheetParent?.endSheet(window, returnCode: .cancel)
+    }
+
+    private func alert(_ message: String) {
+        let alert = NSAlert()
+        alert.messageText = message
+        alert.runModal()
     }
 }

@@ -135,7 +135,7 @@ namespace AppSnapshot
                 return PolishOutcome.Failure("润色服务 Base URL 无效，请检查「润色设置…」");
             }
 
-            string body = BuildRequestBody(configuration, PolishPrompt.SystemPrompt, text);
+            string body = BuildRequestBody(configuration, PolishPromptLibrary.ActiveText, text);
             byte[] bodyBytes = Encoding.UTF8.GetBytes(body);
 
             HttpWebRequest request;

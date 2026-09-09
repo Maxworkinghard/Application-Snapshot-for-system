@@ -140,6 +140,80 @@ enum PolishPromptTemplates {
     """
 }
 
+// MARK: - 润色提示词库（内置 + 用户自定义，可切换不替换）
+
+/// 内置提示词常驻可选列表，用户自定义提示词存 UserDefaults（JSON），
+/// 「当前使用」即时切换；润色调用时实时读取，改名/删除即时生效。
+enum PolishPromptLibrary {
+    static let builtinName = "内置"
+
+    struct CustomPrompt: Codable, Equatable {
+        var name: String
+        var text: String
+    }
+
+    private static let customKey = "polish.prompt.custom"
+    private static let activeKey = "polish.prompt.active"
+
+    /// 当前生效的系统提示词：激活的自定义项，缺失时回退内置。
+    static var activePrompt: String {
+        let active = UserDefaults.standard.string(forKey: activeKey) ?? ""
+        guard !active.isEmpty else { return PolishPromptTemplates.systemPrompt }
+        return customPrompts.first { $0.name == active }?.text ?? PolishPromptTemplates.systemPrompt
+    }
+
+    /// 当前使用的名称（激活项被删后回退「内置」）。
+    static var activeName: String {
+        let active = UserDefaults.standard.string(forKey: activeKey) ?? ""
+        return customPrompts.contains { $0.name == active } ? active : builtinName
+    }
+
+    static var customPrompts: [CustomPrompt] {
+        get {
+            guard let data = UserDefaults.standard.data(forKey: customKey),
+                  let prompts = try? JSONDecoder().decode([CustomPrompt].self, from: data) else { return [] }
+            return prompts
+        }
+        set {
+            guard let data = try? JSONEncoder().encode(newValue) else { return }
+            UserDefaults.standard.set(data, forKey: customKey)
+        }
+    }
+
+    static func setActive(_ name: String) {
+        UserDefaults.standard.set(name == builtinName ? "" : name, forKey: activeKey)
+    }
+
+    /// 新增或按原名更新。返回 false 表示名称为空、与内置重名或与其他自定义重名。
+    @discardableResult
+    static func save(_ prompt: CustomPrompt, originalName: String?) -> Bool {
+        let name = prompt.name.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !name.isEmpty, name != builtinName else { return false }
+
+        var prompts = customPrompts
+        if let original = originalName, let index = prompts.firstIndex(where: { $0.name == original }) {
+            if name != original, prompts.contains(where: { $0.name == name }) { return false }
+            let wasActive = activeName == original
+            prompts[index] = CustomPrompt(name: name, text: prompt.text)
+            customPrompts = prompts
+            if wasActive { setActive(name) }
+            return true
+        }
+        guard !prompts.contains(where: { $0.name == name }) else { return false }
+        prompts.append(CustomPrompt(name: name, text: prompt.text))
+        customPrompts = prompts
+        return true
+    }
+
+    static func delete(_ name: String) {
+        let wasActive = activeName == name
+        var prompts = customPrompts
+        prompts.removeAll { $0.name == name }
+        customPrompts = prompts
+        if wasActive { setActive(builtinName) }
+    }
+}
+
 // MARK: - 真实后端调用
 
 enum PolishBackendError: LocalizedError {
@@ -196,7 +270,7 @@ final class RemotePromptPolishingService: PromptPolishingService {
             return NoOpPolishingTask()
         }
 
-        let system = PolishPromptTemplates.systemPrompt
+        let system = PolishPromptLibrary.activePrompt
         let user = request.text
 
         let urlRequest: URLRequest
