@@ -83,6 +83,19 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         captureWindow(of: currentTargetApplication())
     }
 
+    /// 系统截屏同款快门声；文件缺失时回退系统提示音。
+    private static let shutterSound = NSSound(
+        contentsOfFile: "/System/Library/Components/CoreAudio.component/Contents/SharedSupport/SystemSounds/system/Shutter.aif",
+        byReference: true
+    )
+
+    private func playShutterSound() {
+        if let shutterSound = Self.shutterSound, shutterSound.play() {
+            return
+        }
+        NSSound(named: NSSound.Name("Tink"))?.play()
+    }
+
     private func captureWindow(of application: NSRunningApplication?) {
         guard !isCapturing else { return }
         isCapturing = true
@@ -94,6 +107,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
 
             switch result {
             case .success(let capturedWindow):
+                self.playShutterSound()
                 self.toastController.show(
                     message: "已复制 \(capturedWindow.applicationName) 窗口，60 秒后自动清空",
                     symbolName: "checkmark"
@@ -253,6 +267,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
                     return
                 }
 
+                self.playShutterSound()
                 self.toastController.show(message: "窗口已复制，可直接 ⌘V", symbolName: "checkmark")
             }
         }
