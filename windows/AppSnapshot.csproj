@@ -25,6 +25,7 @@
     <Compile Include="src\Program.cs" />
     <Compile Include="src\RecordingControlsForm.cs" />
     <Compile Include="src\RecordingService.cs" />
+    <Compile Include="src\ShutterSound.cs" />
     <Compile Include="src\SnapshotBubbleForm.cs" />
     <Compile Include="src\TargetAppTracker.cs" />
     <Compile Include="src\Toast.cs" />

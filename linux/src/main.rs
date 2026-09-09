@@ -10,6 +10,7 @@ mod wayland;
 mod x11;
 
 use std::collections::VecDeque;
+use std::process::{Command, Stdio};
 use std::sync::atomic::Ordering;
 use std::sync::mpsc;
 use std::sync::Arc;
@@ -33,6 +34,32 @@ pub enum Msg {
 }
 
 const AUTO_CLEAR: Duration = Duration::from_secs(60);
+
+/// 截图成功后播放快门声：优先 libcanberra（freedesktop 音效主题的
+/// camera-shutter 事件），回退 paplay / pw-play 播放主题自带文件。失败静默。
+fn play_shutter_sound() {
+    if Command::new("canberra-gtk-play")
+        .args(["-i", "camera-shutter"])
+        .stdout(Stdio::null())
+        .stderr(Stdio::null())
+        .spawn()
+        .is_ok()
+    {
+        return;
+    }
+    let file = "/usr/share/sounds/freedesktop/stereo/camera-shutter.oga";
+    for player in ["paplay", "pw-play"] {
+        if Command::new(player)
+            .arg(file)
+            .stdout(Stdio::null())
+            .stderr(Stdio::null())
+            .spawn()
+            .is_ok()
+        {
+            return;
+        }
+    }
+}
 
 enum Session {
     X11,
@@ -186,6 +213,7 @@ impl Daemon {
         };
         match result {
             Ok(name) => {
+                play_shutter_sound();
                 notify::notify("已复制窗口截图", &format!("{name} — 60 秒后自动清空"));
                 self.deadline = Some(Instant::now() + AUTO_CLEAR);
             }
@@ -226,6 +254,7 @@ impl Daemon {
         };
         match result {
             Ok(name) => {
+                play_shutter_sound();
                 notify::notify("已复制窗口截图", &format!("{name} — 60 秒后自动清空"));
                 self.deadline = Some(Instant::now() + AUTO_CLEAR);
             }
@@ -416,6 +445,7 @@ fn run_capture_once() -> Result<()> {
         Session::X11 => {
             let backend = x11::X11Backend::new()?;
             let name = backend.capture_and_copy()?;
+            play_shutter_sound();
             notify::notify("已复制窗口截图", &format!("{name} — 60 秒后自动清空"));
             // X11 剪贴板由 owner 进程供数，需存活到被替换或超时
             backend.serve_until(Instant::now() + AUTO_CLEAR);
@@ -424,6 +454,7 @@ fn run_capture_once() -> Result<()> {
         Session::Wayland => {
             let png = wayland::take_screenshot()?;
             wayland::copy_background(png)?;
+            play_shutter_sound();
             notify::notify("已复制窗口截图", "独立模式下不自动清空剪贴板");
         }
     }
