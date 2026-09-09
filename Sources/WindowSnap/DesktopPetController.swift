@@ -1,6 +1,6 @@
 import AppKit
 
-final class DesktopPetController {
+final class DesktopPetController: NSObject {
     var onCapture: (NSRunningApplication) -> Void = { _ in }
     var onRecord: (NSRunningApplication) -> Void = { _ in }
     var onStopRecording: () -> Void = {}
@@ -8,6 +8,7 @@ final class DesktopPetController {
     var onPolishPrompt: () -> Void = {}
     var onPolishBusy: () -> Bool = { false }
     var onOpenScreenRecordingSettings: () -> Void = {}
+    var onOpenShortcutSettings: () -> Void = {}
 
     private let applicationService: CapturableApplicationService
     private var panel: NSPanel?
@@ -34,6 +35,7 @@ final class DesktopPetController {
             let petView = DesktopPetView(frame: NSRect(x: 0, y: 0, width: 56, height: 56))
             petView.onClick = { [weak self] in self?.toggleActionPanel() }
             petView.onDragged = { [weak self] origin in self?.savePosition(origin) }
+            petView.onRightClick = { [weak self] event in self?.showContextMenu(event) }
             self.petView = petView
 
             let panel = NSPanel(
@@ -67,6 +69,25 @@ final class DesktopPetController {
         if let recordButton {
             configureRecordButton(recordButton)
         }
+    }
+
+    /// 右键悬浮窗：弹出「设置快捷键」菜单。
+    private func showContextMenu(_ event: NSEvent) {
+        guard let petView else { return }
+        let menu = NSMenu()
+        let item = NSMenuItem(
+            title: "设置快捷键…",
+            action: #selector(openShortcutSettingsFromMenu),
+            keyEquivalent: ""
+        )
+        item.target = self
+        menu.addItem(item)
+        NSMenu.popUpContextMenu(menu, with: event, for: petView)
+    }
+
+    @objc private func openShortcutSettingsFromMenu() {
+        closeActionPanel()
+        onOpenShortcutSettings()
     }
 
     private func toggleActionPanel() {
@@ -373,6 +394,7 @@ private func clampToVisibleArea(_ origin: NSPoint, size: NSSize, around anchor: 
 private final class DesktopPetView: NSView {
     var onClick: () -> Void = {}
     var onDragged: (NSPoint) -> Void = { _ in }
+    var onRightClick: (NSEvent) -> Void = { _ in }
 
     private var icon: NSImage?
     private var mouseDownLocation: NSPoint = .zero
@@ -446,5 +468,9 @@ private final class DesktopPetView: NSView {
         } else {
             onClick()
         }
+    }
+
+    override func rightMouseDown(with event: NSEvent) {
+        onRightClick(event)
     }
 }
