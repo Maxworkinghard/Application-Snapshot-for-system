@@ -215,26 +215,6 @@ namespace AppSnapshot
                 BackColor = Color.White
             };
 
-            foreach (WindowEntry entry in EnumerateCapturableWindows())
-            {
-                uint processId;
-                NativeMethods.GetWindowThreadProcessId(entry.Handle, out processId);
-                Bitmap icon = WindowIconLoader.LoadWindowIcon(entry.Handle, (int)processId, 32);
-                string processName = "";
-                try
-                {
-                    processName = System.Diagnostics.Process.GetProcessById((int)processId).ProcessName;
-                }
-                catch { }
-                list.Items.Add(new WindowListItem
-                {
-                    Handle = entry.Handle,
-                    Title = entry.Title,
-                    ProcessName = processName,
-                    Icon = icon
-                });
-            }
-
             list.ItemActivated += delegate(WindowListItem item)
             {
                 Close();
@@ -247,6 +227,42 @@ namespace AppSnapshot
 
             SetBoundsCore(size.Width, size.Height);
             ResumeLayout();
+
+            // 后台线程枚举窗口和加载图标，避免阻塞 UI
+            var panel = this;
+            System.Threading.ThreadPool.QueueUserWorkItem(delegate
+            {
+                var entries = EnumerateCapturableWindows();
+                var items = new List<WindowListItem>();
+                foreach (WindowEntry entry in entries)
+                {
+                    uint processId;
+                    NativeMethods.GetWindowThreadProcessId(entry.Handle, out processId);
+                    Bitmap icon = WindowIconLoader.LoadWindowIcon(entry.Handle, (int)processId, 32);
+                    string processName = "";
+                    try
+                    {
+                        processName = System.Diagnostics.Process.GetProcessById((int)processId).ProcessName;
+                    }
+                    catch { }
+                    items.Add(new WindowListItem
+                    {
+                        Handle = entry.Handle,
+                        Title = entry.Title,
+                        ProcessName = processName,
+                        Icon = icon
+                    });
+                }
+
+                panel.Invoke(new Action(delegate
+                {
+                    foreach (WindowListItem item in items)
+                    {
+                        list.Items.Add(item);
+                    }
+                    list.Invalidate();
+                }));
+            });
         }
 
         private static string TruncateTitle(string title)
