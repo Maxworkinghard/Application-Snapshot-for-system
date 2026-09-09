@@ -8,7 +8,7 @@ final class DesktopPetController: NSObject {
     var onPolishPrompt: () -> Void = {}
     var onPolishBusy: () -> Bool = { false }
     var onOpenScreenRecordingSettings: () -> Void = {}
-    var onOpenShortcutSettings: () -> Void = {}
+    var onOpenSettings: () -> Void = {}
 
     private let applicationService: CapturableApplicationService
     private var panel: NSPanel?
@@ -71,13 +71,13 @@ final class DesktopPetController: NSObject {
         }
     }
 
-    /// 右键悬浮窗：弹出「设置快捷键」菜单。
+    /// 右键悬浮窗：弹出「设置…」菜单（统一设置：快捷键 + 润色服务）。
     private func showContextMenu(_ event: NSEvent) {
         guard let petView else { return }
         let menu = NSMenu()
         let item = NSMenuItem(
-            title: "设置快捷键…",
-            action: #selector(openShortcutSettingsFromMenu),
+            title: "设置…",
+            action: #selector(openSettingsFromMenu),
             keyEquivalent: ""
         )
         item.target = self
@@ -85,9 +85,9 @@ final class DesktopPetController: NSObject {
         NSMenu.popUpContextMenu(menu, with: event, for: petView)
     }
 
-    @objc private func openShortcutSettingsFromMenu() {
+    @objc private func openSettingsFromMenu() {
         closeActionPanel()
-        onOpenShortcutSettings()
+        onOpenSettings()
     }
 
     private func toggleActionPanel() {
