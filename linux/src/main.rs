@@ -26,7 +26,6 @@ pub enum Msg {
     CaptureList,
     Polish,
     StopPolish,
-    UndoPolish,
     StartRecording,
     StopRecording,
     TogglePanel,
@@ -79,7 +78,7 @@ fn print_help() {
            - 悬浮球：显示上一个前台应用的图标，点击弹菜单，可拖动、位置记忆\n\
            - 应用快照…：从窗口列表选择目标窗口截图\n\
            - 窗口录制：ffmpeg 录制当前活动窗口为 MP4（仅 X11）\n\
-           - 润色 Prompt：剪贴板草稿 → 确认 → 大模型改写 → 写回，支持撤销\n\
+           - 润色 Prompt：剪贴板草稿 → 确认 → 大模型改写 → 写回，处理中可停止\n\
          \n\
          配置：~/.config/windowsnap/config.toml\n\
            shortcut = \"Alt+Shift+2\"        # X11 下生效；Wayland 由 GlobalShortcuts portal 或桌面环境绑定\n\
@@ -116,7 +115,6 @@ impl Daemon {
             Msg::CaptureList => self.capture_list(),
             Msg::Polish => self.start_polish(),
             Msg::StopPolish => self.stop_polish(),
-            Msg::UndoPolish => self.undo_polish(),
             Msg::StartRecording => self.start_recording(),
             Msg::StopRecording => self.stop_recording(),
             Msg::TogglePanel => self.open_panel(),
@@ -266,12 +264,6 @@ impl Daemon {
         notify::notify("停止润色", "正在中止当前请求");
     }
 
-    fn undo_polish(&mut self) {
-        self.deadline = None;
-        let session = self.clipboard_session();
-        polish::undo_polish(&session, &self.polish_state);
-    }
-
     fn start_recording(&mut self) {
         if self.recorder.active.load(Ordering::SeqCst) {
             notify::notify("已在录制中", "请先停止当前录制");
@@ -318,7 +310,6 @@ impl Daemon {
         }
         items.push(if recording { "停止窗口录制" } else { "开始窗口录制" });
         items.push(if polishing { "停止润色" } else { "润色 Prompt" });
-        items.push("撤销润色");
         items.push("退出");
 
         let Some(index) = dialog::choose_action(&items) else { return };
@@ -341,9 +332,6 @@ impl Daemon {
             }
             "停止润色" => {
                 self.handle(Msg::StopPolish);
-            }
-            "撤销润色" => {
-                self.handle(Msg::UndoPolish);
             }
             "退出" => {
                 self.handle(Msg::Quit);

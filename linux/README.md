@@ -10,7 +10,7 @@ macOS 版的 Linux 移植。常驻后台，功能与 macOS / Windows 端对齐�
 - **悬浮球**：圆形悬浮图标，显示上一个前台应用的图标；点击弹出操作菜单，可拖动，位置记忆
 - **应用快照**：从窗口列表选择任意窗口截图
 - **窗口录制**：`ffmpeg` 录制当前活动窗口为 MP4，保存到配置目录（仅 X11）
-- **润色 Prompt**：读取剪贴板中的文字草稿 → 确认 → 大模型改写 → 结果写回剪贴板，支持撤销与进行中停止
+- **润色 Prompt**：读取剪贴板中的文字草稿 → 确认 → 大模型改写 → 结果写回剪贴板，处理中可停止
 - **托盘菜单**：StatusNotifierItem 托盘，入口与悬浮球菜单一致
 - **桌面通知**：`org.freedesktop.Notifications`
 
@@ -36,7 +36,7 @@ macOS 版的 Linux 移植。常驻后台，功能与 macOS / Windows 端对齐�
 | `NSStatusBar` 菜单栏 | `NotifyIcon` 托盘 | StatusNotifierItem 托盘（KDE 原生支持；GNOME 需 AppIndicator 扩展） |
 | 桌面宠物 | 悬浮球 | X11：圆形悬浮窗（shape 扩展 + `_NET_WM_ICON`） |
 | 窗口录制 MP4 | 窗口录制 MP4 | `ffmpeg` x11grab（仅 X11；Wayland 下无标准窗口级录制接口） |
-| 润色 Prompt | 润色 Prompt | 剪贴板草稿 → 确认 → API 改写 → 写回，支持撤销 |
+| 润色 Prompt | 润色 Prompt | 剪贴板草稿 → 确认 → API 改写 → 写回，处理中可停止 |
 | Toast 提示 | Toast 提示 | `org.freedesktop.Notifications` 桌面通知 |
 | 60 秒自动清空 | 同 | 同款逻辑（仍持有剪贴板且未被覆盖才清空） |
 
@@ -126,7 +126,7 @@ linux/
     ├── wayland.rs          ← portal 截图 / GlobalShortcuts + data-control 剪贴板
     ├── pet.rs              ← 悬浮球（圆形窗口 / 活动窗口图标跟踪 / 拖动 / 位置持久化）
     ├── record.rs           ← 窗口录制（ffmpeg x11grab）
-    ├── polish.rs           ← 提示词润色（确认 → curl 调 API → 写回，支持撤销/停止）
+    ├── polish.rs           ← 提示词润色（确认 → curl 调 API → 写回，处理中可停止）
     ├── tray.rs             ← StatusNotifierItem 托盘
     ├── dialog.rs           ← zenity / kdialog 对话框（润色确认、窗口选择、悬浮球菜单）
     ├── dbus_service.rs     ← local.windowsnap D-Bus 端点（CLI 触发 + 单实例锁）

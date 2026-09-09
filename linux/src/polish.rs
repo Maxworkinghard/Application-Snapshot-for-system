@@ -1,5 +1,5 @@
 //! 提示词润色：读取剪贴板文字 → 用户确认（zenity/kdialog）→ 通过 curl 调用
-//! OpenAI 兼容 / Anthropic 接口 → 结果写回剪贴板，支持撤销。
+//! OpenAI 兼容 / Anthropic 接口 → 结果写回剪贴板，处理中可停止。
 //! 对应 macOS 端的 RemotePromptPolishingService + AppDelegate 的润色流程。
 
 use std::io::Write;
@@ -18,8 +18,6 @@ const CONFIRM_PREVIEW_LENGTH: usize = 200;
 #[derive(Clone)]
 pub struct PolishState {
     pub busy: Arc<AtomicBool>,
-    /// (原文, 润色结果)；写入剪贴板后保存，撤销时恢复原文。
-    pub undo: Arc<Mutex<Option<(String, String)>>>,
     /// 取消标志：置位后中止进行中的 curl。
     pub cancel: Arc<AtomicBool>,
     /// 进行中的 curl PID；「停止润色」据此发 SIGTERM。
@@ -30,7 +28,6 @@ impl PolishState {
     pub fn new() -> Self {
         Self {
             busy: Arc::new(AtomicBool::new(false)),
-            undo: Arc::new(Mutex::new(None)),
             cancel: Arc::new(AtomicBool::new(false)),
             curl_pid: Arc::new(Mutex::new(None)),
         }
@@ -177,31 +174,9 @@ fn polish_once(
         return Err("润色服务未返回内容".into());
     }
 
-    write_clipboard_text(session, polished.clone())?;
-    *state.undo.lock().unwrap() = Some((text, polished));
+    write_clipboard_text(session, polished)?;
     crate::notify::notify("润色完成", "结果已替换剪切板");
     Ok(())
-}
-
-/// 撤销上一次润色：仅当剪贴板仍是润色结果时恢复原文。
-pub fn undo_polish(session: &ClipboardSession, state: &PolishState) {
-    let undo = state.undo.lock().unwrap().take();
-    let Some((original, polished)) = undo else {
-        crate::notify::notify("撤销润色", "没有可撤销的润色");
-        return;
-    };
-
-    let current = read_clipboard_text(session).unwrap_or_default();
-    if current.trim() != polished.trim() {
-        crate::notify::notify("撤销润色", "剪切板内容已变化，无法撤销");
-        return;
-    }
-
-    if let Err(e) = write_clipboard_text(session, original.clone()) {
-        crate::notify::notify("撤销润色", &format!("恢复原文失败：{e}"));
-        return;
-    }
-    crate::notify::notify("已撤销", "剪切板已恢复原文");
 }
 
 fn preview_text(text: &str) -> String {

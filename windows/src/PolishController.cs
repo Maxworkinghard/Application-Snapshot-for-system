@@ -18,15 +18,6 @@ namespace AppSnapshot
         private readonly object syncRoot = new object();
         private bool busy;
 
-        private string undoOriginalText;
-        private uint undoChangeCountAfterWrite;
-
-        /// <summary>是否有一次可撤销的润色（面板按钮显示用，粗略状态）。</summary>
-        internal bool HasUndoState
-        {
-            get { return undoOriginalText != null; }
-        }
-
         internal bool IsBusy
         {
             get
@@ -98,11 +89,11 @@ namespace AppSnapshot
             ThreadPool.QueueUserWorkItem(delegate
             {
                 PolishOutcome outcome = service.Polish(requestText);
-                RunOnUi(delegate { Finish(outcome, requestText, baselineSequence); });
+                RunOnUi(delegate { Finish(outcome, baselineSequence); });
             });
         }
 
-        private void Finish(PolishOutcome outcome, string requestText, uint baselineSequence)
+        private void Finish(PolishOutcome outcome, uint baselineSequence)
         {
             lock (syncRoot)
             {
@@ -134,38 +125,7 @@ namespace AppSnapshot
                 App.Toast.Show("写入剪切板失败", ToastKind.Error);
                 return;
             }
-            undoOriginalText = requestText;
-            undoChangeCountAfterWrite = NativeMethods.GetClipboardSequenceNumber();
             App.Toast.Show("润色完成，结果已替换剪切板", ToastKind.Success);
-        }
-
-        /// <summary>撤销上一次润色：仅当剪切板自写回后未被外部改动时才恢复原文。</summary>
-        internal void Undo()
-        {
-            if (undoOriginalText == null)
-            {
-                App.Toast.Show("没有可撤销的润色", ToastKind.Warning);
-                return;
-            }
-            string originalText = undoOriginalText;
-            undoOriginalText = null;
-
-            if (NativeMethods.GetClipboardSequenceNumber() != undoChangeCountAfterWrite)
-            {
-                App.Toast.Show("剪切板内容已变化，无法撤销", ToastKind.Warning);
-                return;
-            }
-
-            try
-            {
-                Clipboard.SetText(originalText);
-            }
-            catch
-            {
-                App.Toast.Show("恢复剪切板失败", ToastKind.Error);
-                return;
-            }
-            App.Toast.Show("已撤销，剪切板已恢复原文", ToastKind.Success);
         }
 
         /// <summary>系统确认弹窗：用户确认后才会覆盖剪切板内容。</summary>

@@ -91,15 +91,6 @@ impl ksni::Tray for Tray {
         }
         .into();
 
-        let undo = StandardItem {
-            label: "撤销润色".into(),
-            activate: Box::new(|tray: &mut Self| {
-                let _ = tray.tx.send(Msg::UndoPolish);
-            }),
-            ..Default::default()
-        }
-        .into();
-
         let quit = StandardItem {
             label: "退出应用快照".into(),
             activate: Box::new(|tray: &mut Self| {
@@ -114,7 +105,6 @@ impl ksni::Tray for Tray {
             list,
             record,
             polish,
-            undo,
             ksni::MenuItem::Separator,
             quit,
         ]
