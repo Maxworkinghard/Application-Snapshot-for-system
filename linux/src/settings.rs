@@ -7,7 +7,14 @@ use std::path::PathBuf;
 use crate::polish::{PolishConfig, PolishProtocolKind};
 
 pub struct Settings {
+    /// 截取当前应用快捷键；空 = 未绑定。
     pub shortcut: String,
+    /// 录制快捷键；空 = 未绑定。
+    pub shortcut_record: String,
+    /// 截取上一个应用快捷键；空 = 未绑定（默认未绑定，用户在设置中自行决定）。
+    pub shortcut_previous_app: String,
+    /// 润色快捷键；空 = 未绑定（默认未绑定）。
+    pub shortcut_polish: String,
     pub save_dir: String,
     pub pet: Option<(i32, i32)>,
     pub polish: PolishConfig,
@@ -48,6 +55,15 @@ pub fn load() -> Settings {
         .filter(|value| !value.is_empty())
         .cloned()
         .unwrap_or_else(|| "Alt+Shift+2".to_string());
+    // 显式写成空值 = 解除绑定；未配置则用默认
+    let shortcut_record = match map.get("shortcut_record") {
+        Some(value) if !value.is_empty() => value.clone(),
+        Some(_) => String::new(),
+        None => "Alt+Shift+R".to_string(),
+    };
+    // 截取上一个应用 / 润色：默认不绑定，由用户在设置中自行决定
+    let shortcut_previous_app = map.get("shortcut_previous_app").cloned().unwrap_or_default();
+    let shortcut_polish = map.get("shortcut_polish").cloned().unwrap_or_default();
     let home = std::env::var("HOME").unwrap_or_default();
     let save_dir = map
         .get("save_dir")
@@ -76,6 +92,9 @@ pub fn load() -> Settings {
     };
     Settings {
         shortcut,
+        shortcut_record,
+        shortcut_previous_app,
+        shortcut_polish,
         save_dir,
         pet,
         polish,
@@ -92,6 +111,26 @@ pub fn save_directory() -> String {
 
 pub fn save_pet_position(x: i32, y: i32) {
     upsert(&[("pet_x", &x.to_string()), ("pet_y", &y.to_string())]);
+}
+
+/// 设置对话框保存快捷键（空值即解除绑定，含默认项）。
+pub fn save_shortcuts(capture: &str, record: &str, previous_app: &str, polish: &str) {
+    upsert(&[
+        ("shortcut", capture),
+        ("shortcut_record", record),
+        ("shortcut_previous_app", previous_app),
+        ("shortcut_polish", polish),
+    ]);
+}
+
+/// 设置对话框保存润色服务配置。
+pub fn save_polish(kind: &str, base_url: &str, model: &str, api_key: &str) {
+    upsert(&[
+        ("polish.kind", kind),
+        ("polish.base_url", base_url),
+        ("polish.model", model),
+        ("polish.api_key", api_key),
+    ]);
 }
 
 /// 按 key 原地更新 config.toml 中的行（保留注释与其他配置），文件不存在则创建。

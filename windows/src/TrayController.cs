@@ -10,16 +10,17 @@ namespace AppSnapshot
     internal sealed class TrayController : IDisposable
     {
         private readonly NotifyIcon trayIcon;
+        private readonly ToolStripMenuItem captureItem;
         private readonly ToolStripMenuItem recordItem;
 
         internal TrayController()
         {
-            var captureItem = new ToolStripMenuItem(
-                "截取当前应用窗口（Alt+Shift+2）", null,
+            captureItem = new ToolStripMenuItem(
+                "截取当前应用窗口", null,
                 delegate { App.CaptureWindow(App.CurrentTargetWindow()); });
 
             recordItem = new ToolStripMenuItem(
-                "录制当前应用窗口（Alt+Shift+R）", null,
+                "录制当前应用窗口", null,
                 delegate { App.ToggleRecording(); });
 
             var chooseItem = new ToolStripMenuItem(
@@ -33,9 +34,9 @@ namespace AppSnapshot
                 "设置保存目录…", null,
                 delegate { ChooseSaveDirectory(); });
 
-            var polishSettingsItem = new ToolStripMenuItem(
-                "润色设置…", null,
-                delegate { OpenPolishSettings(); });
+            var settingsItem = new ToolStripMenuItem(
+                "设置…", null,
+                delegate { OpenSettings(); });
 
             var quitItem = new ToolStripMenuItem(
                 "退出应用快照", null,
@@ -47,7 +48,7 @@ namespace AppSnapshot
             menu.Items.Add(chooseItem);
             menu.Items.Add(new ToolStripSeparator());
             menu.Items.Add(saveDirectoryItem);
-            menu.Items.Add(polishSettingsItem);
+            menu.Items.Add(settingsItem);
             menu.Items.Add(new ToolStripSeparator());
             menu.Items.Add(quitItem);
 
@@ -63,11 +64,23 @@ namespace AppSnapshot
                 App.CaptureWindow(App.CurrentTargetWindow());
             };
 
+            RefreshShortcuts();
             App.Recording.StateChanged += UpdateRecordItem;
+        }
+
+        /// <summary>快捷键配置变化后刷新菜单文字（无绑定的项不显示组合键）。</summary>
+        internal void RefreshShortcuts()
+        {
+            HotKeySpec capture = HotKeyPreferences.Capture;
+            captureItem.Text = "截取当前应用窗口"
+                + (capture == null ? "" : "（" + capture.DisplayName + "）");
+            UpdateRecordItem();
         }
 
         internal void UpdateRecordItem()
         {
+            HotKeySpec record = HotKeyPreferences.Record;
+            string recordSuffix = record == null ? "" : "（" + record.DisplayName + "）";
             switch (App.Recording.CurrentState)
             {
                 case RecordingService.State.Recording:
@@ -83,7 +96,7 @@ namespace AppSnapshot
                     recordItem.Enabled = false;
                     break;
                 default:
-                    recordItem.Text = "录制当前应用窗口（Alt+Shift+R）";
+                    recordItem.Text = "录制当前应用窗口" + recordSuffix;
                     recordItem.Enabled = true;
                     break;
             }
@@ -112,9 +125,9 @@ namespace AppSnapshot
             }
         }
 
-        private static void OpenPolishSettings()
+        private static void OpenSettings()
         {
-            using (var form = new PolishSettingsForm())
+            using (var form = new SettingsForm())
             {
                 form.ShowDialog();
             }

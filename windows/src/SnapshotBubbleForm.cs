@@ -66,16 +66,16 @@ namespace AppSnapshot
                 true);
 
             var menu = new ContextMenuStrip();
-            var polishSettingsItem = new ToolStripMenuItem("润色设置…", null, delegate
+            var settingsItem = new ToolStripMenuItem("设置…", null, delegate
             {
-                using (var form = new PolishSettingsForm())
+                using (var form = new SettingsForm())
                 {
                     form.ShowDialog();
                 }
             });
-            menu.Items.Add(polishSettingsItem);
+            menu.Items.Add(settingsItem);
             menu.Items.Add(new ToolStripSeparator());
-            menu.Items.Add("\u9000\u51fa", null, delegate { Application.Exit(); });
+            menu.Items.Add("\u9000\u51FA", null, delegate { Application.Exit(); });
             ContextMenuStrip = menu;
 
             _toolTip = new ToolTip

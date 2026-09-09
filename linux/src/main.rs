@@ -25,11 +25,14 @@ pub type Result<T> = std::result::Result<T, Error>;
 pub enum Msg {
     Capture,
     CaptureList,
+    CapturePreviousApp,
     Polish,
     StopPolish,
     StartRecording,
     StopRecording,
+    ToggleRecording,
     TogglePanel,
+    OpenSettings,
     Quit,
 }
 
@@ -103,12 +106,16 @@ fn print_help() {
          \n\
          功能（与 macOS / Windows 端对齐）：\n\
            - 悬浮球：显示上一个前台应用的图标，点击弹菜单，可拖动、位置记忆\n\
+           - 右键悬浮球 / 托盘「设置…」：绑定快捷键（截图 / 录制 / 截取上一个应用 / 润色）与润色服务\n\
            - 应用快照…：从窗口列表选择目标窗口截图\n\
            - 窗口录制：ffmpeg 录制当前活动窗口为 MP4（仅 X11）\n\
            - 润色 Prompt：剪贴板草稿 → 确认 → 大模型改写 → 写回，处理中可停止\n\
          \n\
          配置：~/.config/windowsnap/config.toml\n\
            shortcut = \"Alt+Shift+2\"        # X11 下生效；Wayland 由 GlobalShortcuts portal 或桌面环境绑定\n\
+           shortcut_record = \"Alt+Shift+R\"  # 留空 = 不绑定\n\
+           shortcut_previous_app = \"\"      # 默认不绑定，在设置中自行决定\n\
+           shortcut_polish = \"\"            # 默认不绑定\n\
            save_dir = \"~/Videos/应用快照\"   # 录制文件保存目录\n\
            polish.kind = \"openai\"          # openai | anthropic\n\
            polish.base_url = \"https://api.deepseek.com\"\n\
@@ -140,11 +147,14 @@ impl Daemon {
         match msg {
             Msg::Capture => self.capture(),
             Msg::CaptureList => self.capture_list(),
+            Msg::CapturePreviousApp => self.capture_previous_app(),
             Msg::Polish => self.start_polish(),
             Msg::StopPolish => self.stop_polish(),
             Msg::StartRecording => self.start_recording(),
             Msg::StopRecording => self.stop_recording(),
+            Msg::ToggleRecording => self.toggle_recording(),
             Msg::TogglePanel => self.open_panel(),
+            Msg::OpenSettings => self.open_settings(),
             Msg::Quit => return false,
         }
         true
@@ -328,6 +338,123 @@ impl Daemon {
         pet::set_pet_visible(true);
     }
 
+    /// 录制快捷键是「开始/停止」二合一：按当前状态切换。
+    fn toggle_recording(&mut self) {
+        if self.recorder.active.load(Ordering::SeqCst) {
+            self.stop_recording();
+        } else {
+            self.start_recording();
+        }
+    }
+
+    /// 截取「上一个前台应用」窗口（悬浮球当前显示图标的目标）。
+    fn capture_previous_app(&mut self) {
+        let window = pet::previous_window();
+        if window == x11rb::NONE {
+            notify::notify("尚未记录上一个应用", "切换一次前台应用后再试");
+            return;
+        }
+        let Some(backend) = &self.backend else {
+            notify::notify("截取失败", "Wayland 会话下暂不支持截取上一个应用");
+            return;
+        };
+        match backend.capture_window(window) {
+            Ok(name) => {
+                play_shutter_sound();
+                notify::notify("已复制窗口截图", &format!("{name} — 60 秒后自动清空"));
+                self.deadline = Some(Instant::now() + AUTO_CLEAR);
+            }
+            Err(e) => notify::notify("截取失败", &e.to_string()),
+        }
+    }
+
+    /// 右键悬浮球 / 托盘「设置…」：zenity 表单（快捷键绑定 + 润色服务），
+    /// 保存后即时生效：润色配置更新内存，快捷键重新注册（仅 X11）。
+    fn open_settings(&mut self) {
+        let current = settings::load();
+        let values = dialog::SettingsFormValues {
+            shortcut: current.shortcut.clone(),
+            shortcut_record: current.shortcut_record.clone(),
+            shortcut_previous_app: current.shortcut_previous_app.clone(),
+            shortcut_polish: current.shortcut_polish.clone(),
+            polish_kind: if matches!(current.polish.kind, polish::PolishProtocolKind::Anthropic) {
+                "anthropic".to_string()
+            } else {
+                "openai".to_string()
+            },
+            polish_base_url: current.polish.base_url.clone(),
+            polish_model: current.polish.model.clone(),
+            polish_api_key: current.polish.api_key.clone(),
+        };
+        let Some(input) = dialog::settings_form(&values) else { return };
+
+        // 快捷键：留空保持不变，填 none 解除绑定
+        let resolve_shortcut = |input: &str, current: &str| -> String {
+            let input = input.trim();
+            if input.is_empty() {
+                current.to_string()
+            } else if input.eq_ignore_ascii_case("none") {
+                String::new()
+            } else {
+                input.to_string()
+            }
+        };
+        // 润色服务：留空保持不变
+        let resolve_text = |input: &str, current: &str| -> String {
+            let input = input.trim();
+            if input.is_empty() {
+                current.to_string()
+            } else {
+                input.to_string()
+            }
+        };
+
+        let shortcut = resolve_shortcut(&input.shortcut, &values.shortcut);
+        let shortcut_record = resolve_shortcut(&input.shortcut_record, &values.shortcut_record);
+        let shortcut_previous_app =
+            resolve_shortcut(&input.shortcut_previous_app, &values.shortcut_previous_app);
+        let shortcut_polish = resolve_shortcut(&input.shortcut_polish, &values.shortcut_polish);
+        let polish_kind = resolve_text(&input.polish_kind, &values.polish_kind).to_ascii_lowercase();
+        let polish_base_url = resolve_text(&input.polish_base_url, &values.polish_base_url);
+        let polish_model = resolve_text(&input.polish_model, &values.polish_model);
+        let polish_api_key = resolve_text(&input.polish_api_key, &values.polish_api_key);
+
+        if !polish_base_url.is_empty()
+            && !polish_base_url.starts_with("http://")
+            && !polish_base_url.starts_with("https://")
+        {
+            notify::notify("设置未保存", "润色 Base URL 需以 http:// 或 https:// 开头");
+            return;
+        }
+
+        settings::save_shortcuts(&shortcut, &shortcut_record, &shortcut_previous_app, &shortcut_polish);
+        settings::save_polish(&polish_kind, &polish_base_url, &polish_model, &polish_api_key);
+        self.polish_config = polish::PolishConfig {
+            kind: if polish_kind == "anthropic" {
+                polish::PolishProtocolKind::Anthropic
+            } else {
+                polish::PolishProtocolKind::OpenAICompatible
+            },
+            base_url: polish_base_url,
+            model: polish_model,
+            api_key: polish_api_key,
+        };
+
+        // 快捷键即时生效；Wayland 会话由桌面环境 / portal 管理绑定，重启后生效
+        match &self.backend {
+            Some(backend) => {
+                backend.ungrab_all();
+                let failures = register_hotkeys(backend, &settings::load());
+                if failures.is_empty() {
+                    notify::notify("设置已保存", "快捷键与润色配置已生效");
+                } else {
+                    notify::notify("部分快捷键注册失败", &failures.join("；"));
+                }
+            }
+            None => notify::notify("设置已保存", "润色配置已生效；Wayland 下快捷键由桌面环境管理"),
+        }
+    }
+
     /// 悬浮球点击菜单（zenity / kdialog 进程外 UI）。
     fn open_panel(&mut self) {
         let recording = self.recorder.active.load(Ordering::SeqCst);
@@ -407,15 +534,17 @@ fn run_daemon() -> Result<()> {
     match detect_session()? {
         Session::X11 => {
             let backend = x11::X11Backend::new()?;
-            match backend.grab_hotkey(&settings.shortcut) {
-                Ok(()) => notify::notify(
+            let failures = register_hotkeys(&backend, &settings);
+            if failures.is_empty() {
+                notify::notify(
                     "应用快照已启动",
-                    &format!("按 {} 截取当前活动窗口", settings.shortcut),
-                ),
-                Err(e) => notify::notify(
-                    "快捷键注册失败",
-                    &format!("{e}。仍可用托盘菜单或命令 windowsnap capture 触发"),
-                ),
+                    &format!("{}；右键悬浮球可打开设置", shortcut_summary(&settings)),
+                );
+            } else {
+                notify::notify(
+                    "部分快捷键注册失败",
+                    &format!("{}。仍可用托盘菜单或悬浮球触发", failures.join("；")),
+                );
             }
             backend.spawn_event_thread(tx.clone());
             daemon.backend = Some(backend);
@@ -433,6 +562,48 @@ fn run_daemon() -> Result<()> {
     pet::spawn(tx.clone());
     daemon.run(rx);
     Ok(())
+}
+
+/// 注册所有已绑定的快捷键，返回失败的描述。
+fn register_hotkeys(backend: &x11::X11Backend, settings: &settings::Settings) -> Vec<String> {
+    let specs = [
+        (&settings.shortcut, x11::HotkeyAction::Capture),
+        (&settings.shortcut_record, x11::HotkeyAction::Record),
+        (&settings.shortcut_previous_app, x11::HotkeyAction::PreviousApp),
+        (&settings.shortcut_polish, x11::HotkeyAction::Polish),
+    ];
+    let mut failures = Vec::new();
+    for (shortcut, action) in specs {
+        if shortcut.is_empty() {
+            continue;
+        }
+        if let Err(e) = backend.grab_hotkey(shortcut, action) {
+            failures.push(format!("{shortcut}：{e}"));
+        }
+    }
+    failures
+}
+
+/// 已绑定快捷键的启动摘要。
+fn shortcut_summary(settings: &settings::Settings) -> String {
+    let mut parts = Vec::new();
+    if !settings.shortcut.is_empty() {
+        parts.push(format!("截图 {}", settings.shortcut));
+    }
+    if !settings.shortcut_record.is_empty() {
+        parts.push(format!("录制 {}", settings.shortcut_record));
+    }
+    if !settings.shortcut_previous_app.is_empty() {
+        parts.push(format!("截取上一应用 {}", settings.shortcut_previous_app));
+    }
+    if !settings.shortcut_polish.is_empty() {
+        parts.push(format!("润色 {}", settings.shortcut_polish));
+    }
+    if parts.is_empty() {
+        "未绑定快捷键（右键悬浮球可设置）".to_string()
+    } else {
+        parts.join("；")
+    }
 }
 
 fn run_capture_once() -> Result<()> {
