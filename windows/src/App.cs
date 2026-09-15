@@ -25,6 +25,27 @@ namespace AppSnapshot
             /// </summary>
             internal static bool IsPetMode;
 
+            /// <summary>桌宠形象:assets/pet 下的一组 GIF 前缀,持久化于 pet.skin。</summary>
+            internal static string CurrentPetSkin = "shuangyan-crate-duo";
+
+            /// <summary>切换桌宠形象;桌宠显示中时立即换装(位置沿用 desktoppet.x/y)。</summary>
+            internal static void SwitchPetSkin(string skin)
+            {
+                if (skin == CurrentPetSkin)
+                {
+                    return;
+                }
+                CurrentPetSkin = skin;
+                AppSettings.Write("pet.skin", skin);
+
+                if (IsPetMode && Pet != null)
+                {
+                    Pet.Dispose();
+                    Pet = new PetController(skin);
+                    Pet.Start();
+                }
+            }
+
             /// <summary>切换悬浮球/桌宠形式,托盘菜单与桌宠右键菜单共用。</summary>
             internal static void SwitchUiMode(bool petMode)
             {
@@ -39,7 +60,7 @@ namespace AppSnapshot
                 {
                     if (Pet == null)
                     {
-                        Pet = new PetController();
+                        Pet = new PetController(CurrentPetSkin);
                     }
                     Pet.Start();
                     Form mainForm = MainForm;

@@ -54,12 +54,17 @@ namespace AppSnapshot
                     // 桌面呈现形式:默认悬浮球;ui.mode=pet 时猫接管展示,
                     // 悬浮球只保留截图宿主/Tracker 职能,常驻隐藏。
                     App.IsPetMode = AppSettings.Read("ui.mode") == "pet";
+                    string savedSkin = AppSettings.Read("pet.skin");
+                    if (!string.IsNullOrEmpty(savedSkin))
+                    {
+                        App.CurrentPetSkin = savedSkin;
+                    }
                     if (App.IsPetMode)
                     {
                         // 隐藏态也要先建好句柄:App.CaptureWindow 的 BeginInvoke 依赖它
                         NativeMethods.IsWindow(mainForm.Handle);
                         mainForm.StartRuntime();
-                        App.Pet = new PetController();
+                        App.Pet = new PetController(App.CurrentPetSkin);
                         App.Pet.Start();
                     }
 
