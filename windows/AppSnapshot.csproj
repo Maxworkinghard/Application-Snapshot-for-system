@@ -19,6 +19,7 @@
     <Compile Include="src\CaptureService.cs" />
     <Compile Include="src\HotKeys.cs" />
     <Compile Include="src\NativeMethods.cs" />
+    <Compile Include="src\Pet.cs" />
     <Compile Include="src\PolishController.cs" />
     <Compile Include="src\PolishPromptLibrary.cs" />
     <Compile Include="src\PolishPromptEditorForm.cs" />
@@ -34,6 +35,9 @@
     <Compile Include="src\TrayController.cs" />
     <Compile Include="src\UiScale.cs" />
     <Compile Include="src\WindowIconLoader.cs" />
+  </ItemGroup>
+  <ItemGroup>
+    <EmbeddedResource Include="assets\pet\*.gif" />
   </ItemGroup>
   <ItemGroup>
     <Reference Include="System" />

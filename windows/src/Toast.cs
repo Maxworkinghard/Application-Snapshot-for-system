@@ -20,9 +20,18 @@ namespace AppSnapshot
     {
         private ToastForm currentForm;
 
+        /// <summary>每次弹出 Toast 时触发;桌宠据此做成功/失败/警告反应动画。</summary>
+        internal event Action<ToastKind> Notified;
+
         public void Show(string message, ToastKind kind)
         {
             Close();
+
+            Action<ToastKind> notified = Notified;
+            if (notified != null)
+            {
+                notified(kind);
+            }
 
             var form = new ToastForm(message, kind);
             currentForm = form;
@@ -82,6 +91,17 @@ namespace AppSnapshot
 
         internal static Screen AnchorScreen()
         {
+            // 桌宠模式下锚定到猫的位置;悬浮球隐藏时其 Bounds 已不代表屏幕锚点
+            if (App.IsPetMode && App.Pet != null)
+            {
+                Rectangle petBounds = App.Pet.CurrentBounds;
+                if (!petBounds.IsEmpty)
+                {
+                    var petCenter = new Point(petBounds.Left + petBounds.Width / 2, petBounds.Top + petBounds.Height / 2);
+                    return Screen.FromPoint(petCenter);
+                }
+            }
+
             Form bubble = App.MainForm;
             if (bubble != null && !bubble.IsDisposed)
             {
