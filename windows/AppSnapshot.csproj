@@ -37,9 +37,6 @@
     <Compile Include="src\WindowIconLoader.cs" />
   </ItemGroup>
   <ItemGroup>
-    <EmbeddedResource Include="assets\pet\*.gif" />
-  </ItemGroup>
-  <ItemGroup>
     <Reference Include="System" />
     <Reference Include="System.Core" />
     <Reference Include="System.Drawing" />

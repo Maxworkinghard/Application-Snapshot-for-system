@@ -1,4 +1,5 @@
 ﻿using System;
+using System.Collections.Generic;
 using System.Drawing;
 using System.Text;
 using System.Windows.Forms;
@@ -25,8 +26,19 @@ namespace AppSnapshot
             /// </summary>
             internal static bool IsPetMode;
 
-            /// <summary>桌宠形象:assets/pet 下的一组 GIF 前缀,持久化于 pet.skin。</summary>
+            /// <summary>桌宠形象:pet 素材目录下的子目录名,持久化于 pet.skin。</summary>
             internal static string CurrentPetSkin = "shuangyan-crate-duo";
+
+            /// <summary>可用形象中解析当前选择;没有任何素材时返回 null(桌宠不可用)。</summary>
+            internal static string ResolvePetSkin()
+            {
+                List<string> skins = PetAssets.AvailableSkins();
+                if (skins.Contains(CurrentPetSkin))
+                {
+                    return CurrentPetSkin;
+                }
+                return skins.Count > 0 ? skins[0] : null;
+            }
 
             /// <summary>切换桌宠形象;桌宠显示中时立即换装(位置沿用 desktoppet.x/y)。</summary>
             internal static void SwitchPetSkin(string skin)
@@ -46,11 +58,19 @@ namespace AppSnapshot
                 }
             }
 
-            /// <summary>切换悬浮球/桌宠形式,托盘菜单与桌宠右键菜单共用。</summary>
+            /// <summary>切换悬浮球/桌宠形式,设置窗口保存时调用;无素材可切桌宠时拒绝并提示。</summary>
             internal static void SwitchUiMode(bool petMode)
             {
                 if (petMode == IsPetMode)
                 {
+                    return;
+                }
+                if (petMode && ResolvePetSkin() == null)
+                {
+                    if (Toast != null)
+                    {
+                        Toast.Show("未找到桌宠素材(" + PetAssets.Root + "\\<形象>\\*.gif),无法启用桌宠", ToastKind.Warning);
+                    }
                     return;
                 }
                 IsPetMode = petMode;

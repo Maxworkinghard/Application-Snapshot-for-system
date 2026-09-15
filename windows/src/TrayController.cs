@@ -30,20 +30,6 @@ namespace AppSnapshot
                     App.Panels.ShowList();
                 });
 
-            var modeItem = new ToolStripMenuItem(
-                "切换到桌宠模式", null,
-                delegate { App.SwitchUiMode(!App.IsPetMode); });
-
-            var skinShuangyanItem = new ToolStripMenuItem(
-                "双燕坐箱", null,
-                delegate { App.SwitchPetSkin("shuangyan-crate-duo"); });
-            var skinYamadaItem = new ToolStripMenuItem(
-                "Yamada Q", null,
-                delegate { App.SwitchPetSkin("yamada-q"); });
-            var skinItem = new ToolStripMenuItem("桌宠形象");
-            skinItem.DropDownItems.Add(skinShuangyanItem);
-            skinItem.DropDownItems.Add(skinYamadaItem);
-
             var saveDirectoryItem = new ToolStripMenuItem(
                 "设置保存目录…", null,
                 delegate { ChooseSaveDirectory(); });
@@ -68,19 +54,11 @@ namespace AppSnapshot
             menu.Items.Add(captureItem);
             menu.Items.Add(recordItem);
             menu.Items.Add(chooseItem);
-            menu.Items.Add(modeItem);
-            menu.Items.Add(skinItem);
             menu.Items.Add(new ToolStripSeparator());
             menu.Items.Add(saveDirectoryItem);
             menu.Items.Add(settingsItem);
             menu.Items.Add(new ToolStripSeparator());
             menu.Items.Add(quitItem);
-            menu.Opening += delegate
-            {
-                modeItem.Text = App.IsPetMode ? "切换到悬浮球模式" : "切换到桌宠模式";
-                skinShuangyanItem.Checked = App.CurrentPetSkin == "shuangyan-crate-duo";
-                skinYamadaItem.Checked = App.CurrentPetSkin == "yamada-q";
-            };
 
             trayIcon = new NotifyIcon
             {

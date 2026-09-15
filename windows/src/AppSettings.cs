@@ -19,6 +19,12 @@ namespace AppSnapshot
 
         private static readonly string FilePath = Path.Combine(DirectoryPath, "settings.txt");
 
+        /// <summary>应用数据目录(%APPDATA%\AppSnapshot);桌宠等可选素材放在其子目录下。</summary>
+        public static string DataDirectory
+        {
+            get { return DirectoryPath; }
+        }
+
         public static string Read(string key)
         {
             lock (SyncRoot)

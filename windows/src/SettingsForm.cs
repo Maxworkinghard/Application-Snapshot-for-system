@@ -28,6 +28,8 @@ namespace AppSnapshot
         private Label _errorLabel;
         private ComboBox _promptBox;
         private Button _deletePromptButton;
+        private ComboBox _uiModeBox;
+        private ComboBox _skinBox;
 
         public SettingsForm()
         {
@@ -38,7 +40,7 @@ namespace AppSnapshot
             StartPosition = FormStartPosition.CenterScreen;
             ShowInTaskbar = false;
             Font = new Font("Microsoft YaHei UI", 9F);
-            ClientSize = new Size(500, 702);
+            ClientSize = new Size(500, 740);
             AutoScaleMode = AutoScaleMode.Dpi;
 
             var titleLabel = new Label
@@ -248,7 +250,51 @@ namespace AppSnapshot
                 ForeColor = Color.Firebrick
             };
 
-            int buttonTop = row + 26;
+            // ---- 桌面形式区块(悬浮窗 / 桌宠)----
+
+            int desktopTop = row + 26;
+            var desktopHeader = new Label
+            {
+                Text = "桌面形式",
+                Font = new Font("Microsoft YaHei UI", 10.5F, FontStyle.Bold),
+                AutoSize = true,
+                Location = new Point(24, desktopTop)
+            };
+            Controls.Add(desktopHeader);
+
+            int desktopRow = desktopTop + 30;
+            _uiModeBox = new ComboBox
+            {
+                DropDownStyle = ComboBoxStyle.DropDownList,
+                Location = new Point(170, desktopRow - 3),
+                Size = new Size(306, 25)
+            };
+            _uiModeBox.Items.Add("悬浮窗（默认）");
+            _uiModeBox.Items.Add("桌宠");
+            Controls.Add(MakeRowLabel("形式", desktopRow));
+            Controls.Add(_uiModeBox);
+
+            _skinBox = new ComboBox
+            {
+                DropDownStyle = ComboBoxStyle.DropDownList,
+                Location = new Point(170, desktopRow + 34),
+                Size = new Size(306, 25)
+            };
+            Controls.Add(MakeRowLabel("桌宠形象", desktopRow + 38));
+            Controls.Add(_skinBox);
+
+            var desktopHint = new Label
+            {
+                Text = "桌宠素材不随应用分发:把 idle / waving / jumping / failed / waiting /"
+                    + " running-left / running-right.gif 放入 " + PetAssets.Root + "\\<形象>\\ 后重开设置即可选择。",
+                AutoSize = false,
+                Size = new Size(452, 34),
+                Location = new Point(24, desktopRow + 64),
+                ForeColor = SystemColors.GrayText
+            };
+            Controls.Add(desktopHint);
+
+            int buttonTop = desktopRow + 106;
             var clearPolishButton = new Button
             {
                 Text = "清除润色配置",
@@ -294,6 +340,7 @@ namespace AppSnapshot
             RefreshShortcutFields();
             RefreshPolishFields();
             RefreshPromptFields();
+            RefreshDesktopFields();
         }
 
         private static Label MakeRowLabel(string text, int top)
@@ -352,7 +399,55 @@ namespace AppSnapshot
                 _errorLabel.Text = error;
                 return;
             }
+            if (!ApplyDesktopSettings())
+            {
+                return;
+            }
             Close();
+        }
+
+        // ---- 桌面形式(保存时应用;素材缺失会拒绝并显示在错误栏)----
+
+        private void RefreshDesktopFields()
+        {
+            _uiModeBox.SelectedIndex = App.IsPetMode ? 1 : 0;
+            _skinBox.Items.Clear();
+            foreach (string skin in PetAssets.AvailableSkins())
+            {
+                _skinBox.Items.Add(skin);
+            }
+            string current = App.ResolvePetSkin();
+            _skinBox.SelectedItem = current != null && _skinBox.Items.Contains(current) ? current : null;
+        }
+
+        private bool ApplyDesktopSettings()
+        {
+            bool wantPet = _uiModeBox.SelectedIndex == 1;
+            string wantSkin = _skinBox.SelectedItem as string;
+            if (wantPet && PetAssets.AvailableSkins().Count == 0)
+            {
+                _errorLabel.Text = "未找到桌宠素材(" + PetAssets.Root + "\\<形象>\\*.gif)";
+                return false;
+            }
+
+            if (!App.IsPetMode && wantPet)
+            {
+                // 先落到可用形象,避免沿用已不存在的旧选择
+                if (wantSkin != null)
+                {
+                    App.CurrentPetSkin = wantSkin;
+                }
+                App.SwitchUiMode(true);
+            }
+            else if (App.IsPetMode && !wantPet)
+            {
+                App.SwitchUiMode(false);
+            }
+            if (wantSkin != null)
+            {
+                App.SwitchPetSkin(wantSkin);
+            }
+            return true;
         }
 
         /// <summary>润色配置校验：全空视为「不启用」直接放行；填了部分则要求完整。</summary>
