@@ -30,20 +30,6 @@ namespace AppSnapshot
                     App.Panels.ShowList();
                 });
 
-            var modeItem = new ToolStripMenuItem(
-                "切换到桌宠模式", null,
-                delegate { App.SwitchUiMode(!App.IsPetMode); });
-
-            var skinDefaultItem = new ToolStripMenuItem(
-                "默认形象", null,
-                delegate { App.SwitchPetSkin(""); });
-            var skinAltItem = new ToolStripMenuItem(
-                "备用形象", null,
-                delegate { App.SwitchPetSkin(""); });
-            var skinItem = new ToolStripMenuItem("桌宠形象");
-            skinItem.DropDownItems.Add(skinDefaultItem);
-            skinItem.DropDownItems.Add(skinAltItem);
-
             var saveDirectoryItem = new ToolStripMenuItem(
                 "设置保存目录…", null,
                 delegate { ChooseSaveDirectory(); });
@@ -68,19 +54,11 @@ namespace AppSnapshot
             menu.Items.Add(captureItem);
             menu.Items.Add(recordItem);
             menu.Items.Add(chooseItem);
-            menu.Items.Add(modeItem);
-            menu.Items.Add(skinItem);
             menu.Items.Add(new ToolStripSeparator());
             menu.Items.Add(saveDirectoryItem);
             menu.Items.Add(settingsItem);
             menu.Items.Add(new ToolStripSeparator());
             menu.Items.Add(quitItem);
-            menu.Opening += delegate
-            {
-                modeItem.Text = App.IsPetMode ? "切换到悬浮球模式" : "切换到桌宠模式";
-                skinDefaultItem.Checked = App.CurrentPetSkin == "";
-                skinAltItem.Checked = App.CurrentPetSkin == "";
-            };
 
             trayIcon = new NotifyIcon
             {
