@@ -1,4 +1,5 @@
 ﻿using System;
+using System.Collections.Generic;
 using System.Drawing;
 using System.Drawing.Drawing2D;
 using System.Drawing.Imaging;
@@ -7,7 +8,7 @@ using System.Windows.Forms;
 
 namespace AppSnapshot
 {
-    /// <summary>桌宠动画状态;running / review 两个 GIF 预留,待接入更多事件钩子。</summary>
+    /// <summary>桌宠动画状态;running / review 两个动作预留,待接入更多事件钩子。</summary>
     internal enum PetPose
     {
         Idle,
@@ -17,6 +18,65 @@ namespace AppSnapshot
         Waiting,
         RunningLeft,
         RunningRight
+    }
+
+    /// <summary>
+    /// 桌宠素材目录:%APPDATA%\AppSnapshot\pet\<形象>\idle.gif 等。
+    /// 素材不随应用内置或分发(版权考虑),由用户自行放入;目录为空时桌宠模式不可用。
+    /// </summary>
+    internal static class PetAssets
+    {
+        internal static string Root
+        {
+            get { return Path.Combine(AppSettings.DataDirectory, "pet"); }
+        }
+
+        /// <summary>可用形象 = pet 目录下含至少一个 gif 的子目录,按名称排序。</summary>
+        internal static List<string> AvailableSkins()
+        {
+            var skins = new List<string>();
+            try
+            {
+                if (!Directory.Exists(Root))
+                {
+                    return skins;
+                }
+                foreach (string dir in Directory.GetDirectories(Root))
+                {
+                    if (Directory.GetFiles(dir, "*.gif").Length > 0)
+                    {
+                        skins.Add(Path.GetFileName(dir));
+                    }
+                }
+                skins.Sort(StringComparer.OrdinalIgnoreCase);
+            }
+            catch
+            {
+            }
+            return skins;
+        }
+
+        internal static bool SkinExists(string skin)
+        {
+            if (string.IsNullOrEmpty(skin))
+            {
+                return false;
+            }
+            try
+            {
+                return Directory.Exists(Path.Combine(Root, skin))
+                    && Directory.GetFiles(Path.Combine(Root, skin), "*.gif").Length > 0;
+            }
+            catch
+            {
+                return false;
+            }
+        }
+
+        internal static string PosePath(string skin, string pose)
+        {
+            return Path.Combine(Root, skin, pose + ".gif");
+        }
     }
 
     /// <summary>
@@ -43,6 +103,11 @@ namespace AppSnapshot
         {
             if (form == null || form.IsDisposed)
             {
+                string skin = App.ResolvePetSkin();
+                if (skin == null)
+                {
+                    return;
+                }
                 form = new PetForm(skin);
             }
             form.Show();
@@ -145,7 +210,6 @@ namespace AppSnapshot
         private const int PetWidth = 155;
         private const int PetHeight = 168;
         private const int DragThreshold = 4;
-        private const string ResourcePrefix = "AppSnapshot.assets.pet.";
 
         private class PoseClip
         {
@@ -187,7 +251,7 @@ namespace AppSnapshot
             clips[(int)PetPose.Waiting] = LoadPose(skin, "waiting", false);
             clips[(int)PetPose.RunningLeft] = LoadPose(skin, "running-left", true);
             clips[(int)PetPose.RunningRight] = LoadPose(skin, "running-right", true);
-            // idle 缺失(打包问题)时退化到任意可用的动画,避免空窗口
+            // idle 缺失(素材不完整)时退化到任意可用的动画,避免空窗口
             if (clips[(int)PetPose.Idle] == null)
             {
                 for (int i = 0; i < clips.Length; i++)
@@ -204,7 +268,6 @@ namespace AppSnapshot
             frameTimer.Tick += OnFrameTick;
 
             var menu = new ContextMenuStrip();
-            menu.Items.Add("切换到悬浮球模式", null, delegate { App.SwitchUiMode(false); });
             menu.Items.Add("设置…", null, delegate
             {
                 using (var settingsForm = new SettingsForm())
@@ -365,12 +428,13 @@ namespace AppSnapshot
         {
             try
             {
-                Stream source = typeof(PetForm).Assembly.GetManifestResourceStream(
-                    ResourcePrefix + skin + "-" + name + ".gif");
-                if (source == null)
+                string path = PetAssets.PosePath(skin, name);
+                if (!File.Exists(path))
                 {
                     return null;
                 }
+                // GDI+ 要求流在 Image 存活期内保持打开,与 Image 一起在 Dispose 释放
+                Stream source = new FileStream(path, FileMode.Open, FileAccess.Read);
                 Image gif = Image.FromStream(source);
                 var dimension = new FrameDimension(gif.FrameDimensionsList[0]);
                 int frameCount = gif.GetFrameCount(dimension);

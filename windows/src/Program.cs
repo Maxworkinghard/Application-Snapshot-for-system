@@ -51,9 +51,9 @@ namespace AppSnapshot
                     App.MainForm = mainForm;
                     App.Tracker = mainForm.Tracker;
 
-                    // 桌面呈现形式:默认悬浮球;ui.mode=pet 时猫接管展示,
-                    // 悬浮球只保留截图宿主/Tracker 职能,常驻隐藏。
-                    App.IsPetMode = AppSettings.Read("ui.mode") == "pet";
+                    // 桌面呈现形式:默认悬浮窗;仅当设置选择了桌宠且本地素材可用时才启用桌宠,
+                    // 悬浮窗只保留截图宿主/Tracker 职能,桌宠模式下常驻隐藏。
+                    App.IsPetMode = AppSettings.Read("ui.mode") == "pet" && App.ResolvePetSkin() != null;
                     string savedSkin = AppSettings.Read("pet.skin");
                     if (!string.IsNullOrEmpty(savedSkin))
                     {
