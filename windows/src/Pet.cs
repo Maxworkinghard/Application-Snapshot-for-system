@@ -23,15 +23,18 @@ namespace AppSnapshot
     /// 桌宠模式控制器:持有 PetForm,把应用事件翻译成动画。
     /// 与悬浮球互斥显示——App.IsPetMode 为真时悬浮球保持隐藏
     /// (见 SnapshotBubbleForm.SetVisibleCore),反之桌宠由 SwitchUiMode 收起。
+    /// 形象(skin)对应 assets/pet 下的一组 GIF 前缀,可运行时切换。
     /// </summary>
     internal sealed class PetController : IDisposable
     {
+        private readonly string skin;
         private PetForm form;
         private bool hiddenForRecording;
         private bool hiddenTemporarily;
 
-        internal PetController()
+        internal PetController(string skin)
         {
+            this.skin = skin;
             // 所有成败结果都汇入 Toast,这里一处订阅即可覆盖截图/录制/润色
             App.Toast.Notified += OnToastNotified;
         }
@@ -40,7 +43,7 @@ namespace AppSnapshot
         {
             if (form == null || form.IsDisposed)
             {
-                form = new PetForm();
+                form = new PetForm(skin);
             }
             form.Show();
         }
@@ -142,7 +145,7 @@ namespace AppSnapshot
         private const int PetWidth = 155;
         private const int PetHeight = 168;
         private const int DragThreshold = 4;
-        private const string ResourcePrefix = "AppSnapshot.assets.pet.default-";
+        private const string ResourcePrefix = "AppSnapshot.assets.pet.";
 
         private class PoseClip
         {
@@ -166,7 +169,7 @@ namespace AppSnapshot
         private bool pointerPressed;
         private bool dragging;
 
-        internal PetForm()
+        internal PetForm(string skin)
         {
             AutoScaleMode = AutoScaleMode.Dpi;
             FormBorderStyle = FormBorderStyle.None;
@@ -177,13 +180,13 @@ namespace AppSnapshot
             Text = "AppSnapshot 桌宠";
 
             clips = new PoseClip[7];
-            clips[(int)PetPose.Idle] = LoadPose("idle", true);
-            clips[(int)PetPose.Waving] = LoadPose("waving", false);
-            clips[(int)PetPose.Jumping] = LoadPose("jumping", false);
-            clips[(int)PetPose.Failed] = LoadPose("failed", false);
-            clips[(int)PetPose.Waiting] = LoadPose("waiting", false);
-            clips[(int)PetPose.RunningLeft] = LoadPose("running-left", true);
-            clips[(int)PetPose.RunningRight] = LoadPose("running-right", true);
+            clips[(int)PetPose.Idle] = LoadPose(skin, "idle", true);
+            clips[(int)PetPose.Waving] = LoadPose(skin, "waving", false);
+            clips[(int)PetPose.Jumping] = LoadPose(skin, "jumping", false);
+            clips[(int)PetPose.Failed] = LoadPose(skin, "failed", false);
+            clips[(int)PetPose.Waiting] = LoadPose(skin, "waiting", false);
+            clips[(int)PetPose.RunningLeft] = LoadPose(skin, "running-left", true);
+            clips[(int)PetPose.RunningRight] = LoadPose(skin, "running-right", true);
             // idle 缺失(打包问题)时退化到任意可用的动画,避免空窗口
             if (clips[(int)PetPose.Idle] == null)
             {
@@ -358,11 +361,12 @@ namespace AppSnapshot
             frameTimer.Start();
         }
 
-        private PoseClip LoadPose(string name, bool loop)
+        private PoseClip LoadPose(string skin, string name, bool loop)
         {
             try
             {
-                Stream source = typeof(PetForm).Assembly.GetManifestResourceStream(ResourcePrefix + name + ".gif");
+                Stream source = typeof(PetForm).Assembly.GetManifestResourceStream(
+                    ResourcePrefix + skin + "-" + name + ".gif");
                 if (source == null)
                 {
                     return null;
