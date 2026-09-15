@@ -69,16 +69,18 @@ powershell.exe -NoProfile -ExecutionPolicy Bypass -File .\build.ps1
 - 微软文档要求证书由 **Microsoft Trusted Root Program 内的 CA** 签发，自签名不在其列
 - 建议始终启用 RFC 3161 时间戳（默认 `http://timestamp.digicert.com`），证书过期后签名依然有效
 
-### 实测记录（2026-09-14，Windows 11 专业版 25H2，Build 26200，SAC 强制模式）
+### 实测记录（Windows 11 专业版 25H2，Build 26200，SAC 强制模式）
 
-| 对象 | 结果 |
-|---|---|
-| 未签名 `AppSnapshot.exe` | 被拒绝，事件 ID 3077 / 3118，策略 ID `{0283ac0f-fff1-49ae-ada1-8a933130cad6}` |
-| 用自签证书签名后的同一文件 | **正常启动并常驻运行**，无拦截事件 |
+| 日期 | 对象 | 结果 |
+|---|---|---|
+| 2026-09-14 | 未签名 `AppSnapshot.exe` | 被拒绝，事件 ID 3077 / 3118，策略 ID `{0283ac0f-fff1-49ae-ada1-8a933130cad6}` |
+| 2026-09-14 | 用自签证书签名后的同一文件 | **正常启动并常驻运行**，无拦截事件 |
+| 2026-09-15 22:40 | 新构建 + 同一证书签名 | 正常启动 |
+| 2026-09-15 23:21 | 再构建 + 同一证书签名 | **被拦截**（3077 / 3033「未达到 Enterprise signing level」）；同日第三方未签名桌面宠应用的卸载程序同样被拦 |
 
-即：在该构建上**自签名即可通过 SAC**，与微软文档不符。因此本仓库当前用自签证书签名 `dist\AppSnapshot.exe`（证书 `CN=AppSnapshot Self-Signed Publisher`，仅存在于本机当前用户证书存储）。
+结论修订：**「自签即可通过 SAC」在本机已不再成立**——同一证书签名的不同文件，前后十几分钟一次放行一次拦截，说明该绕过依赖云端/策略判定，随时会收紧，不能作为长期方案。当前本机测试需要关闭 SAC（见上），对外分发必须使用受信任 CA 签发的代码签名证书。自签证书 `CN=AppSnapshot Self-Signed Publisher` 仅存在于本机当前用户证书存储。
 
 两点提醒：
 
-- 这是该构建的实测行为，可能在 Code Integrity 策略刷新后改变——真出问题时先看事件日志 `Microsoft-Windows-CodeIntegrity/Operational`
+- SAC 的判定随云端信誉与策略动态变化，今天的实测不代表明天——真出问题时先看事件日志 `Microsoft-Windows-CodeIntegrity/Operational`
 - 自签证书只在签名它的那台机器上有效；**要分发给他人的产物，仍需向受信任 CA 申请代码签名证书**
