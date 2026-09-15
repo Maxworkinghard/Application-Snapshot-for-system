@@ -120,6 +120,20 @@ namespace AppSnapshot
             get { return true; }
         }
 
+        /// <summary>
+        /// 桌宠模式下悬浮球常驻隐藏:它仍作为截图宿主与 Tracker 载体存在,
+        /// 但任何 Show()(截图 finally、录制结束恢复)都不真正显示,
+        /// 两种呈现形式的互斥由这一个关口保证。
+        /// </summary>
+        protected override void SetVisibleCore(bool value)
+        {
+            if (value && App.IsPetMode)
+            {
+                value = false;
+            }
+            base.SetVisibleCore(value);
+        }
+
         protected override CreateParams CreateParams
         {
             get
@@ -130,11 +144,27 @@ namespace AppSnapshot
             }
         }
 
+        private bool _runtimeStarted;
+
+        /// <summary>
+        /// 启动 Tracker 并刷新悬浮球图标。OnShown 触发一次;
+        /// 桌宠模式下悬浮球永不显示,由 Program 在启动时显式调用。
+        /// </summary>
+        internal void StartRuntime()
+        {
+            if (_runtimeStarted)
+            {
+                return;
+            }
+            _runtimeStarted = true;
+            _tracker.Start();
+            UpdateTarget(_tracker.Previous);
+        }
+
         protected override void OnShown(EventArgs e)
         {
             base.OnShown(e);
-            _tracker.Start();
-            UpdateTarget(_tracker.Previous);
+            StartRuntime();
         }
 
         protected override void OnPaint(PaintEventArgs e)
@@ -322,6 +352,11 @@ namespace AppSnapshot
 
             _capturePending = true;
             Hide();
+            // CopyFromScreen 回退路径拍的是屏幕像素,猫与悬浮球一样要离场
+            if (App.Pet != null)
+            {
+                App.Pet.HideTemporarily();
+            }
 
             var delayTimer = new System.Windows.Forms.Timer { Interval = wasMinimized ? 450 : 150 };
             delayTimer.Tick += delegate
@@ -356,8 +391,13 @@ namespace AppSnapshot
                     {
                         NativeMethods.ShowWindow(windowHandle, NativeMethods.SwMinimize);
                     }
+                    if (App.Pet != null)
+                    {
+                        App.Pet.RestoreTemporarily();
+                    }
                     if (!IsDisposed && !Disposing)
                     {
+                        // 桌宠模式下 SetVisibleCore 会拦截,悬浮球保持隐藏
                         Show();
                     }
                 }
@@ -367,7 +407,7 @@ namespace AppSnapshot
 
         // ---------- 位置持久化与钳制（对应 macOS 端 clampToVisibleArea） ----------
 
-        private static Point ClampToWorkingArea(Point origin, Size size, Point anchor)
+        internal static Point ClampToWorkingArea(Point origin, Size size, Point anchor)
         {
             Screen screen = Screen.FromPoint(anchor);
             Rectangle working = screen.WorkingArea;
@@ -379,7 +419,7 @@ namespace AppSnapshot
             return new Point(x, y);
         }
 
-        private static bool IsPointOnAnyScreen(Point point)
+        internal static bool IsPointOnAnyScreen(Point point)
         {
             foreach (Screen screen in Screen.AllScreens)
             {

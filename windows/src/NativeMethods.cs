@@ -1,4 +1,5 @@
 ﻿using System;
+using System.Drawing;
 using System.Runtime.InteropServices;
 using System.Text;
 
@@ -40,6 +41,51 @@ namespace AppSnapshot
         internal const uint ModShift = 0x0004;
         internal const uint ModWin = 0x0008;
         internal const uint ModNoRepeat = 0x4000;
+
+        // 桌宠分层窗口:UpdateLayeredWindow 逐像素 alpha
+        internal const int WsExLayered = 0x00080000;
+        internal const int UlwAlpha = 0x00000002;
+        internal const byte AcSrcOver = 0;
+        internal const byte AcSrcAlpha = 1;
+
+        [StructLayout(LayoutKind.Sequential)]
+        internal struct BlendFunction
+        {
+            public byte BlendOp;
+            public byte BlendFlags;
+            public byte SourceConstantAlpha;
+            public byte AlphaFormat;
+        }
+
+        [DllImport("user32.dll", SetLastError = true)]
+        internal static extern bool UpdateLayeredWindow(
+            IntPtr hWnd,
+            IntPtr hdcDst,
+            ref Point destination,
+            ref Size size,
+            IntPtr hdcSource,
+            ref Point sourcePoint,
+            int colorKey,
+            ref BlendFunction blend,
+            int flags);
+
+        [DllImport("user32.dll")]
+        internal static extern IntPtr GetDC(IntPtr hWnd);
+
+        [DllImport("user32.dll")]
+        internal static extern int ReleaseDC(IntPtr hWnd, IntPtr hdc);
+
+        [DllImport("gdi32.dll")]
+        internal static extern IntPtr CreateCompatibleDC(IntPtr hdc);
+
+        [DllImport("gdi32.dll")]
+        internal static extern bool DeleteDC(IntPtr hdc);
+
+        [DllImport("gdi32.dll")]
+        internal static extern IntPtr SelectObject(IntPtr hdc, IntPtr obj);
+
+        [DllImport("gdi32.dll")]
+        internal static extern bool DeleteObject(IntPtr obj);
 
         [StructLayout(LayoutKind.Sequential)]
         internal struct Rect

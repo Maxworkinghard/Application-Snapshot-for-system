@@ -51,6 +51,18 @@ namespace AppSnapshot
                     App.MainForm = mainForm;
                     App.Tracker = mainForm.Tracker;
 
+                    // 桌面呈现形式:默认悬浮球;ui.mode=pet 时猫接管展示,
+                    // 悬浮球只保留截图宿主/Tracker 职能,常驻隐藏。
+                    App.IsPetMode = AppSettings.Read("ui.mode") == "pet";
+                    if (App.IsPetMode)
+                    {
+                        // 隐藏态也要先建好句柄:App.CaptureWindow 的 BeginInvoke 依赖它
+                        NativeMethods.IsWindow(mainForm.Handle);
+                        mainForm.StartRuntime();
+                        App.Pet = new PetController();
+                        App.Pet.Start();
+                    }
+
                     ApplyStartupShortcuts();
 
                     Application.Run(mainForm);
@@ -110,6 +122,11 @@ namespace AppSnapshot
             RecordingService.State state = App.Recording.CurrentState;
             bool recordingOrPending = state == RecordingService.State.Starting
                 || state == RecordingService.State.Recording;
+            if (App.Pet != null)
+            {
+                // 猫与悬浮球一样不能入镜(gdigrab 录屏幕像素)
+                App.Pet.SetHiddenForRecording(recordingOrPending);
+            }
             if (recordingOrPending && mainForm.Visible)
             {
                 App.Panels.Close();
@@ -117,6 +134,7 @@ namespace AppSnapshot
             }
             else if (!recordingOrPending && !mainForm.Visible)
             {
+                // 桌宠模式下 SetVisibleCore 会拦截,悬浮球保持隐藏
                 mainForm.Show();
             }
         }
