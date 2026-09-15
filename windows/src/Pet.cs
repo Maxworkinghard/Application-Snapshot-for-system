@@ -426,6 +426,11 @@ namespace AppSnapshot
 
         private PoseClip LoadPose(string skin, string name, bool loop)
         {
+            // GDI+ 要求流在 Image 存活期内保持打开,交给 PoseClip 后随 Dispose 一起释放。
+            // 素材由用户自行放入,损坏/非 GIF/被占用都会让解析抛异常,此时必须就地关流,
+            // 否则句柄一直挂着,用户覆盖或删除这个 gif 会被 Windows 拒绝(文件正在使用)。
+            Stream source = null;
+            Image gif = null;
             try
             {
                 string path = PetAssets.PosePath(skin, name);
@@ -433,9 +438,8 @@ namespace AppSnapshot
                 {
                     return null;
                 }
-                // GDI+ 要求流在 Image 存活期内保持打开,与 Image 一起在 Dispose 释放
-                Stream source = new FileStream(path, FileMode.Open, FileAccess.Read);
-                Image gif = Image.FromStream(source);
+                source = new FileStream(path, FileMode.Open, FileAccess.Read);
+                gif = Image.FromStream(source);
                 var dimension = new FrameDimension(gif.FrameDimensionsList[0]);
                 int frameCount = gif.GetFrameCount(dimension);
                 var delays = new int[frameCount];
@@ -463,7 +467,7 @@ namespace AppSnapshot
                         delays[i] = 100;
                     }
                 }
-                return new PoseClip
+                var clip = new PoseClip
                 {
                     Gif = gif,
                     Source = source,
@@ -472,10 +476,25 @@ namespace AppSnapshot
                     DelaysMs = delays,
                     Loop = loop
                 };
+                // 所有权交给 clip,置空以免 finally 把正在用的资源关掉
+                source = null;
+                gif = null;
+                return clip;
             }
             catch
             {
                 return null;
+            }
+            finally
+            {
+                if (gif != null)
+                {
+                    gif.Dispose();
+                }
+                if (source != null)
+                {
+                    source.Dispose();
+                }
             }
         }
 
