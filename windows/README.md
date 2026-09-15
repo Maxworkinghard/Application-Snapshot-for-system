@@ -44,3 +44,41 @@ powershell.exe -NoProfile -ExecutionPolicy Bypass -File .\build.ps1
 ```
 
 输出文件：`dist\AppSnapshot.exe`。程序使用 Windows 自带的 .NET Framework 4.0+ 和 WinForms，不需要 Electron 或额外依赖。
+
+## 代码签名（Smart App Control）
+
+若系统启用了**智能应用控制（Smart App Control）**，未签名的 `AppSnapshot.exe` 会被代码完整性策略直接拒绝启动，报「应用程序控制策略已阻止此文件」。SAC 没有单程序白名单，也不提供「仍要运行」按钮，只能三选一：
+
+1. 用代码签名证书签名产物
+2. 在 Windows 安全中心 → 应用和浏览器控制 → 智能应用控制中关闭 SAC（Windows 11 24H2 / 25H2 起该开关可以重新打开，不再需要重装系统）
+3. 在未启用 SAC 的机器或虚拟机里运行
+
+### 用 `sign.ps1` 签名
+
+```powershell
+.\sign.ps1 -SelfTest                                    # 用一次性自签证书验证签名链路，自动清理
+.\sign.ps1 -PfxPath C:\certs\codesign.pfx -PfxPassword ***
+.\sign.ps1 -Thumbprint <证书指纹>
+```
+
+`-SelfTest` 会临时创建一张自签证书、对 `dist` 内文件的副本签名并校验，随后删除证书和副本，不会改动真实产物。
+
+### 签名要求
+
+- **必须是 RSA**：SAC 的签名检查不支持 ECC
+- 微软文档要求证书由 **Microsoft Trusted Root Program 内的 CA** 签发，自签名不在其列
+- 建议始终启用 RFC 3161 时间戳（默认 `http://timestamp.digicert.com`），证书过期后签名依然有效
+
+### 实测记录（2026-09-14，Windows 11 专业版 25H2，Build 26200，SAC 强制模式）
+
+| 对象 | 结果 |
+|---|---|
+| 未签名 `AppSnapshot.exe` | 被拒绝，事件 ID 3077 / 3118，策略 ID `{0283ac0f-fff1-49ae-ada1-8a933130cad6}` |
+| 用自签证书签名后的同一文件 | **正常启动并常驻运行**，无拦截事件 |
+
+即：在该构建上**自签名即可通过 SAC**，与微软文档不符。因此本仓库当前用自签证书签名 `dist\AppSnapshot.exe`（证书 `CN=AppSnapshot Self-Signed Publisher`，仅存在于本机当前用户证书存储）。
+
+两点提醒：
+
+- 这是该构建的实测行为，可能在 Code Integrity 策略刷新后改变——真出问题时先看事件日志 `Microsoft-Windows-CodeIntegrity/Operational`
+- 自签证书只在签名它的那台机器上有效；**要分发给他人的产物，仍需向受信任 CA 申请代码签名证书**
