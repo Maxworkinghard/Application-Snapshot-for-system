@@ -5,17 +5,68 @@ using System.Windows.Forms;
 
 namespace AppSnapshot
 {
-    /// <summary>全局装配：各模块通过它互相调用，避免构造顺序耦合。</summary>
-    internal static class App
-    {
-        internal static SnapshotBubbleForm MainForm;
-        internal static ToastController Toast;
-        internal static TargetAppTracker Tracker;
-        internal static RecordingService Recording;
-        internal static PolishController Polish;
-        internal static ActionPanelController Panels;
-        internal static HotKeyManager HotKeys;
-        internal static TrayController Tray;
+        /// <summary>全局装配：各模块通过它互相调用，避免构造顺序耦合。</summary>
+        internal static class App
+        {
+            internal static SnapshotBubbleForm MainForm;
+            internal static ToastController Toast;
+            internal static TargetAppTracker Tracker;
+            internal static RecordingService Recording;
+            internal static PolishController Polish;
+            internal static ActionPanelController Panels;
+            internal static HotKeyManager HotKeys;
+            internal static TrayController Tray;
+            internal static PetController Pet;
+
+            /// <summary>
+            /// 桌面呈现形式:悬浮球(默认)或桌宠,持久化于 ui.mode。
+            /// 两者互斥——pet 为真时悬浮球保持隐藏(SnapshotBubbleForm.SetVisibleCore),
+            /// 悬浮球显示时桌宠不存在实例。
+            /// </summary>
+            internal static bool IsPetMode;
+
+            /// <summary>切换悬浮球/桌宠形式,托盘菜单与桌宠右键菜单共用。</summary>
+            internal static void SwitchUiMode(bool petMode)
+            {
+                if (petMode == IsPetMode)
+                {
+                    return;
+                }
+                IsPetMode = petMode;
+                AppSettings.Write("ui.mode", petMode ? "pet" : "bubble");
+
+                if (petMode)
+                {
+                    if (Pet == null)
+                    {
+                        Pet = new PetController();
+                    }
+                    Pet.Start();
+                    Form mainForm = MainForm;
+                    if (mainForm != null && !mainForm.IsDisposed)
+                    {
+                        mainForm.Hide();
+                    }
+                }
+                else
+                {
+                    if (Pet != null)
+                    {
+                        Pet.Dispose();
+                        Pet = null;
+                    }
+                    Form mainForm = MainForm;
+                    if (mainForm != null && !mainForm.IsDisposed)
+                    {
+                        mainForm.Show();
+                    }
+                }
+
+                if (Toast != null)
+                {
+                    Toast.Show(petMode ? "已切换到桌宠模式" : "已切换到悬浮球模式", ToastKind.Success);
+                }
+            }
 
         /// <summary>托盘/热键/面板共用的「当前应用窗口」：前台外部窗口，否则回退到上一个应用。</summary>
         internal static IntPtr CurrentTargetWindow()

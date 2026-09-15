@@ -335,18 +335,27 @@ namespace AppSnapshot
 
         internal void PositionNextToBubble()
         {
-            Form bubble = App.MainForm;
-            Rectangle bubbleRect = bubble != null
-                ? bubble.Bounds
-                : new Rectangle(Cursor.Position, Size.Empty);
-            Screen screen = Screen.FromPoint(new Point(bubbleRect.Left + bubbleRect.Width / 2, bubbleRect.Top + bubbleRect.Height / 2));
+            // 桌宠模式下锚定到猫的位置,面板跟随宿主形态而非隐藏中的悬浮球
+            Rectangle anchorRect;
+            if (App.IsPetMode && App.Pet != null && !App.Pet.CurrentBounds.IsEmpty)
+            {
+                anchorRect = App.Pet.CurrentBounds;
+            }
+            else
+            {
+                Form bubble = App.MainForm;
+                anchorRect = bubble != null
+                    ? bubble.Bounds
+                    : new Rectangle(Cursor.Position, Size.Empty);
+            }
+            Screen screen = Screen.FromPoint(new Point(anchorRect.Left + anchorRect.Width / 2, anchorRect.Top + anchorRect.Height / 2));
 
             const int Inset = 8;
-            int x = bubbleRect.Left + (bubbleRect.Width - Width) / 2;
-            int y = bubbleRect.Top - Height - Inset;
+            int x = anchorRect.Left + (anchorRect.Width - Width) / 2;
+            int y = anchorRect.Top - Height - Inset;
             if (y < screen.WorkingArea.Top + Inset)
             {
-                y = bubbleRect.Bottom + Inset;
+                y = anchorRect.Bottom + Inset;
             }
 
             Rectangle working = screen.WorkingArea;
