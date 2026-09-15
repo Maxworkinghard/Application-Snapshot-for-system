@@ -45,6 +45,18 @@ powershell.exe -NoProfile -ExecutionPolicy Bypass -File .\build.ps1
 
 输出文件：`dist\AppSnapshot.exe`。程序使用 Windows 自带的 .NET Framework 4.0+ 和 WinForms，不需要 Electron 或额外依赖。
 
+## 桌宠模式（可选）
+
+初始桌面形式为**悬浮窗**；在「设置… → 桌面形式」中可切换为**桌宠**并选择形象，选择持久化。
+
+桌宠素材**不随应用内置或分发**（素材并非本项目制作，避免版权问题），由用户自行放置：
+
+- 目录：`%APPDATA%\AppSnapshot\pet\<形象>\`（子目录名即形象名，可放多套）
+- 状态文件（192×208 透明背景 GIF）：`idle` / `waving` / `jumping` / `failed` / `waiting` / `running-left` / `running-right`，可选 `running` / `review`
+- 目录为空或素材缺失时，设置中的桌宠选项会提示不可用，应用回退悬浮窗
+
+桌宠交互：单击打开功能面板（与悬浮窗一致），拖动移动（面板跟随），右键菜单 = 设置 / 退出；截图与录制期间自动离场避镜。
+
 ## 代码签名（Smart App Control）
 
 若系统启用了**智能应用控制（Smart App Control）**，未签名的 `AppSnapshot.exe` 会被代码完整性策略直接拒绝启动，报「应用程序控制策略已阻止此文件」。SAC 没有单程序白名单，也不提供「仍要运行」按钮，只能三选一：
