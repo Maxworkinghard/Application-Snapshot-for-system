@@ -1,4 +1,4 @@
-/.build/
+/macos/.build/
 /dist/
 .DS_Store
 /linux/target/

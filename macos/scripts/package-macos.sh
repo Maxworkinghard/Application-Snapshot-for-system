@@ -8,21 +8,22 @@ if [ "$(uname -s)" != "Darwin" ]; then
     exit 1
 fi
 
-ROOT_DIR="$(cd "$(dirname "$0")/.." && pwd)"
-cd "$ROOT_DIR"
+MACOS_DIR="$(cd "$(dirname "$0")/.." && pwd)"   # macos/（Package.swift 所在目录）
+REPO_DIR="$(cd "$MACOS_DIR/.." && pwd)"         # 仓库根（VERSION 与 dist/ 所在目录）
+cd "$MACOS_DIR"
 
-VERSION="${RELEASE_VERSION:-$(tr -d ' \n\r' < VERSION)}"
+VERSION="${RELEASE_VERSION:-$(tr -d ' \n\r' < "$REPO_DIR/VERSION")}"
 VERSION="${VERSION#v}"
 PREFIX="Application-Snapshot-${VERSION}"
 ASSET="${PREFIX}-macos-universal.zip"
 APP_NAME="应用快照"
-APP_DIR="$ROOT_DIR/dist/${APP_NAME}.app"
-STAGE="$ROOT_DIR/dist/release"
+APP_DIR="$REPO_DIR/dist/${APP_NAME}.app"
+STAGE="$REPO_DIR/dist/release"
 BINARY="$APP_DIR/Contents/MacOS/WindowSnap"
 
 export MACOSX_DEPLOYMENT_TARGET="${MACOSX_DEPLOYMENT_TARGET:-14.0}"
 export WINDOWSNAP_PACKAGE_ONLY=1
-zsh "$ROOT_DIR/scripts/build-app.sh"
+zsh "$MACOS_DIR/scripts/build-app.sh"
 
 if [ ! -f "$BINARY" ]; then
     echo "error: missing $BINARY" >&2

@@ -6,7 +6,7 @@
 
 截取当前应用窗口，写入系统剪贴板。不落盘、不上传。约 60 秒后清空；期间若又复制了别的内容，则跳过这次清空。
 
-- **macOS**（本目录）：Swift 6 + ScreenCaptureKit。一份 universal 2（arm64 + x86_64）。有打包脚本，无自动化测试。
+- **macOS**（[macos/](macos/)）：Swift 6 + ScreenCaptureKit。一份 universal 2（arm64 + x86_64）。有打包脚本，无自动化测试。
 - **Windows**（[windows/](windows/)）：.NET 10 WinForms，自包含 exe。x64 与 ARM64 各打一份；`build.ps1` 核对 PE。ARM 设备上的运行未记录。
 - **Linux**（[linux/](linux/)）：Rust。发行脚本打 `x86_64` 与 `aarch64`。未在真实 Linux 桌面运行过。
 
@@ -19,25 +19,34 @@
 
 Linux 上录制走 ffmpeg x11grab，只在 X11 可用。Wayland 的截屏、快捷键和桌宠限制见 [linux/README.md](linux/README.md)。
 
+## 目录结构
+
+```
+macos/      Swift 6 应用（ScreenCaptureKit）
+windows/    .NET 10 WinForms 应用
+linux/      Rust 应用
+.github/    发行 workflow 与 Release 说明模板
+```
+
 ## 从源码运行
 
 macOS 14 或更高，需要 Xcode 与 Swift 6 工具链：
 
 ```bash
-./scripts/build-app.sh
+./macos/scripts/build-app.sh
 ```
 
 Windows 10 或 11，构建需要 .NET 10 SDK（运行自包含 exe 不必再装 .NET）：
 
 ```powershell
-powershell.exe -NoProfile -ExecutionPolicy Bypass -File .\windows\build.ps1
+powershell.exe -NoProfile -ExecutionPolicy Bypass -File .\windows\scripts\build.ps1
 ```
 
 Linux 需要 Rust 工具链；`curl` / `ffmpeg` / `zenity` 等按功能另装，见 [linux/README.md](linux/README.md)：
 
 ```bash
 cd linux
-./build-linux.sh
+./scripts/build-linux.sh
 ```
 
 桌宠素材不随包分发，目录空则不能启用。路径详见 [windows/](windows/)、[linux/](linux/) README。

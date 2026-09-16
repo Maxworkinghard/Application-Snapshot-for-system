@@ -25,9 +25,9 @@ function Get-PeMachine {
 }
 
 $dotnet = Get-DotNet
-$project = Join-Path $PSScriptRoot "AppSnapshot.csproj"
-$distRoot = Join-Path $PSScriptRoot "dist"
-$versionFile = Join-Path $PSScriptRoot "..\VERSION"
+$project = Join-Path $PSScriptRoot "..\AppSnapshot.csproj"
+$distRoot = Join-Path $PSScriptRoot "..\dist"
+$versionFile = Join-Path $PSScriptRoot "..\..\VERSION"
 $version = if ($env:RELEASE_VERSION) {
     $env:RELEASE_VERSION.Trim().TrimStart('v')
 } elseif (Test-Path -LiteralPath $versionFile) {

@@ -70,7 +70,7 @@ param(
 
     [string]$TimestampUrl = "http://timestamp.digicert.com",
 
-    [string]$TargetPath = (Join-Path $PSScriptRoot "dist")
+    [string]$TargetPath = (Join-Path $PSScriptRoot "..\dist")
 )
 
 $ErrorActionPreference = "Stop"

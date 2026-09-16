@@ -54,7 +54,7 @@ Linux 实现。全局快捷键截取当前活动窗口、悬浮球或桌宠、�
 
 ```bash
 cd linux
-./build-linux.sh
+./scripts/build-linux.sh
 install -Dm755 target/release/windowsnap ~/.local/bin/windowsnap
 ```
 
@@ -79,10 +79,10 @@ cargo check --target aarch64-unknown-linux-gnu
 GitHub 发行包一次打两个 GNU 目标（需 `gcc-aarch64-linux-gnu` 做 ARM 链接）：
 
 ```bash
-./package-release.sh
+./scripts/package-release.sh
 ```
 
-产物：`../dist/release/Application-Snapshot-{版本}-linux-x86_64.tar.gz` 与 `linux-aarch64.tar.gz`。脚本会读 ELF `e_machine`，架构不对就失败。
+产物：`../../dist/release/Application-Snapshot-{版本}-linux-x86_64.tar.gz` 与 `linux-aarch64.tar.gz`。脚本会读 ELF `e_machine`，架构不对就失败。
 
 ## 运行
 
@@ -164,8 +164,8 @@ polish.api_key = "YOUR_API_KEY"
 ```
 linux/
 ├── Cargo.toml
-├── build-linux.sh
 ├── windowsnap.service      ← systemd 用户服务
+├── scripts/                ← build-linux.sh / package-release.sh
 └── src/
     ├── main.rs             ← CLI 入口、主事件循环（消息分发 + 60 秒清空计时）
     ├── settings.rs         ← config.toml 读写（快捷键 / 保存目录 / 悬浮球与桌宠位置 / 润色配置 / 桌面形式）

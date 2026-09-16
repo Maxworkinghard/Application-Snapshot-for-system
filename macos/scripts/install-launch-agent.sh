@@ -7,7 +7,7 @@ PLIST_DST="$HOME/Library/LaunchAgents/local.windowsnap.app.plist"
 APP_PATH="/Applications/应用快照.app"
 
 if [ ! -d "$APP_PATH" ]; then
-    echo "错误：未找到 $APP_PATH。请先运行 ./scripts/build-app.sh 并安装到 /Applications。" >&2
+    echo "错误：未找到 $APP_PATH。请先运行 macos/scripts/build-app.sh 并安装到 /Applications。" >&2
     exit 1
 fi
 

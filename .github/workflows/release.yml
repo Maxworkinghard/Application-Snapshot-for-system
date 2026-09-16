@@ -54,7 +54,7 @@ jobs:
     steps:
       - uses: actions/checkout@v4
       - name: Package universal 2 zip
-        run: bash scripts/package-macos.sh
+        run: bash macos/scripts/package-macos.sh
       - uses: actions/upload-artifact@v4
         with:
           name: macos
@@ -73,7 +73,7 @@ jobs:
           dotnet-version: "10.0.x"
       - name: Package x64 and ARM64
         shell: pwsh
-        run: ./windows/package-release.ps1
+        run: ./windows/scripts/package-release.ps1
       - uses: actions/upload-artifact@v4
         with:
           name: windows
@@ -95,7 +95,7 @@ jobs:
       - name: Cross linker for aarch64
         run: sudo apt-get update && sudo apt-get install -y gcc-aarch64-linux-gnu
       - name: Package x86_64 and aarch64
-        run: chmod +x linux/package-release.sh && linux/package-release.sh
+        run: chmod +x linux/scripts/package-release.sh && linux/scripts/package-release.sh
       - uses: actions/upload-artifact@v4
         with:
           name: linux
@@ -135,7 +135,7 @@ jobs:
           sha256sum "${expected[@]}" | tee SHA256SUMS.txt
       - name: Render notes
         run: |
-          sed "s/{{VERSION}}/${VERSION}/g" scripts/release-notes.md > /tmp/release-notes.md
+          sed "s/{{VERSION}}/${VERSION}/g" .github/release-notes.md > /tmp/release-notes.md
       - name: Create draft pre-release
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
