@@ -9,10 +9,13 @@ final class DesktopPetController: NSObject {
     var onPolishBusy: () -> Bool = { false }
     var onOpenScreenRecordingSettings: () -> Void = {}
     var onOpenSettings: () -> Void = {}
+    /// GIF 桌宠右键菜单的「退出应用快照」。
+    var onQuit: () -> Void = {}
 
     private let applicationService: CapturableApplicationService
     private var panel: NSPanel?
     private var petView: DesktopPetView?
+    private var gifPetView: DesktopPetGifView?
     private var actionPanel: NSPanel?
     private var snapshotListController: ApplicationSnapshotViewController?
     private weak var recordButton: NSButton?
@@ -32,14 +35,8 @@ final class DesktopPetController: NSObject {
 
     func show() {
         if panel == nil {
-            let petView = DesktopPetView(frame: NSRect(x: 0, y: 0, width: 56, height: 56))
-            petView.onClick = { [weak self] in self?.toggleActionPanel() }
-            petView.onDragged = { [weak self] origin in self?.savePosition(origin) }
-            petView.onRightClick = { [weak self] event in self?.showContextMenu(event) }
-            self.petView = petView
-
             let panel = NSPanel(
-                contentRect: petView.bounds,
+                contentRect: NSRect(x: 0, y: 0, width: 56, height: 56),
                 styleMask: [.borderless, .nonactivatingPanel],
                 backing: .buffered,
                 defer: false
@@ -51,12 +48,70 @@ final class DesktopPetController: NSObject {
             panel.collectionBehavior = [.canJoinAllSpaces, .stationary]
             panel.ignoresMouseEvents = false
             panel.hidesOnDeactivate = false
-            panel.contentView = petView
             self.panel = panel
         }
 
-        panel?.setFrameOrigin(savedOrDefaulPosition())
+        let wantPet = UserDefaults.standard.string(forKey: "ui.mode") == "pet"
+        if !applyDesktopForm(petMode: wantPet, skin: nil), wantPet {
+            // 素材缺失或无法加载时回退悬浮球，与 Windows Program.cs 一致
+            _ = applyDesktopForm(petMode: false, skin: nil)
+        }
         panel?.orderFrontRegardless()
+    }
+
+    /// 桌面形式切换（悬浮球 / GIF 桌宠，设置页保存时与启动时调用）。
+    /// 桌宠素材缺失时返回 false，调用方负责提示与不落盘。
+    @discardableResult
+    func applyDesktopForm(petMode: Bool, skin: String?) -> Bool {
+        if petMode {
+            let skinName = skin ?? PetAssets.resolveSkin()
+            if gifPetView == nil || gifPetView?.skin != skinName {
+                gifPetView = skinName.flatMap { DesktopPetGifView(skin: $0) }
+            }
+            guard let gifPetView else { return false }
+            gifPetView.onClick = { [weak self] in self?.toggleActionPanel() }
+            gifPetView.onDragged = { [weak self] origin in self?.saveDesktopPetPosition(origin) }
+            gifPetView.onRightClick = { [weak self] event in self?.showPetContextMenu(event) }
+            panel?.hasShadow = false
+            panel?.contentView = gifPetView
+            panel?.setContentSize(DesktopPetGifView.petSize)
+            restoreDesktopPetPosition()
+            gifPetView.startAnimating()
+            return true
+        }
+
+        gifPetView?.stopAnimating()
+        gifPetView = nil
+        let view = petView ?? makeBubbleView()
+        petView = view
+        view.applyIcon(for: target)
+        panel?.hasShadow = true
+        panel?.contentView = view
+        panel?.setContentSize(view.bounds.size)
+        panel?.setFrameOrigin(savedOrDefaulPosition())
+        return true
+    }
+
+    /// Toast 事件 → 桌宠姿势（与 Windows 端 PetController.OnToastNotified 一致：
+    /// 成功起跳、错误趴下、其余待机）。
+    func reactToToast(symbolName: String) {
+        guard let gifPetView else { return }
+        switch symbolName {
+        case "checkmark":
+            gifPetView.setPose(.jumping)
+        case "exclamationmark.triangle":
+            gifPetView.setPose(.failed)
+        default:
+            gifPetView.setPose(.waiting)
+        }
+    }
+
+    private func makeBubbleView() -> DesktopPetView {
+        let petView = DesktopPetView(frame: NSRect(x: 0, y: 0, width: 56, height: 56))
+        petView.onClick = { [weak self] in self?.toggleActionPanel() }
+        petView.onDragged = { [weak self] origin in self?.savePosition(origin) }
+        petView.onRightClick = { [weak self] event in self?.showContextMenu(event) }
+        return petView
     }
 
     func updateTarget(_ application: NSRunningApplication?) {
@@ -88,6 +143,33 @@ final class DesktopPetController: NSObject {
     @objc private func openSettingsFromMenu() {
         closeActionPanel()
         onOpenSettings()
+    }
+
+    /// 右键 GIF 桌宠：设置 / 退出（与 Windows 端桌宠右键菜单一致）。
+    private func showPetContextMenu(_ event: NSEvent) {
+        guard let contentView = panel?.contentView else { return }
+        let menu = NSMenu()
+        let settingsItem = NSMenuItem(
+            title: "设置…",
+            action: #selector(openSettingsFromMenu),
+            keyEquivalent: ""
+        )
+        settingsItem.target = self
+        menu.addItem(settingsItem)
+        let quitItem = NSMenuItem(
+            title: "退出应用快照",
+            action: #selector(quitFromMenu),
+            keyEquivalent: "q"
+        )
+        quitItem.keyEquivalentModifierMask = []
+        quitItem.target = self
+        menu.addItem(quitItem)
+        NSMenu.popUpContextMenu(menu, with: event, for: contentView)
+    }
+
+    @objc private func quitFromMenu() {
+        closeActionPanel()
+        onQuit()
     }
 
     private func toggleActionPanel() {
@@ -375,12 +457,43 @@ final class DesktopPetController: NSObject {
         defaults.set(Double(origin.x), forKey: positionXKey)
         defaults.set(Double(origin.y), forKey: positionYKey)
     }
+
+    // ---------- GIF 桌宠位置持久化（键名与 Windows 端一致，坐标系为本机屏幕坐标） ----------
+
+    private func restoreDesktopPetPosition() {
+        let defaults = UserDefaults.standard
+        let size = DesktopPetGifView.petSize
+        if defaults.object(forKey: "desktoppet.x") != nil,
+           defaults.object(forKey: "desktoppet.y") != nil {
+            let point = NSPoint(
+                x: CGFloat(defaults.double(forKey: "desktoppet.x")),
+                y: CGFloat(defaults.double(forKey: "desktoppet.y"))
+            )
+            if isPointOnScreen(point) {
+                panel?.setFrameOrigin(clampToVisibleArea(point, size: size))
+                return
+            }
+        }
+        guard let screen = NSScreen.main ?? NSScreen.screens.first else { return }
+        let frame = screen.visibleFrame
+        panel?.setFrameOrigin(NSPoint(
+            x: frame.maxX - size.width - 16,
+            y: frame.minY + 16
+        ))
+    }
+
+    private func saveDesktopPetPosition(_ origin: NSPoint) {
+        let defaults = UserDefaults.standard
+        defaults.set(Double(origin.x), forKey: "desktoppet.x")
+        defaults.set(Double(origin.y), forKey: "desktoppet.y")
+    }
 }
 
 /// 把悬浮窗原点夹回「锚点所在屏幕」的可见区域（Dock、菜单栏之外）。
 /// 历史位置可能停在屏幕边缘外或 Dock 后面（isPointOnScreen 有 ±200 容差），
 /// 恢复与拖拽时都做约束，避免悬浮窗从视野里消失。
-private func clampToVisibleArea(_ origin: NSPoint, size: NSSize, around anchor: NSPoint? = nil) -> NSPoint {
+/// 悬浮球与 GIF 桌宠共用（DesktopPetGifView 的拖动也走这里）。
+func clampToVisibleArea(_ origin: NSPoint, size: NSSize, around anchor: NSPoint? = nil) -> NSPoint {
     let reference = anchor ?? origin
     let screen = NSScreen.screens.first { $0.frame.contains(reference) } ?? NSScreen.main
     guard let visible = screen?.visibleFrame else { return origin }

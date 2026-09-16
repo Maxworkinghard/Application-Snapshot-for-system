@@ -6,6 +6,7 @@ import Carbon
 final class AppSettingsController: NSObject, NSWindowDelegate {
     var currentSet: ShortcutSet
     private let onSaveShortcuts: (ShortcutSet) -> Bool
+    private let onApplyDesktopForm: (Bool, String?) -> Bool
     private let polishStore: PolishBackendConfigurationStore
     private var window: NSWindow?
     private var recorders: [ShortcutRecorderView] = []
@@ -16,6 +17,8 @@ final class AppSettingsController: NSObject, NSWindowDelegate {
     private var apiKeyField: NSSecureTextField?
     private var promptPopUp: NSPopUpButton?
     private var deletePromptButton: NSButton?
+    private var uiModePopUp: NSPopUpButton?
+    private var skinPopUp: NSPopUpButton?
 
     private static let shortcutNames = [
         "截取当前应用窗口",
@@ -27,11 +30,13 @@ final class AppSettingsController: NSObject, NSWindowDelegate {
     init(
         currentSet: ShortcutSet,
         polishStore: PolishBackendConfigurationStore,
-        onSaveShortcuts: @escaping (ShortcutSet) -> Bool
+        onSaveShortcuts: @escaping (ShortcutSet) -> Bool,
+        onApplyDesktopForm: @escaping (Bool, String?) -> Bool
     ) {
         self.currentSet = currentSet
         self.polishStore = polishStore
         self.onSaveShortcuts = onSaveShortcuts
+        self.onApplyDesktopForm = onApplyDesktopForm
     }
 
     func show() {
@@ -39,6 +44,7 @@ final class AppSettingsController: NSObject, NSWindowDelegate {
             refreshShortcutFields()
             refreshPolishFields()
             refreshPromptFields()
+            refreshDesktopFields()
             window.makeKeyAndOrderFront(nil)
             NSApp.activate(ignoringOtherApps: true)
             return
@@ -47,6 +53,7 @@ final class AppSettingsController: NSObject, NSWindowDelegate {
         refreshShortcutFields()
         refreshPolishFields()
         refreshPromptFields()
+        refreshDesktopFields()
     }
 
     private func buildWindow() {
@@ -207,6 +214,38 @@ final class AppSettingsController: NSObject, NSWindowDelegate {
         status.translatesAutoresizingMaskIntoConstraints = false
         self.statusLabel = status
 
+        // MARK: 桌面形式区块（悬浮球 / 桌宠）
+
+        let desktopDivider = NSBox()
+        desktopDivider.boxType = .separator
+        desktopDivider.translatesAutoresizingMaskIntoConstraints = false
+
+        let desktopHeader = NSTextField(labelWithString: "桌面形式")
+        desktopHeader.font = .systemFont(ofSize: 15, weight: .semibold)
+        desktopHeader.translatesAutoresizingMaskIntoConstraints = false
+
+        let desktopHint = NSTextField(wrappingLabelWithString: "桌宠素材不随应用分发：把 idle / waving / jumping / failed / waiting / running-left / running-right.gif 放入 \(PetAssets.root.path)/<形象>/ 后重开设置即可选择。")
+        desktopHint.textColor = .secondaryLabelColor
+        desktopHint.font = .systemFont(ofSize: 12)
+        desktopHint.translatesAutoresizingMaskIntoConstraints = false
+
+        let uiModePopUp = NSPopUpButton()
+        uiModePopUp.addItem(withTitle: "悬浮窗（默认）")
+        uiModePopUp.addItem(withTitle: "桌宠")
+        self.uiModePopUp = uiModePopUp
+
+        let skinPopUp = NSPopUpButton()
+        self.skinPopUp = skinPopUp
+
+        let desktopForm = NSStackView(views: [
+            makeRow(label: "形式", field: uiModePopUp),
+            makeRow(label: "桌宠形象", field: skinPopUp)
+        ])
+        desktopForm.orientation = .vertical
+        desktopForm.spacing = 10
+        desktopForm.alignment = .leading
+        desktopForm.translatesAutoresizingMaskIntoConstraints = false
+
         // MARK: 底部按钮
 
         let clearPolishButton = NSButton(title: "清除润色配置", target: self, action: #selector(clearPolish))
@@ -235,6 +274,10 @@ final class AppSettingsController: NSObject, NSWindowDelegate {
         content.addSubview(promptRow)
         content.addSubview(promptHint)
         content.addSubview(polishForm)
+        content.addSubview(desktopDivider)
+        content.addSubview(desktopHeader)
+        content.addSubview(desktopHint)
+        content.addSubview(desktopForm)
         content.addSubview(status)
         content.addSubview(clearPolishButton)
         content.addSubview(rightButtons)
@@ -280,7 +323,23 @@ final class AppSettingsController: NSObject, NSWindowDelegate {
             polishForm.leadingAnchor.constraint(equalTo: title.leadingAnchor),
             polishForm.trailingAnchor.constraint(equalTo: title.trailingAnchor),
 
-            status.topAnchor.constraint(equalTo: polishForm.bottomAnchor, constant: 10),
+            desktopDivider.topAnchor.constraint(equalTo: polishForm.bottomAnchor, constant: 16),
+            desktopDivider.leadingAnchor.constraint(equalTo: title.leadingAnchor),
+            desktopDivider.trailingAnchor.constraint(equalTo: title.trailingAnchor),
+
+            desktopHeader.topAnchor.constraint(equalTo: desktopDivider.bottomAnchor, constant: 16),
+            desktopHeader.leadingAnchor.constraint(equalTo: title.leadingAnchor),
+            desktopHeader.trailingAnchor.constraint(equalTo: title.trailingAnchor),
+
+            desktopHint.topAnchor.constraint(equalTo: desktopHeader.bottomAnchor, constant: 4),
+            desktopHint.leadingAnchor.constraint(equalTo: title.leadingAnchor),
+            desktopHint.trailingAnchor.constraint(equalTo: title.trailingAnchor),
+
+            desktopForm.topAnchor.constraint(equalTo: desktopHint.bottomAnchor, constant: 10),
+            desktopForm.leadingAnchor.constraint(equalTo: title.leadingAnchor),
+            desktopForm.trailingAnchor.constraint(equalTo: title.trailingAnchor),
+
+            status.topAnchor.constraint(equalTo: desktopForm.bottomAnchor, constant: 10),
             status.leadingAnchor.constraint(equalTo: title.leadingAnchor),
             status.trailingAnchor.constraint(equalTo: title.trailingAnchor),
             status.heightAnchor.constraint(equalToConstant: 16),
@@ -296,7 +355,7 @@ final class AppSettingsController: NSObject, NSWindowDelegate {
         ])
 
         let window = NSWindow(
-            contentRect: NSRect(x: 0, y: 0, width: 460, height: 700),
+            contentRect: NSRect(x: 0, y: 0, width: 460, height: 880),
             styleMask: [.titled, .closable],
             backing: .buffered,
             defer: false
@@ -321,6 +380,8 @@ final class AppSettingsController: NSObject, NSWindowDelegate {
         apiKeyField = nil
         promptPopUp = nil
         deletePromptButton = nil
+        uiModePopUp = nil
+        skinPopUp = nil
     }
 
     // MARK: - 动作
@@ -413,7 +474,27 @@ final class AppSettingsController: NSObject, NSWindowDelegate {
             showStatus(error)
             return
         }
+        if !applyDesktopForm() {
+            return
+        }
         window?.close()
+    }
+
+    /// 桌面形式（悬浮球 / 桌宠）与形象：保存时应用；
+    /// 素材缺失时提示并保留窗口（与 Windows 端设置窗口同规则）。
+    private func applyDesktopForm() -> Bool {
+        guard let uiModePopUp, let skinPopUp else { return true }
+        let wantPet = uiModePopUp.indexOfSelectedItem == 1
+        let wantSkin = skinPopUp.titleOfSelectedItem
+        if wantPet && PetAssets.availableSkins().isEmpty {
+            showStatus("未找到桌宠素材（\(PetAssets.root.path)/<形象>/*.gif）")
+            return false
+        }
+        guard onApplyDesktopForm(wantPet, wantSkin) else {
+            showStatus("桌面形式未能应用")
+            return false
+        }
+        return true
     }
 
     /// 润色配置校验：全空视为「不启用」直接放行；填了部分则要求完整。
@@ -471,6 +552,20 @@ final class AppSettingsController: NSObject, NSWindowDelegate {
         promptPopUp.addItems(withTitles: names)
         promptPopUp.selectItem(withTitle: PolishPromptLibrary.activeName)
         updatePromptButtons()
+    }
+
+    private func refreshDesktopFields() {
+        guard let uiModePopUp, let skinPopUp else { return }
+        uiModePopUp.selectItem(
+            at: UserDefaults.standard.string(forKey: "ui.mode") == "pet" ? 1 : 0
+        )
+        skinPopUp.removeAllItems()
+        for skin in PetAssets.availableSkins() {
+            skinPopUp.addItem(withTitle: skin)
+        }
+        if let current = PetAssets.resolveSkin() {
+            skinPopUp.selectItem(withTitle: current)
+        }
     }
 
     private func updatePromptButtons() {
