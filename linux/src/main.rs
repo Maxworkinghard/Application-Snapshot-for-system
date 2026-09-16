@@ -126,7 +126,7 @@ fn print_help() {
            polish.kind = \"openai\"          # openai | anthropic\n\
            polish.base_url = \"https://api.deepseek.com\"\n\
            polish.model = \"deepseek-chat\"\n\
-           polish.api_key = \"sk-...\""
+           polish.api_key = \"YOUR_API_KEY\""
     );
 }
 

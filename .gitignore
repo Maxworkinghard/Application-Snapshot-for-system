@@ -12,3 +12,10 @@
 .workbuddy/
 *-gifs.zip
 /视频图片素材/
+.env
+.env.*
+!.env.example
+*.pem
+*.key
+*.pfx
+*.p12

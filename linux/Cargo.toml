@@ -3,7 +3,6 @@ name = "windowsnap"
 version = "0.1.0"
 edition = "2021"
 description = "应用快照 Linux 版：快捷键截取当前活动窗口并复制到剪贴板"
-license = "MIT"
 
 [dependencies]
 # 全部为纯 Rust 实现，无 C 库依赖，可在任意架构上直接 cargo build / 交叉编译
