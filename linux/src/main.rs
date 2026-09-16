@@ -1,6 +1,7 @@
 mod dbus_service;
+mod desktop;
 mod dialog;
-mod gif_pet;
+mod gifpet;
 mod notify;
 mod pet;
 mod polish;
@@ -18,7 +19,7 @@ use std::sync::mpsc;
 use std::sync::Arc;
 use std::time::{Duration, Instant};
 
-pub use settings::{pet_position, save_directory, save_pet_position};
+pub use settings::{pet_position, save_desktop_pet_position, save_directory, save_pet_position};
 
 pub type Error = Box<dyn std::error::Error + Send + Sync>;
 pub type Result<T> = std::result::Result<T, Error>;
@@ -35,7 +36,6 @@ pub enum Msg {
     ToggleRecording,
     TogglePanel,
     OpenSettings,
-    PetContextMenu,
     ManagePrompts,
     Quit,
 }
@@ -110,8 +110,7 @@ fn print_help() {
          \n\
          功能（与 macOS / Windows 端对齐）：\n\
            - 悬浮球：显示上一个前台应用的图标，点击弹菜单，可拖动、位置记忆\n\
-           - 桌宠模式（X11 / XWayland）：设置里把桌面形式切为 pet，GIF 桌宠替代悬浮球，可换形象\n\
-           - 右键悬浮球 / 桌宠 / 托盘「设置…」：绑定快捷键（截图 / 录制 / 截取上一个应用 / 润色）与润色服务\n\
+           - 右键悬浮球 / 托盘「设置…」：绑定快捷键（截图 / 录制 / 截取上一个应用 / 润色）与润色服务\n\
            - 应用快照…：从窗口列表选择目标窗口截图\n\
            - 窗口录制：ffmpeg 录制当前活动窗口为 MP4（仅 X11）\n\
            - 润色 Prompt：剪贴板草稿 → 确认 → 大模型改写 → 写回，处理中可停止\n\
@@ -122,8 +121,8 @@ fn print_help() {
            shortcut_previous_app = \"\"      # 默认不绑定，在设置中自行决定\n\
            shortcut_polish = \"\"            # 默认不绑定\n\
            save_dir = \"~/Videos/应用快照\"   # 录制文件保存目录\n\
-           ui_mode = \"bubble\"              # 桌面形式：bubble（悬浮球，默认）| pet（GIF 桌宠，X11 / XWayland）\n\
-           pet_skin = \"default\" # 桌宠形象（素材目录名）\n\
+           ui.mode = \"bubble\"              # bubble（悬浮球，默认）| pet（桌宠）\n\
+           pet.skin = \"\"                   # 桌宠形象目录名（~/.local/share/windowsnap/pet/<形象>/）\n\
            polish.kind = \"openai\"          # openai | anthropic\n\
            polish.base_url = \"https://api.deepseek.com\"\n\
            polish.model = \"deepseek-chat\"\n\
@@ -139,6 +138,7 @@ struct Daemon {
     polish_config: polish::PolishConfig,
     /// 剪贴板自动清空的截止时间。
     deadline: Option<Instant>,
+    tx: mpsc::Sender<Msg>,
 }
 
 impl Daemon {
@@ -162,13 +162,6 @@ impl Daemon {
             Msg::ToggleRecording => self.toggle_recording(),
             Msg::TogglePanel => self.open_panel(),
             Msg::OpenSettings => self.open_settings(),
-            Msg::PetContextMenu => {
-                match dialog::choose_action(&["设置…", "退出应用快照"]) {
-                    Some(0) => self.open_settings(),
-                    Some(1) => return false,
-                    _ => {}
-                }
-            }
             Msg::ManagePrompts => dialog::manage_prompts(),
             Msg::Quit => return false,
         }
@@ -230,52 +223,25 @@ impl Daemon {
         }
     }
 
-    /// 截图 / 录制抓的是屏幕像素，悬浮球与桌宠重叠目标窗口会入镜；离场后再拍。
-    fn hide_desktop_overlays(&self) {
-        let pet_mode = settings::load().ui_mode == "pet";
-        pet::set_pet_visible(false);
-        if pet_mode {
-            gif_pet::set_visible(false);
-        }
-    }
-
-    /// 按当前桌面形式恢复；录制进行中保持离场。桌宠线程未就绪时回退悬浮球。
-    fn restore_desktop_overlays(&self) {
-        if self.recorder.active.load(Ordering::SeqCst) {
-            return;
-        }
-        let pet_mode = settings::load().ui_mode == "pet";
-        if pet_mode {
-            if gif_pet::set_visible(true) {
-                pet::set_pet_visible(false);
-            } else {
-                pet::set_pet_visible(true);
-            }
-        } else {
-            gif_pet::set_visible(false);
-            pet::set_pet_visible(true);
-        }
-    }
-
     fn capture(&mut self) {
-        self.hide_desktop_overlays();
+        desktop::hide_for_capture(true);
         let result = match (&self.backend, &self.wayland) {
             (Some(backend), _) => backend.capture_and_copy(),
             (None, Some(backend)) => backend.capture_and_copy(),
             (None, None) => Err("截图后端未初始化".into()),
         };
-        self.restore_desktop_overlays();
+        desktop::hide_for_capture(false);
         match result {
             Ok(name) => {
                 play_shutter_sound();
-                notify::notify(
-                    notify::ToastKind::Success,
+                notify::notify_kind(
                     "已复制窗口截图",
                     &format!("{name} — 60 秒后自动清空"),
+                    notify::NotifyKind::Success,
                 );
                 self.deadline = Some(Instant::now() + AUTO_CLEAR);
             }
-            Err(e) => notify::notify(notify::ToastKind::Error, "截取失败", &e.to_string()),
+            Err(e) => notify::notify_kind("截取失败", &e.to_string(), notify::NotifyKind::Error),
         }
     }
 
@@ -292,13 +258,12 @@ impl Daemon {
                     })
                 }
                 Err(e) => {
-                    notify::notify(notify::ToastKind::Error, "获取窗口列表失败", &e.to_string());
+                    notify::notify("获取窗口列表失败", &e.to_string());
                     None
                 }
             },
             None => {
                 notify::notify(
-                    notify::ToastKind::Info,
                     "窗口列表不可用",
                     "Wayland 会话下暂不支持窗口列表，请使用快捷键截取当前窗口",
                 );
@@ -307,41 +272,33 @@ impl Daemon {
         };
         let Some(window) = picked else { return };
 
-        self.hide_desktop_overlays();
+        desktop::hide_for_capture(true);
         let result = match &self.backend {
             Some(backend) => backend.capture_window(window),
-            None => {
-                self.restore_desktop_overlays();
-                return;
-            }
+            None => Err("截图后端未初始化".into()),
         };
-        self.restore_desktop_overlays();
+        desktop::hide_for_capture(false);
         match result {
             Ok(name) => {
                 play_shutter_sound();
-                notify::notify(
-                    notify::ToastKind::Success,
+                notify::notify_kind(
                     "已复制窗口截图",
                     &format!("{name} — 60 秒后自动清空"),
+                    notify::NotifyKind::Success,
                 );
                 self.deadline = Some(Instant::now() + AUTO_CLEAR);
             }
-            Err(e) => notify::notify(notify::ToastKind::Error, "截取失败", &e.to_string()),
+            Err(e) => notify::notify_kind("截取失败", &e.to_string(), notify::NotifyKind::Error),
         }
     }
 
     fn start_polish(&mut self) {
         if self.polish_state.busy.load(Ordering::SeqCst) {
-            notify::notify(
-                notify::ToastKind::Info,
-                "润色进行中",
-                "请等待完成，或选择「停止润色」",
-            );
+            notify::notify("润色进行中", "请等待完成，或选择「停止润色」");
             return;
         }
         if !self.polish_config.is_complete() {
             notify::notify(
-                notify::ToastKind::Error,
                 "润色未配置",
                 "请在 ~/.config/windowsnap/config.toml 填写 polish.base_url / polish.model / polish.api_key",
             );
@@ -359,58 +316,54 @@ impl Daemon {
 
     fn stop_polish(&mut self) {
         if !self.polish_state.busy.load(Ordering::SeqCst) {
-            notify::notify(notify::ToastKind::Info, "没有进行中的润色", "");
+            notify::notify("没有进行中的润色", "");
             return;
         }
         self.polish_state.stop();
-        notify::notify(notify::ToastKind::Info, "停止润色", "正在中止当前请求");
+        notify::notify("停止润色", "正在中止当前请求");
     }
 
     fn start_recording(&mut self) {
         if self.recorder.active.load(Ordering::SeqCst) {
-            notify::notify(notify::ToastKind::Info, "已在录制中", "请先停止当前录制");
+            notify::notify("已在录制中", "请先停止当前录制");
             return;
         }
         let Some(backend) = &self.backend else {
-            notify::notify(
-                notify::ToastKind::Error,
+            notify::notify_kind(
                 "录制失败",
                 "窗口录制仅支持 X11 会话（依赖 ffmpeg x11grab）",
+                notify::NotifyKind::Error,
             );
             return;
         };
         let (x, y, width, height) = match backend.active_window_rect() {
             Ok(rect) => rect,
             Err(e) => {
-                notify::notify(notify::ToastKind::Error, "录制失败", &e.to_string());
+                notify::notify_kind("录制失败", &e.to_string(), notify::NotifyKind::Error);
                 return;
             }
         };
-        // 悬浮球与桌宠先藏起来，免得被录进画面
-        self.hide_desktop_overlays();
+        // 悬浮球先藏起来，免得被录进画面
+        desktop::hide_for_recording(true);
         match self.recorder.start(x, y, width, height) {
-            Ok(_) => notify::notify(
-                notify::ToastKind::Info,
-                "录制中",
-                "录制当前活动窗口；通过托盘或悬浮球菜单停止",
-            ),
+            Ok(_) => notify::notify("录制中", "录制当前活动窗口；通过托盘或悬浮球菜单停止"),
             Err(e) => {
-                self.restore_desktop_overlays();
-                notify::notify(notify::ToastKind::Error, "录制失败", &e.to_string());
+                desktop::hide_for_recording(false);
+                notify::notify_kind("录制失败", &e.to_string(), notify::NotifyKind::Error);
             }
         }
     }
 
     fn stop_recording(&mut self) {
         match self.recorder.stop() {
-            Ok(path) => notify::notify(
-                notify::ToastKind::Success,
+            Ok(path) => notify::notify_kind(
                 "录制完成",
                 &format!("已保存到 {path}"),
+                notify::NotifyKind::Success,
             ),
-            Err(e) => notify::notify(notify::ToastKind::Error, "录制结束", &e.to_string()),
+            Err(e) => notify::notify("录制结束", &e.to_string()),
         }
-        self.restore_desktop_overlays();
+        desktop::hide_for_recording(false);
     }
 
     /// 录制快捷键是「开始/停止」二合一：按当前状态切换。
@@ -424,37 +377,29 @@ impl Daemon {
 
     /// 截取「上一个前台应用」窗口（悬浮球当前显示图标的目标）。
     fn capture_previous_app(&mut self) {
-        let window = pet::previous_window();
+        let window = desktop::previous_window();
         if window == x11rb::NONE {
-            notify::notify(
-                notify::ToastKind::Info,
-                "尚未记录上一个应用",
-                "切换一次前台应用后再试",
-            );
+            notify::notify("尚未记录上一个应用", "切换一次前台应用后再试");
             return;
         }
         let Some(backend) = &self.backend else {
-            notify::notify(
-                notify::ToastKind::Error,
-                "截取失败",
-                "Wayland 会话下暂不支持截取上一个应用",
-            );
+            notify::notify("截取失败", "Wayland 会话下暂不支持截取上一个应用");
             return;
         };
-        self.hide_desktop_overlays();
+        desktop::hide_for_capture(true);
         let result = backend.capture_window(window);
-        self.restore_desktop_overlays();
+        desktop::hide_for_capture(false);
         match result {
             Ok(name) => {
                 play_shutter_sound();
-                notify::notify(
-                    notify::ToastKind::Success,
+                notify::notify_kind(
                     "已复制窗口截图",
                     &format!("{name} — 60 秒后自动清空"),
+                    notify::NotifyKind::Success,
                 );
                 self.deadline = Some(Instant::now() + AUTO_CLEAR);
             }
-            Err(e) => notify::notify(notify::ToastKind::Error, "截取失败", &e.to_string()),
+            Err(e) => notify::notify_kind("截取失败", &e.to_string(), notify::NotifyKind::Error),
         }
     }
 
@@ -467,8 +412,6 @@ impl Daemon {
             shortcut_record: current.shortcut_record.clone(),
             shortcut_previous_app: current.shortcut_previous_app.clone(),
             shortcut_polish: current.shortcut_polish.clone(),
-            ui_mode: current.ui_mode.clone(),
-            pet_skin: current.pet_skin.clone(),
             polish_kind: if matches!(current.polish.kind, polish::PolishProtocolKind::Anthropic) {
                 "anthropic".to_string()
             } else {
@@ -477,8 +420,18 @@ impl Daemon {
             polish_base_url: current.polish.base_url.clone(),
             polish_model: current.polish.model.clone(),
             polish_api_key: current.polish.api_key.clone(),
+            ui_mode_pet: current.ui_mode_pet,
+            pet_skin: current.pet_skin.clone(),
         };
-        let Some(input) = dialog::settings_form(&values) else { return };
+        let input = loop {
+            let Some(input) = dialog::settings_form(&values) else { return };
+            if input.ui_mode_pet && settings::available_skins().is_empty() {
+                notify::notify_kind("未启用桌宠", &format!("未找到桌宠素材({}/<形象>/*.gif)",
+                    settings::pet_asset_root().map(|p|p.display().to_string()).unwrap_or_default()), notify::NotifyKind::Error);
+                continue;
+            }
+            break input;
+        };
 
         // 快捷键：留空保持不变，填 none 解除绑定
         let resolve_shortcut = |input: &str, current: &str| -> String {
@@ -511,37 +464,11 @@ impl Daemon {
         let polish_model = resolve_text(&input.polish_model, &values.polish_model);
         let polish_api_key = resolve_text(&input.polish_api_key, &values.polish_api_key);
 
-        // 桌面形式（悬浮球 / 桌宠）与形象：留空保持不变；校验放在写盘之前
-        let mode_input = input.ui_mode.trim().to_ascii_lowercase();
-        let skin_input = input.pet_skin.trim().to_string();
-        let mut ui_mode = values.ui_mode.clone();
-        let mut pet_skin = values.pet_skin.clone();
-        if mode_input == "pet" || mode_input == "bubble" {
-            ui_mode = mode_input;
-        }
-        if !skin_input.is_empty() {
-            pet_skin = skin_input;
-        }
-        if ui_mode == "pet" && gif_pet::available_skins().is_empty() {
-            notify::notify(
-                notify::ToastKind::Error,
-                "桌面形式未更改",
-                "未找到桌宠素材（~/.local/share/windowsnap/pet/<形象>/*.gif）",
-            );
-            ui_mode = values.ui_mode.clone();
-        }
-        let mode_changed = ui_mode != values.ui_mode;
-        let skin_changed = pet_skin != values.pet_skin;
-
         if !polish_base_url.is_empty()
             && !polish_base_url.starts_with("http://")
             && !polish_base_url.starts_with("https://")
         {
-            notify::notify(
-                notify::ToastKind::Error,
-                "设置未保存",
-                "润色 Base URL 需以 http:// 或 https:// 开头",
-            );
+            notify::notify("设置未保存", "润色 Base URL 需以 http:// 或 https:// 开头");
             return;
         }
 
@@ -550,6 +477,9 @@ impl Daemon {
 
         settings::save_shortcuts(&shortcut, &shortcut_record, &shortcut_previous_app, &shortcut_polish);
         settings::save_polish(&polish_kind, &polish_base_url, &polish_model, &polish_api_key);
+        settings::save_ui_mode(input.ui_mode_pet);
+        if !input.pet_skin.is_empty() { settings::save_pet_skin(&input.pet_skin); }
+        desktop::apply_presentation(self.tx.clone());
         self.polish_config = polish::PolishConfig {
             kind: if polish_kind == "anthropic" {
                 polish::PolishProtocolKind::Anthropic
@@ -561,60 +491,31 @@ impl Daemon {
             api_key: polish_api_key,
         };
 
-        // 桌面形式：换形象立即换装，切模式互斥显示。切到桌宠失败不 return，
-        // 快捷键与润色配置仍要注册；形式不落盘，避免「设置已保存」但桌面空白。
-        if mode_changed || skin_changed {
-            if ui_mode == "pet" {
-                let _ = gif_pet::reload(&pet_skin);
-                if gif_pet::set_visible(true) {
-                    pet::set_pet_visible(false);
-                    settings::save_desktop_form(&ui_mode, &pet_skin);
-                    if mode_changed {
-                        notify::notify(notify::ToastKind::Success, "已切换到桌宠模式", "");
-                    }
-                } else {
-                    notify::notify(
-                        notify::ToastKind::Error,
-                        "桌面形式未更改",
-                        "桌宠不可用（需要 X11 / XWayland 会话；素材见 ~/.local/share/windowsnap/pet/）",
-                    );
-                }
-            } else {
-                gif_pet::set_visible(false);
-                pet::set_pet_visible(true);
-                settings::save_desktop_form(&ui_mode, &pet_skin);
-                if mode_changed {
-                    notify::notify(notify::ToastKind::Success, "已切换到悬浮球模式", "");
-                }
-            }
-        }
-
         // 快捷键即时生效；Wayland 会话由桌面环境 / portal 管理绑定，重启后生效
         match &self.backend {
             Some(backend) => {
                 backend.ungrab_all();
                 let failures = register_hotkeys(backend, &settings::load());
                 if failures.is_empty() {
-                    notify::notify(
-                        notify::ToastKind::Success,
+                    notify::notify_kind(
                         "设置已保存",
-                        "快捷键与润色配置已生效",
+                        "快捷键、润色配置与桌面形式已生效",
+                        notify::NotifyKind::Success,
                     );
                 } else {
                     // 回滚到旧绑定，避免半绑定状态（新配置已存盘，下次启动仍会尝试）
                     backend.ungrab_all();
                     let _ = register_hotkeys(backend, &old_settings);
                     notify::notify(
-                        notify::ToastKind::Error,
                         "部分快捷键注册失败",
                         &format!("{}；已恢复之前的快捷键绑定", failures.join("；")),
                     );
                 }
             }
-            None => notify::notify(
-                notify::ToastKind::Success,
+            None => notify::notify_kind(
                 "设置已保存",
-                "润色配置已生效；Wayland 下快捷键由桌面环境管理",
+                "润色配置与桌面形式已生效；Wayland 快捷键由桌面环境管理",
+                notify::NotifyKind::Success,
             ),
         }
     }
@@ -693,23 +594,20 @@ fn run_daemon() -> Result<()> {
         polish_state,
         polish_config: settings.polish.clone(),
         deadline: None,
+        tx: tx.clone(),
     };
 
     match detect_session()? {
         Session::X11 => {
             let backend = x11::X11Backend::new()?;
             let failures = register_hotkeys(&backend, &settings);
-            let pet_mode = settings.ui_mode == "pet" && !gif_pet::available_skins().is_empty();
-            let entry_hint = if pet_mode { "右键桌宠可打开设置" } else { "右键悬浮球可打开设置" };
             if failures.is_empty() {
                 notify::notify(
-                    notify::ToastKind::Info,
                     "应用快照已启动",
-                    &format!("{}；{entry_hint}", shortcut_summary(&settings)),
+                    &format!("{}；右键悬浮球可打开设置", shortcut_summary(&settings)),
                 );
             } else {
                 notify::notify(
-                    notify::ToastKind::Error,
                     "部分快捷键注册失败",
                     &format!("{}。仍可用托盘菜单或悬浮球触发", failures.join("；")),
                 );
@@ -721,18 +619,14 @@ fn run_daemon() -> Result<()> {
             daemon.wayland = Some(wayland::WaylandBackend::new());
             wayland::spawn_global_shortcuts(tx.clone(), settings.shortcut.clone());
             notify::notify(
-                notify::ToastKind::Info,
                 "应用快照已启动",
                 "Wayland 下由 GlobalShortcuts portal 或桌面环境快捷键触发",
             );
         }
     }
 
-    // 桌宠模式下悬浮球离场（线程继续跟踪活动窗口，供「截取上一个应用」用）。
-    // 无素材时与 Windows 一致：仍显示悬浮球。两个线程在无 X11/XWayland 时自然失败。
-    let pet_mode = settings.ui_mode == "pet" && !gif_pet::available_skins().is_empty();
-    pet::spawn(tx.clone(), !pet_mode);
-    gif_pet::spawn(tx.clone(), pet_mode);
+    if std::env::var_os("DISPLAY").is_some() { desktop::spawn_tracker(); }
+    desktop::apply_presentation(tx.clone());
     daemon.run(rx);
     Ok(())
 }
@@ -790,11 +684,7 @@ fn run_capture_once() -> Result<()> {
             let backend = x11::X11Backend::new()?;
             let name = backend.capture_and_copy()?;
             play_shutter_sound();
-            notify::notify(
-                notify::ToastKind::Success,
-                "已复制窗口截图",
-                &format!("{name} — 60 秒后自动清空"),
-            );
+            notify::notify("已复制窗口截图", &format!("{name} — 60 秒后自动清空"));
             // X11 剪贴板由 owner 进程供数，需存活到被替换或超时
             backend.serve_until(Instant::now() + AUTO_CLEAR);
             backend.clear_if_owned();
@@ -803,11 +693,7 @@ fn run_capture_once() -> Result<()> {
             let png = wayland::take_screenshot()?;
             wayland::copy_background(png)?;
             play_shutter_sound();
-            notify::notify(
-                notify::ToastKind::Success,
-                "已复制窗口截图",
-                "独立模式下不自动清空剪贴板",
-            );
+            notify::notify("已复制窗口截图", "独立模式下不自动清空剪贴板");
         }
     }
     Ok(())

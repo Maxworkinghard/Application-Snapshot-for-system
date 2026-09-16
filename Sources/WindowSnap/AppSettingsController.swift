@@ -6,8 +6,10 @@ import Carbon
 final class AppSettingsController: NSObject, NSWindowDelegate {
     var currentSet: ShortcutSet
     private let onSaveShortcuts: (ShortcutSet) -> Bool
-    private let onApplyDesktopForm: (Bool, String?) -> Bool
     private let polishStore: PolishBackendConfigurationStore
+    private let desktopModeStore: DesktopModeStore
+    private let onSwitchDesktopMode: (Bool) -> Void
+    private let onSwitchPetSkin: (String) -> Void
     private var window: NSWindow?
     private var recorders: [ShortcutRecorderView] = []
     private var statusLabel: NSTextField?
@@ -30,13 +32,17 @@ final class AppSettingsController: NSObject, NSWindowDelegate {
     init(
         currentSet: ShortcutSet,
         polishStore: PolishBackendConfigurationStore,
+        desktopModeStore: DesktopModeStore,
         onSaveShortcuts: @escaping (ShortcutSet) -> Bool,
-        onApplyDesktopForm: @escaping (Bool, String?) -> Bool
+        onSwitchDesktopMode: @escaping (Bool) -> Void,
+        onSwitchPetSkin: @escaping (String) -> Void
     ) {
         self.currentSet = currentSet
         self.polishStore = polishStore
+        self.desktopModeStore = desktopModeStore
         self.onSaveShortcuts = onSaveShortcuts
-        self.onApplyDesktopForm = onApplyDesktopForm
+        self.onSwitchDesktopMode = onSwitchDesktopMode
+        self.onSwitchPetSkin = onSwitchPetSkin
     }
 
     func show() {
@@ -208,13 +214,7 @@ final class AppSettingsController: NSObject, NSWindowDelegate {
         polishForm.alignment = .leading
         polishForm.translatesAutoresizingMaskIntoConstraints = false
 
-        let status = NSTextField(labelWithString: "")
-        status.font = .systemFont(ofSize: 12, weight: .medium)
-        status.textColor = .systemRed
-        status.translatesAutoresizingMaskIntoConstraints = false
-        self.statusLabel = status
-
-        // MARK: 桌面形式区块（悬浮球 / 桌宠）
+        // MARK: 桌面形式区块（悬浮窗 / 桌宠）
 
         let desktopDivider = NSBox()
         desktopDivider.boxType = .separator
@@ -237,14 +237,17 @@ final class AppSettingsController: NSObject, NSWindowDelegate {
         let skinPopUp = NSPopUpButton()
         self.skinPopUp = skinPopUp
 
-        let desktopForm = NSStackView(views: [
-            makeRow(label: "形式", field: uiModePopUp),
-            makeRow(label: "桌宠形象", field: skinPopUp)
-        ])
-        desktopForm.orientation = .vertical
-        desktopForm.spacing = 10
-        desktopForm.alignment = .leading
-        desktopForm.translatesAutoresizingMaskIntoConstraints = false
+        let uiModeRow = makeRow(label: "形式", field: uiModePopUp)
+        uiModeRow.translatesAutoresizingMaskIntoConstraints = false
+
+        let skinRow = makeRow(label: "桌宠形象", field: skinPopUp)
+        skinRow.translatesAutoresizingMaskIntoConstraints = false
+
+        let status = NSTextField(labelWithString: "")
+        status.font = .systemFont(ofSize: 12, weight: .medium)
+        status.textColor = .systemRed
+        status.translatesAutoresizingMaskIntoConstraints = false
+        self.statusLabel = status
 
         // MARK: 底部按钮
 
@@ -277,7 +280,8 @@ final class AppSettingsController: NSObject, NSWindowDelegate {
         content.addSubview(desktopDivider)
         content.addSubview(desktopHeader)
         content.addSubview(desktopHint)
-        content.addSubview(desktopForm)
+        content.addSubview(uiModeRow)
+        content.addSubview(skinRow)
         content.addSubview(status)
         content.addSubview(clearPolishButton)
         content.addSubview(rightButtons)
@@ -335,11 +339,15 @@ final class AppSettingsController: NSObject, NSWindowDelegate {
             desktopHint.leadingAnchor.constraint(equalTo: title.leadingAnchor),
             desktopHint.trailingAnchor.constraint(equalTo: title.trailingAnchor),
 
-            desktopForm.topAnchor.constraint(equalTo: desktopHint.bottomAnchor, constant: 10),
-            desktopForm.leadingAnchor.constraint(equalTo: title.leadingAnchor),
-            desktopForm.trailingAnchor.constraint(equalTo: title.trailingAnchor),
+            uiModeRow.topAnchor.constraint(equalTo: desktopHint.bottomAnchor, constant: 12),
+            uiModeRow.leadingAnchor.constraint(equalTo: title.leadingAnchor),
+            uiModeRow.trailingAnchor.constraint(equalTo: title.trailingAnchor),
 
-            status.topAnchor.constraint(equalTo: desktopForm.bottomAnchor, constant: 10),
+            skinRow.topAnchor.constraint(equalTo: uiModeRow.bottomAnchor, constant: 10),
+            skinRow.leadingAnchor.constraint(equalTo: title.leadingAnchor),
+            skinRow.trailingAnchor.constraint(equalTo: title.trailingAnchor),
+
+            status.topAnchor.constraint(equalTo: skinRow.bottomAnchor, constant: 10),
             status.leadingAnchor.constraint(equalTo: title.leadingAnchor),
             status.trailingAnchor.constraint(equalTo: title.trailingAnchor),
             status.heightAnchor.constraint(equalToConstant: 16),
@@ -355,7 +363,7 @@ final class AppSettingsController: NSObject, NSWindowDelegate {
         ])
 
         let window = NSWindow(
-            contentRect: NSRect(x: 0, y: 0, width: 460, height: 880),
+            contentRect: NSRect(x: 0, y: 0, width: 460, height: 830),
             styleMask: [.titled, .closable],
             backing: .buffered,
             defer: false
@@ -364,6 +372,11 @@ final class AppSettingsController: NSObject, NSWindowDelegate {
         window.contentView = content
         window.delegate = self
         window.isReleasedWhenClosed = false
+        content.layoutSubtreeIfNeeded()
+        let fitted = content.fittingSize
+        if fitted.height > window.contentLayoutRect.height {
+            window.setContentSize(NSSize(width: 460, height: fitted.height))
+        }
         window.center()
         window.makeKeyAndOrderFront(nil)
         NSApp.activate(ignoringOtherApps: true)
@@ -474,27 +487,11 @@ final class AppSettingsController: NSObject, NSWindowDelegate {
             showStatus(error)
             return
         }
-        if !applyDesktopForm() {
+        if let error = applyDesktopMode() {
+            showStatus(error)
             return
         }
         window?.close()
-    }
-
-    /// 桌面形式（悬浮球 / 桌宠）与形象：保存时应用；
-    /// 素材缺失时提示并保留窗口（与 Windows 端设置窗口同规则）。
-    private func applyDesktopForm() -> Bool {
-        guard let uiModePopUp, let skinPopUp else { return true }
-        let wantPet = uiModePopUp.indexOfSelectedItem == 1
-        let wantSkin = skinPopUp.titleOfSelectedItem
-        if wantPet && PetAssets.availableSkins().isEmpty {
-            showStatus("未找到桌宠素材（\(PetAssets.root.path)/<形象>/*.gif）")
-            return false
-        }
-        guard onApplyDesktopForm(wantPet, wantSkin) else {
-            showStatus("桌面形式未能应用")
-            return false
-        }
-        return true
     }
 
     /// 润色配置校验：全空视为「不启用」直接放行；填了部分则要求完整。
@@ -526,6 +523,25 @@ final class AppSettingsController: NSObject, NSWindowDelegate {
         return nil
     }
 
+    /// 桌面形式保存时才应用；素材缺失时拒绝并把提示留在错误栏，窗口不关。
+    private func applyDesktopMode() -> String? {
+        let wantPet = uiModePopUp?.indexOfSelectedItem == 1
+        if wantPet, PetAssets.availableSkins().isEmpty {
+            return "未找到桌宠素材(\(PetAssets.root.path)/<形象>/*.gif)"
+        }
+        // 先落到可用形象，避免切到桌宠时沿用已不存在的旧选择。
+        // 切回悬浮窗时只存形象、不立刻重建桌宠，免得先换装再拆掉。
+        if let skin = skinPopUp?.titleOfSelectedItem {
+            if wantPet {
+                onSwitchPetSkin(skin)
+            } else {
+                desktopModeStore.skin = skin
+            }
+        }
+        onSwitchDesktopMode(wantPet)
+        return nil
+    }
+
     // MARK: - 刷新
 
     private func refreshShortcutFields() {
@@ -554,16 +570,13 @@ final class AppSettingsController: NSObject, NSWindowDelegate {
         updatePromptButtons()
     }
 
+    /// 形象列表只在每次打开设置时枚举一次，不做实时监听。
     private func refreshDesktopFields() {
-        guard let uiModePopUp, let skinPopUp else { return }
-        uiModePopUp.selectItem(
-            at: UserDefaults.standard.string(forKey: "ui.mode") == "pet" ? 1 : 0
-        )
+        uiModePopUp?.selectItem(at: desktopModeStore.isPetMode ? 1 : 0)
+        guard let skinPopUp else { return }
         skinPopUp.removeAllItems()
-        for skin in PetAssets.availableSkins() {
-            skinPopUp.addItem(withTitle: skin)
-        }
-        if let current = PetAssets.resolveSkin() {
+        skinPopUp.addItems(withTitles: PetAssets.availableSkins())
+        if let current = desktopModeStore.resolveSkin() {
             skinPopUp.selectItem(withTitle: current)
         }
     }

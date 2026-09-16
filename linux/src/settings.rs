@@ -16,14 +16,13 @@ pub struct Settings {
     /// 润色快捷键；空 = 未绑定（默认未绑定）。
     pub shortcut_polish: String,
     pub save_dir: String,
-    /// 桌面呈现形式："bubble"（悬浮球，默认）或 "pet"（GIF 桌宠）。
-    pub ui_mode: String,
-    /// 桌宠形象（pet 素材目录下的子目录名）。
-    pub pet_skin: String,
-    /// 悬浮球位置。
     pub pet: Option<(i32, i32)>,
-    /// GIF 桌宠位置（与悬浮球位置键独立）。
-    pub desktoppet: Option<(i32, i32)>,
+    /// 桌面形式：true = 桌宠，其余（含缺省）= 悬浮球。
+    pub ui_mode_pet: bool,
+    /// 桌宠形象（素材根目录下的子目录名）；空 = 由 resolve_skin 兜底。
+    pub pet_skin: String,
+    /// 桌宠位置，与悬浮球的 pet_x/pet_y 刻意分开：两个窗口尺寸不同，共用会瞬移。
+    pub desktop_pet: Option<(i32, i32)>,
     pub polish: PolishConfig,
 }
 
@@ -45,7 +44,11 @@ fn parse() -> HashMap<String, String> {
         }
         let Some((key, value)) = line.split_once('=') else { continue };
         let value = value.trim();
-        let value = if let Some(rest) = value.strip_prefix('"') {
+        let value = if key.trim() == "pet.skin" && value.starts_with('"') {
+            // 形象名可含引号/换行；只对新字段解转义，不改变既有配置语义。
+            serde_json::Deserializer::from_str(value).into_iter::<String>().next()
+                .and_then(Result::ok).unwrap_or_default()
+        } else if let Some(rest) = value.strip_prefix('"') {
             rest.split('"').next().unwrap_or(rest).to_string()
         } else {
             value.split(" #").next().unwrap_or(value).trim().to_string()
@@ -84,9 +87,11 @@ pub fn load() -> Settings {
         (Some(x), Some(y)) => Some((x, y)),
         _ => None,
     };
-    let desktoppet = match (
-        map.get("desktoppet_x").and_then(|value| value.parse().ok()),
-        map.get("desktoppet_y").and_then(|value| value.parse().ok()),
+    let ui_mode_pet = map.get("ui.mode").is_some_and(|value| value.trim() == "pet");
+    let pet_skin = map.get("pet.skin").cloned().unwrap_or_default();
+    let desktop_pet = match (
+        map.get("desktoppet.x").and_then(|value| value.parse().ok()),
+        map.get("desktoppet.y").and_then(|value| value.parse().ok()),
     ) {
         (Some(x), Some(y)) => Some((x, y)),
         _ => None,
@@ -104,27 +109,16 @@ pub fn load() -> Settings {
         model: map.get("polish.model").cloned().unwrap_or_default(),
         api_key: map.get("polish.api_key").cloned().unwrap_or_default(),
     };
-    // 桌面形式：只有显式写 "pet" 才进桌宠模式，其余值（含未配置）回悬浮球
-    let ui_mode = map
-        .get("ui_mode")
-        .filter(|value| *value == "pet")
-        .cloned()
-        .unwrap_or_else(|| "bubble".to_string());
-    let pet_skin = map
-        .get("pet_skin")
-        .filter(|value| !value.is_empty())
-        .cloned()
-        .unwrap_or_else(|| "".to_string());
     Settings {
         shortcut,
         shortcut_record,
         shortcut_previous_app,
         shortcut_polish,
         save_dir,
-        ui_mode,
-        pet_skin,
         pet,
-        desktoppet,
+        ui_mode_pet,
+        pet_skin,
+        desktop_pet,
         polish,
     }
 }
@@ -141,16 +135,21 @@ pub fn save_pet_position(x: i32, y: i32) {
     upsert(&[("pet_x", &x.to_string()), ("pet_y", &y.to_string())]);
 }
 
-pub fn save_desktoppet_position(x: i32, y: i32) {
-    upsert(&[(
-        "desktoppet_x",
-        &x.to_string(),
-    ), ("desktoppet_y", &y.to_string())]);
+pub fn save_desktop_pet_position(x: i32, y: i32) {
+    upsert(&[
+        ("desktoppet.x", &x.to_string()),
+        ("desktoppet.y", &y.to_string()),
+    ]);
 }
 
-/// 设置表单保存桌面形式（bubble / pet）与桌宠形象。
-pub fn save_desktop_form(ui_mode: &str, pet_skin: &str) {
-    upsert(&[("ui_mode", ui_mode), ("pet_skin", pet_skin)]);
+/// 设置对话框保存桌面形式。
+pub fn save_ui_mode(pet: bool) {
+    upsert(&[("ui.mode", if pet { "pet" } else { "bubble" })]);
+}
+
+/// 设置对话框保存桌宠形象。
+pub fn save_pet_skin(skin: &str) {
+    upsert(&[("pet.skin", skin)]);
 }
 
 /// 设置对话框保存快捷键（空值即解除绑定，含默认项）。
@@ -173,6 +172,52 @@ pub fn save_polish(kind: &str, base_url: &str, model: &str, api_key: &str) {
     ]);
 }
 
+/// 桌宠素材根目录：$XDG_DATA_HOME/windowsnap/pet，回退 $HOME/.local/share。
+/// 素材是数据不是配置，不放 ~/.config；也不自动创建，目录不存在本身就是「没有素材」。
+pub fn pet_asset_root() -> Option<PathBuf> {
+    std::env::var_os("XDG_DATA_HOME")
+        .map(PathBuf::from)
+        .or_else(|| std::env::var_os("HOME").map(|home| PathBuf::from(home).join(".local/share")))
+        .map(|base| base.join("windowsnap/pet"))
+}
+
+/// 可用形象：素材根目录下每个至少含一个 *.gif 的直接子目录（文件名不限），
+/// 按不区分大小写排序；任何错误都吞掉，返回已经收集到的部分。
+pub fn available_skins() -> Vec<String> {
+    let mut skins = Vec::new();
+    let Some(root) = pet_asset_root() else { return skins };
+    let Ok(entries) = std::fs::read_dir(root) else { return skins };
+    for entry in entries.flatten() {
+        let path = entry.path();
+        if !path.is_dir() {
+            continue;
+        }
+        let Ok(files) = std::fs::read_dir(&path) else { continue };
+        let has_gif = files.flatten().any(|file| {
+            file.path().is_file() && file.path()
+                .extension()
+                .is_some_and(|ext| ext.eq_ignore_ascii_case("gif"))
+        });
+        if has_gif {
+            if let Some(name) = entry.file_name().to_str() {
+                skins.push(name.to_string());
+            }
+        }
+    }
+    skins.sort_by_key(|name| name.to_lowercase());
+    skins
+}
+
+/// 解析当前形象：配置里的值仍然可用就用它，否则退到第一个，一个都没有返回 None
+/// （None 是「桌宠不可用」的唯一信号）。不回写配置，解析值与存盘值可以长期不一致。
+pub fn resolve_skin(current: &str) -> Option<String> {
+    let skins = available_skins();
+    if skins.iter().any(|skin| skin == current) {
+        return Some(current.to_string());
+    }
+    skins.into_iter().next()
+}
+
 /// 按 key 原地更新 config.toml 中的行（保留注释与其他配置），文件不存在则创建。
 fn upsert(entries: &[(&str, &str)]) {
     let Some(path) = config_path() else { return };
@@ -180,7 +225,7 @@ fn upsert(entries: &[(&str, &str)]) {
         .map(|text| text.lines().map(str::to_string).collect())
         .unwrap_or_default();
     for (key, value) in entries {
-        let line = format!("{key} = \"{value}\"");
+        let line = if *key == "pet.skin" { format!("{key} = {}", serde_json::to_string(value).unwrap()) } else { format!("{key} = \"{value}\"") };
         match lines.iter_mut().find(|existing| {
             existing
                 .split_once('=')

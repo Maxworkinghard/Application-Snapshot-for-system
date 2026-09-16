@@ -119,7 +119,11 @@ pub fn run_polish(
     state: &PolishState,
 ) {
     if let Err(message) = polish_once(config, session, state) {
-        crate::notify::notify(crate::notify::ToastKind::Error, "润色失败", &message.to_string());
+        crate::notify::notify_kind(
+            "润色失败",
+            &message.to_string(),
+            crate::notify::NotifyKind::Error,
+        );
     }
     state.busy.store(false, Ordering::SeqCst);
 }
@@ -164,11 +168,7 @@ fn polish_once(
         return Err("剪切板内容已变化，请重新点击润色".into());
     }
 
-    crate::notify::notify(
-        crate::notify::ToastKind::Info,
-        "正在润色…",
-        "结果将替换剪切板中的原文",
-    );
+    crate::notify::notify("正在润色…", "结果将替换剪切板中的原文");
 
     let polished = request_polish(config, &text, state)?;
     if state.cancel.load(Ordering::SeqCst) {
@@ -179,7 +179,11 @@ fn polish_once(
     }
 
     write_clipboard_text(session, polished)?;
-    crate::notify::notify(crate::notify::ToastKind::Success, "润色完成", "结果已替换剪切板");
+    crate::notify::notify_kind(
+        "润色完成",
+        "结果已替换剪切板",
+        crate::notify::NotifyKind::Success,
+    );
     Ok(())
 }
 

@@ -5,7 +5,7 @@
 | 平台 | 技术栈 | 支持架构 | 状态 |
 |---|---|---|---|
 | macOS（本目录） | Swift + ScreenCaptureKit | Apple Silicon + Intel（universal 2） | ✅ 日常使用中 |
-| [Windows](windows/) | .NET Framework 4.0+ WinForms + Win32 | x64（ARM64 需 Windows 11 x64 模拟） | ✅ Windows 真机运行验证 |
+| [Windows](windows/) | .NET Framework 4.0+ WinForms + Win32 | x64 | ✅ Windows 真机运行验证 |
 | [Linux](linux/) | Rust + X11 / Wayland portal | x86_64 + aarch64（任意架构可自行编译） | ⚠️ 编译已验证，待真机运行验证 |
 
 ## 三端功能对照
@@ -15,11 +15,11 @@
 | 全局快捷键截图 | ✅ `⌥⇧2` | ✅ `Alt+Shift+2` | ✅ `Alt+Shift+2`（X11 / Wayland portal） |
 | 窗口录制 MP4 | ✅ `⌥⇧R` | ✅ `Alt+Shift+R` | ✅ ffmpeg（X11；Wayland 无标准接口） |
 | 可选绑定快捷键（截取上一个应用 / 润色，默认不绑定） | ✅ 设置页 | ✅ 设置窗口 | ✅ 设置表单（X11） |
-| 统一设置入口（右键悬浮球 / 桌宠：快捷键绑定 + 润色 LLM Provider + 桌面形式） | ✅ | ✅ | ✅ zenity 表单 |
+| 统一设置入口（右键悬浮球：快捷键绑定 + 润色 LLM Provider） | ✅ | ✅ | ✅ zenity 表单 |
 | 润色提示词库（内置 + 用户自定义，可随时切换不替换） | ✅ 设置页 | ✅ 设置窗口 | ✅ 托盘「管理润色提示词…」 |
-| 悬浮球（显示上一个前台应用图标，可拖动） | ✅ | ✅ | ✅ X11 / XWayland |
-| 桌宠模式（GIF 形象、可换肤、事件动画；设置里与悬浮球互斥切换） | ✅ | ✅ | ✅ X11 / XWayland |
-| 点击悬浮球 / 桌宠弹操作菜单 | ✅ | ✅ | ✅ |
+| 悬浮球（显示上一个前台应用图标，可拖动） | ✅ | ✅ | ✅ X11 |
+| 桌宠模式（设置切换 GIF 形象） | ✅ | ✅ | ✅ X11 / XWayland；原生 layer-shell 覆盖见 [Linux README](linux/) |
+| 点击悬浮球弹操作菜单 | ✅ | ✅ | ✅ |
 | 从窗口列表选择截图 | ✅ | ✅ | ✅ X11 / Wayland 不可用 |
 | 提示词润色（剪贴板草稿 → 确认 → 大模型改写 → 写回，处理中可停止） | ✅ | ✅ | ✅ |
 | 托盘 / 菜单栏入口 | ✅ 菜单栏 | ✅ 托盘 | ✅ StatusNotifierItem 托盘 |
@@ -36,9 +36,9 @@
 - 菜单栏 `润色 Prompt`：改写剪贴板中的提示词草稿，确认后写回剪贴板，处理中可停止
 - 润色提示词库：内置改写规则常驻，可在设置页新建/编辑/删除自定义提示词并随时切换（切换即生效，不替换内置）；选「内置」点「编辑」可基于内置文本另存自定义版本
 - 菜单栏 `设置保存目录…`：更改录制文件的保存位置（默认「下载」；目录失效时自动回退）
-- 菜单栏 `设置…`（⌘,）或右键悬浮球 / 桌宠 `设置…`：统一设置页——绑定/清除全局快捷键（截取当前应用 / 录制 / 截取上一个应用 / 润色提示词，均可在设置中清除），润色提示词管理，润色 LLM Provider（协议 / Base URL / 模型 / API Key，Key 存 Keychain），以及桌面形式（悬浮球 / GIF 桌宠与形象）
+- 菜单栏 `设置…`（⌘,）或右键悬浮球 `设置…`：统一设置页——绑定/清除全局快捷键（截取当前应用 / 录制 / 截取上一个应用 / 润色提示词，均可在设置中清除），润色提示词管理，以及润色 LLM Provider（协议 / Base URL / 模型 / API Key，Key 存 Keychain）
 - 菜单栏 `选择其他窗口…`：用 macOS 原生窗口选择方式点选并复制（右键/双指点击取消）
-- 桌面形式：默认悬浮圆形图标（显示上一个前台应用，点击可截取/录制/润色，可拖动、位置持久化）；设置里可切到 GIF 桌宠（换肤、7 姿势、事件动画、拖拽跑动）。素材不随应用分发，放入 `~/Library/Application Support/AppSnapshot/pet/<形象>/`（`idle` / `waving` / `jumping` / `failed` / `waiting` / `running-left` / `running-right`.gif）
+- 桌面小宠物：悬浮圆形图标，显示上一个前台应用，点击可截取/录制/润色，可拖动、位置持久化
 - 截图/录制/润色完成显示轻量 Toast 提示
 - 剪贴板 60 秒自动清空，期间复制过其他内容则跳过
 
@@ -58,15 +58,29 @@ open "dist/应用快照.app"
 
 ## 桌宠模式（可选）
 
-与 Windows / Linux 端同一套行为约定：初始为**悬浮球**；在「设置… → 桌面形式」中可切换为**桌宠**并选择形象，选择持久化。
+初始桌面形式为**悬浮窗**；在「设置… → 桌面形式」中可切换为**桌宠**并选择形象，选择持久化。三端保存后立即切换，不需要重启。
 
-素材**不随应用内置或分发**（素材并非本项目制作，避免版权问题），由用户自行放置：
+桌宠素材**不随应用内置或分发**（素材并非本项目制作，避免版权问题），由用户自行放置：
 
-- 目录：`~/Library/Application Support/AppSnapshot/pet/<形象>/`（子目录名即形象名，可放多套）
-- 姿势文件（192×208 透明背景 GIF，等比缩到 155×168 显示）：`idle` / `waving` / `jumping` / `failed` / `waiting` / `running-left` / `running-right`
-- 目录为空时设置会拒绝切换并提示；桌宠位置独立持久化于 `desktoppet.x/y`
+| 平台 | 素材目录 |
+|---|---|
+| macOS | `~/Library/Application Support/WindowSnap/pet/<形象>/` |
+| Windows | `%APPDATA%\AppSnapshot\pet\<形象>\` |
+| Linux | `$XDG_DATA_HOME/windowsnap/pet/<形象>/`（默认 `~/.local/share/windowsnap/pet/<形象>/`） |
 
-桌宠交互：单击打开功能菜单，拖动移动（拖动中跑动），右键菜单 = 设置 / 退出；截图成功起跳、失败趴下、其余 Toast 待机反应。macOS 使用窗口级捕获，截图与录制无需离场。
+- 状态文件（192×208 透明背景 GIF）：`idle` / `waving` / `jumping` / `failed` / `waiting` / `running-left` / `running-right`
+- 目录为空或素材缺失时，设置中的桌宠选项会提示不可用，应用回退悬浮窗
+- 形象列表在每次打开设置窗口时枚举一次，放好素材后重开设置即可选择
+
+桌宠交互：单击打开功能面板（与悬浮窗一致），拖动移动（面板跟随），右键菜单 = 设置 / 退出。透明像素点击穿透。
+
+离场避镜：
+
+- Windows：截图与录制都会让桌宠离场
+- Linux：截图与录制都会让桌宠离场（X11 截的是屏幕合成结果，不离场就会入镜）
+- macOS：`⌥⇧2` 截图与 MP4 录制走 SCContentFilter 单窗口合成，画面里本就不含桌宠，这两条路径**不会**离场；「选择其他窗口…」走系统 `screencapture`，会离场
+
+Linux 的 Wayland 覆盖不是 100%：原生 layer-shell 只覆盖实现了 `wlr-layer-shell` 的合成器；GNOME Wayland 走 XWayland。不做 xdg-shell 兜底（那会变成普通窗口）。详见 [linux/README.md](linux/README.md)。
 
 ## 系统要求
 

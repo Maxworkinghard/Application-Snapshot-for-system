@@ -8,13 +8,18 @@ license = "MIT"
 [dependencies]
 # 全部为纯 Rust 实现，无 C 库依赖，可在任意架构上直接 cargo build / 交叉编译
 png = "0.17"
-gif = "0.13"
-x11rb = { version = "0.13", features = ["shape"] }
+x11rb = { version = "0.13", features = ["shape", "randr", "image"] }
 zbus = "5"
 wl-clipboard-rs = "0.9"
 ksni = { version = "0.3", default-features = false, features = ["blocking", "async-io"] }
 serde_json = "1"
 chrono = "0.4"
+# 桌宠 GIF 解码：gif 只给原始帧，gif-dispose 负责帧处置与子矩形合成
+gif = { version = "0.14", default-features = false, features = ["std"] }
+gif-dispose = "6"
+# 由 wl-clipboard-rs 的传递依赖提升为直接依赖（桌宠 layer-shell 后端要用）
+wayland-client = "0.31"
+wayland-protocols-wlr = { version = "0.3", features = ["client"] }
 
 [profile.release]
 strip = true
