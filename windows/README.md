@@ -1,6 +1,6 @@
 # 应用快照（Windows 版）
 
-Windows 实现。全局快捷键截取应用窗口、悬浮球或桌宠、窗口录制、提示词润色。总览见 [根 README](../README.md)。
+Windows 实现。全局快捷键截取应用窗口、悬浮球或桌宠、窗口录制、提示词润色。总览见 [README](../README.md)（英文）或 [简体中文](../README.zh-CN.md)。
 
 运行要求：Windows 10 或 Windows 11。x64 与 ARM64 各有一份原生自包含 exe，不必安装 .NET。不支持 32 位 Windows。
 
