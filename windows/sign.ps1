@@ -16,10 +16,9 @@
       2. SAC's signature check is RSA only. Elliptic-curve (ECC) certificates are not
          supported, even when the chain is trusted.
 
-    Measured on Windows 11 25H2 build 26200 with SAC enforced, a self-signed signature
-    was enough to launch the binary, while the unsigned original was refused. That
-    contradicts constraint 1 above, so treat it as a quirk of this build rather than a
-    guarantee. Always keep the RFC 3161 timestamp, and validate on the target machine.
+    Self-signed signatures are documented as not accepted by SAC. Do not treat a local
+    launch after -SelfTest as a distribution guarantee. Keep the RFC 3161 timestamp
+    and validate on the target machine.
 
     This script covers the signing mechanics. Use -SelfTest to verify the toolchain
     end to end with a throwaway certificate before buying anything.
@@ -50,7 +49,7 @@
     .\sign.ps1 -SelfTest
 
 .EXAMPLE
-    .\sign.ps1 -PfxPath C:\certs\codesign.pfx -PfxPassword secret
+    .\sign.ps1 -PfxPath C:\certs\codesign.pfx -PfxPassword YOUR_PFX_PASSWORD
 
 .EXAMPLE
     .\sign.ps1 -Thumbprint 5A3B1C9D0E7F6A5B4C3D2E1F0099887766554433
@@ -351,13 +350,10 @@ try {
             Write-Host "Self test complete. The signing toolchain works." -ForegroundColor Green
         }
         Write-Host ""
-        Write-Host "Measured on this machine (Windows 11 25H2, build 26200, Smart App Control enforced):"
-        Write-Host "  unsigned copy            -> refused by the Application Control policy"
-        Write-Host "  self-signed signed copy  -> launched successfully"
-        Write-Host "Microsoft documents that only certificates from the Microsoft Trusted Root"
-        Write-Host "Program are accepted, so this self-signed result contradicts the documentation."
-        Write-Host "It may change after a Code Integrity policy refresh. Keep the timestamp enabled,"
-        Write-Host "and do not assume a self-signed binary will run on somebody else's machine."
+        Write-Host "Microsoft documents that SAC requires a certificate in the Microsoft Trusted Root"
+        Write-Host "Program. A self-signed -SelfTest copy is only for toolchain verification."
+        Write-Host "Keep the timestamp enabled, and do not assume a self-signed binary will run"
+        Write-Host "on another machine."
     }
 }
 finally {

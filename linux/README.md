@@ -1,8 +1,8 @@
 # 应用快照（Linux 版）
 
-macOS 版的 Linux 移植。常驻后台，功能与 macOS / Windows 端对齐：全局快捷键截取当前活动窗口、悬浮球、窗口录制、提示词润色。
+Linux 实现。全局快捷键截取当前活动窗口、悬浮球或桌宠、窗口录制、提示词润色。总览见 [根 README](../README.md)。会话限制（尤其是 Wayland）见下文。
 
-> **状态**：源码通过完整编译（`cargo build`），**未在真实 Linux 桌面上运行验证**。首次跑通时如有问题请反馈报错原文。
+> **状态**：**未在真实 Linux 桌面上运行验证**。仓库提供 `cargo build` 与发行打包脚本；首次跑通时请对照报错原文。
 
 ## 功能
 
@@ -60,7 +60,7 @@ install -Dm755 target/release/windowsnap ~/.local/bin/windowsnap
 
 ### 多架构
 
-源码与架构无关，任意架构上原生构建即可（x86_64、aarch64、riscv64 等）。交叉编译示例：
+发行脚本只打 `x86_64-unknown-linux-gnu` 与 `aarch64-unknown-linux-gnu`。其它目标需自行准备链接器后 `cargo build --release --target …`。交叉编译示例：
 
 ```bash
 rustup target add aarch64-unknown-linux-gnu
@@ -108,19 +108,19 @@ shortcut_record = "Alt+Shift+R"   # 录制快捷键；留空 = 不绑定
 shortcut_previous_app = ""        # 截取上一个应用；默认不绑定
 shortcut_polish = ""              # 润色提示词；默认不绑定
 save_dir = "~/Videos/应用快照"     # 录制文件保存目录（~ 不会自动展开，建议写绝对路径）
-pet_x = "1896"                    # 悬浮球位置（拖动后自动写回）
-pet_y = "78"
+pet_x = "100"                     # 悬浮球位置（拖动后自动写回）
+pet_y = "100"
 ui.mode = "bubble"                # 桌面形式：bubble（悬浮球，默认）| pet（桌宠）
 pet.skin = ""                     # 桌宠形象目录名（~/.local/share/windowsnap/pet/<形象>/）
-desktoppet.x = "1750"             # 桌宠位置（拖动后自动写回，与悬浮球分开记）
-desktoppet.y = "620"
+desktoppet.x = "100"              # 桌宠位置（拖动后自动写回，与悬浮球分开记）
+desktoppet.y = "100"
 polish.kind = "openai"            # openai（OpenAI 兼容接口）| anthropic
 polish.base_url = "https://api.deepseek.com"
 polish.model = "deepseek-chat"
-polish.api_key = "sk-..."
+polish.api_key = "YOUR_API_KEY"
 ```
 
-润色默认参数与 macOS / Windows 端一致：`max_tokens = 16384`、`temperature = 0.3`、超时 180 秒。
+润色请求参数：`max_tokens = 16384`、`temperature = 0.3`、超时 180 秒。
 
 修饰键支持 `Ctrl` / `Alt` / `Shift` / `Super`，主键支持字母、数字、F1–F24 及常用符号。直接改文件需重启进程生效；走「设置…」表单保存则即时生效（X11 会重新注册快捷键，润色配置更新内存，桌面形式立即切换）。
 
@@ -134,7 +134,7 @@ polish.api_key = "sk-..."
 - 状态文件（192×208 透明背景 GIF）：`idle` / `waving` / `jumping` / `failed` / `waiting` / `running-left` / `running-right`
 - 目录为空或素材缺失时，设置会拒绝启用桌宠并回退悬浮球；形象列表每次打开设置时枚举一次
 
-交互与另外两端对齐：单击打开功能菜单，拖动移动（朝向切到 running-left / running-right），右键 = 设置 / 退出；透明像素点击穿透。截图与录制会等窗口真正隐藏后再抓屏，避免桌宠入镜。
+单击打开功能菜单，拖动时切到 `running-left` / `running-right`，右键为设置 / 退出；透明像素点击穿透。截图与录制会等窗口真正隐藏后再抓屏。
 
 ### 窗口后端（不是每种 Wayland 都能当桌宠）
 
@@ -142,7 +142,7 @@ polish.api_key = "sk-..."
 |---|---|---|
 | X11 | override-redirect + ARGB32 + ShapeInput | 全功能，含跨屏拖动（按指针所在屏的工作区钳制） |
 | Wayland（实现了 `zwlr_layer_shell_v1`） | 原生 layer-shell | wlroots 系（sway / Hyprland / river / Wayfire / labwc）+ KWin + COSMIC / niri。位置相对**绑定的那一块 output**，不能像 X11 那样拖到另一块屏 |
-| GNOME Wayland（Mutter） | XWayland 上的 X11 后端 | Mutter 至今不实现 wlr-layer-shell（[mutter#973](https://gitlab.gnome.org/GNOME/mutter/-/issues/973) 仍开着）。有 XWayland 时走这条路：override-redirect 窗口按客户端自报坐标放置，且是最顶层（`META_LAYER_OVERRIDE_REDIRECT`） |
+| GNOME Wayland（Mutter） | XWayland 上的 X11 后端 | Mutter 不实现 wlr-layer-shell（见 [mutter#973](https://gitlab.gnome.org/GNOME/mutter/-/issues/973)）。有 XWayland 时走这条路：override-redirect 窗口按客户端自报坐标放置 |
 | 禁用了 XWayland 的 GNOME 等会话 | **不支持** | 没有 layer-shell，也不做 xdg-shell 兜底 |
 
 **不做 xdg-shell 兜底。** 它能画出一只「窗口里的宠物」：合成器掌握位置、客户端拖不动，还会进 alt-tab 和总览。那不是桌宠，做了只会让支持矩阵变得不诚实。
@@ -157,7 +157,7 @@ polish.api_key = "sk-..."
     不支持的环境请在系统快捷键设置里把组合键绑定到命令 `windowsnap capture`
   - 窗口列表选择与窗口录制不可用（无标准接口）；润色可用（走 data-control 剪贴板协议）
   - 桌宠：优先 layer-shell；合成器没有该协议且存在 XWayland 时回退 X11 后端；两者都没有则桌宠不可用，截图等主功能不受影响
-- 使用剪贴板管理器（GPaste / klipper 等）时，剪贴板所有权会被管理器接管，60 秒自动清空随之失效（与 macOS 版行为一致）。
+- 使用剪贴板管理器（GPaste / klipper 等）时，剪贴板所有权会被管理器接管，60 秒自动清空随之失效。
 
 ## 项目结构
 
@@ -176,6 +176,7 @@ linux/
     ├── gifpet/             ← GIF 桌宠（解码 / 状态机 / X11 与 layer-shell 窗口）
     ├── record.rs           ← 窗口录制（ffmpeg x11grab）
     ├── polish.rs           ← 提示词润色（确认 → curl 调 API → 写回，处理中可停止）
+    ├── prompts.rs          ← 内置润色提示词与用户提示词库
     ├── tray.rs             ← StatusNotifierItem 托盘
     ├── dialog.rs           ← zenity / kdialog 对话框（润色确认、窗口选择、悬浮球菜单）
     ├── dbus_service.rs     ← local.windowsnap D-Bus 端点（CLI 触发 + 单实例锁）

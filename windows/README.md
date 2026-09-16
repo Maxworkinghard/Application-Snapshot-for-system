@@ -1,8 +1,8 @@
 # 应用快照（Windows 版）
 
-macOS 版的 Windows 移植。常驻后台，功能与 macOS 端对齐：全局快捷键截取应用窗口、悬浮球、窗口录制、提示词润色。
+Windows 实现。全局快捷键截取应用窗口、悬浮球或桌宠、窗口录制、提示词润色。总览见 [根 README](../README.md)。
 
-运行要求：Windows 10 22H2 或 Windows 11。x64 与 ARM64 各有一份原生自包含 exe，不必安装 .NET。不支持 32 位 Windows。
+运行要求：Windows 10 或 Windows 11。x64 与 ARM64 各有一份原生自包含 exe，不必安装 .NET。不支持 32 位 Windows。
 
 ## 功能
 
@@ -33,7 +33,7 @@ macOS 版的 Windows 移植。常驻后台，功能与 macOS 端对齐：全局�
   - **OpenAI 兼容**：Base URL 填服务根地址，如 DeepSeek `https://api.deepseek.com`（自动拼 `/v1/chat/completions`；URL 已含 `/v1` 则只拼 `/chat/completions`），模型如 `deepseek-chat`
   - **Anthropic**：Base URL 填 `https://api.anthropic.com`（自动拼 `/v1/messages`），模型如 `claude-sonnet-4-5`，Key 为 Anthropic Console 的 API Key；请求自动携带 `x-api-key` 与 `anthropic-version: 2023-06-01` 头
 
-参数与 macOS / Linux 端一致：`max_tokens = 16384`、`temperature = 0.3`、超时 180 秒。
+润色请求参数：`max_tokens = 16384`、`temperature = 0.3`、超时 180 秒。
 
 ## 使用
 
@@ -68,12 +68,12 @@ powershell.exe -NoProfile -ExecutionPolicy Bypass -File .\package-release.ps1
 
 ## 桌宠模式（可选）
 
-与 macOS / Linux 端同一套行为约定：初始桌面形式为**悬浮窗**；在「设置… → 桌面形式」中可切换为**桌宠**并选择形象，选择持久化。
+初始桌面形式为悬浮窗；在「设置… → 桌面形式」中可切换为桌宠并选择形象，选择会写进设置。
 
 桌宠素材**不随应用内置或分发**（素材并非本项目制作，避免版权问题），由用户自行放置：
 
 - 目录：`%APPDATA%\AppSnapshot\pet\<形象>\`（子目录名即形象名，可放多套）
-- 状态文件（192×208 透明背景 GIF）：`idle` / `waving` / `jumping` / `failed` / `waiting` / `running-left` / `running-right`，可选 `running` / `review`
+- 状态文件（源码加载）：`idle` / `waving` / `jumping` / `failed` / `waiting` / `running-left` / `running-right`（`.gif`）
 - 目录为空或素材缺失时，设置中的桌宠选项会提示不可用，应用回退悬浮窗
 
 桌宠交互：单击打开功能面板（与悬浮窗一致），拖动移动（面板跟随），右键菜单 = 设置 / 退出；截图与录制期间自动离场避镜。
@@ -90,7 +90,7 @@ powershell.exe -NoProfile -ExecutionPolicy Bypass -File .\package-release.ps1
 
 ```powershell
 .\sign.ps1 -SelfTest                                    # 用一次性自签证书验证签名链路，自动清理
-.\sign.ps1 -PfxPath C:\certs\codesign.pfx -PfxPassword ***
+.\sign.ps1 -PfxPath C:\certs\codesign.pfx -PfxPassword YOUR_PFX_PASSWORD
 .\sign.ps1 -Thumbprint <证书指纹>
 ```
 
@@ -102,18 +102,4 @@ powershell.exe -NoProfile -ExecutionPolicy Bypass -File .\package-release.ps1
 - 微软文档要求证书由 **Microsoft Trusted Root Program 内的 CA** 签发，自签名不在其列
 - 建议始终启用 RFC 3161 时间戳（默认 `http://timestamp.digicert.com`），证书过期后签名依然有效
 
-### 实测记录（Windows 11 专业版 25H2，Build 26200，SAC 强制模式）
-
-| 日期 | 对象 | 结果 |
-|---|---|---|
-| 2026-09-14 | 未签名 `AppSnapshot.exe` | 被拒绝，事件 ID 3077 / 3118，策略 ID `{0283ac0f-fff1-49ae-ada1-8a933130cad6}` |
-| 2026-09-14 | 用自签证书签名后的同一文件 | **正常启动并常驻运行**，无拦截事件 |
-| 2026-09-15 22:40 | 新构建 + 同一证书签名 | 正常启动 |
-| 2026-09-15 23:21 | 再构建 + 同一证书签名 | **被拦截**（3077 / 3033「未达到 Enterprise signing level」）；同日第三方未签名桌面宠应用的卸载程序同样被拦 |
-
-结论修订：**「自签即可通过 SAC」在本机已不再成立**——同一证书签名的不同文件，前后十几分钟一次放行一次拦截，说明该绕过依赖云端/策略判定，随时会收紧，不能作为长期方案。当前本机测试需要关闭 SAC（见上），对外分发必须使用受信任 CA 签发的代码签名证书。自签证书 `CN=AppSnapshot Self-Signed Publisher` 仅存在于本机当前用户证书存储。
-
-两点提醒：
-
-- SAC 的判定随云端信誉与策略动态变化，今天的实测不代表明天——真出问题时先看事件日志 `Microsoft-Windows-CodeIntegrity/Operational`
-- 自签证书只在签名它的那台机器上有效；**要分发给他人的产物，仍需向受信任 CA 申请代码签名证书**
+自签证书不能作为对外分发方案：SAC 是否放行会随云端信誉与策略变化，同一自签证书也可能前后结果不一致。本机调试可关 SAC 或只用 `-SelfTest` 验证签名链路；发给他人的 exe 需要 Trusted Root 内 CA 签发的 RSA 代码签名证书。出问题时看事件日志 `Microsoft-Windows-CodeIntegrity/Operational`。
