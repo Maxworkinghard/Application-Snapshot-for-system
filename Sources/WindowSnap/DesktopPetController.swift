@@ -1,6 +1,12 @@
 import AppKit
 
 final class DesktopPetController: NSObject {
+    /// 桌面呈现形式：悬浮球（默认）或桌宠，二者互斥，切换时重建控制器的窗体。
+    enum Presentation {
+        case ball
+        case pet(skin: String)
+    }
+
     var onCapture: (NSRunningApplication) -> Void = { _ in }
     var onRecord: (NSRunningApplication) -> Void = { _ in }
     var onStopRecording: () -> Void = {}
@@ -9,109 +15,138 @@ final class DesktopPetController: NSObject {
     var onPolishBusy: () -> Bool = { false }
     var onOpenScreenRecordingSettings: () -> Void = {}
     var onOpenSettings: () -> Void = {}
-    /// GIF 桌宠右键菜单的「退出应用快照」。
     var onQuit: () -> Void = {}
 
     private let applicationService: CapturableApplicationService
+    private let presentation: Presentation
     private var panel: NSPanel?
     private var petView: DesktopPetView?
-    private var gifPetView: DesktopPetGifView?
+    private var gifView: PetGifView?
     private var actionPanel: NSPanel?
     private var snapshotListController: ApplicationSnapshotViewController?
     private weak var recordButton: NSButton?
     private var target: NSRunningApplication?
+    private var hiddenTemporarily = false
+    private var hiddenForRecording = false
 
-    private let positionXKey = "pet.position.x"
-    private let positionYKey = "pet.position.y"
+    /// 桌宠与悬浮球尺寸不同，位置键必须分开：共用会把按另一种尺寸夹过的原点带过来。
+    private let positionXKey: String
+    private let positionYKey: String
+    /// GIF 原始 192x208，等比缩到 155x168 展示；单位是点，Retina 由 AppKit 背景层处理，没有 DPI 倍率。
+    private let panelSize: NSSize
 
     /// 一级菜单宽度固定，高度随按钮内容自然撑开。
     private static let menuPageWidth: CGFloat = 248
     /// 二级应用列表页固定尺寸，列表过长时内部滚动。
     private static let applicationsPageSize = NSSize(width: 304, height: 400)
 
-    init(applicationService: CapturableApplicationService) {
+    init(applicationService: CapturableApplicationService, presentation: Presentation) {
         self.applicationService = applicationService
+        self.presentation = presentation
+        switch presentation {
+        case .ball:
+            positionXKey = "pet.position.x"
+            positionYKey = "pet.position.y"
+            panelSize = NSSize(width: 56, height: 56)
+        case .pet:
+            positionXKey = "desktoppet.x"
+            positionYKey = "desktoppet.y"
+            panelSize = NSSize(width: 155, height: 168)
+        }
+    }
+
+    var currentBounds: NSRect? { panel?.frame }
+    var isPetMode: Bool { isPetPresentation }
+
+    private var isPetPresentation: Bool {
+        if case .pet = presentation { return true }
+        return false
     }
 
     func show() {
         if panel == nil {
+            let contentView: NSView
+            switch presentation {
+            case .ball:
+                let petView = DesktopPetView(frame: NSRect(origin: .zero, size: panelSize))
+                petView.onClick = { [weak self] in self?.toggleActionPanel() }
+                petView.onDragged = { [weak self] origin in self?.savePosition(origin) }
+                petView.onRightClick = { [weak self] event in self?.showContextMenu(event) }
+                self.petView = petView
+                contentView = petView
+            case .pet(let skin):
+                let gifView = PetGifView(frame: NSRect(origin: .zero, size: panelSize), skin: skin)
+                gifView.toolTip = "点击打开功能菜单，拖动移动"
+                gifView.onClick = { [weak self] in self?.toggleActionPanel() }
+                gifView.onDragged = { [weak self] origin in self?.savePosition(origin) }
+                gifView.onDragMoved = { [weak self] in self?.positionActionPanel() }
+                gifView.onRightClick = { [weak self] event in self?.showContextMenu(event) }
+                self.gifView = gifView
+                contentView = gifView
+            }
+
             let panel = NSPanel(
-                contentRect: NSRect(x: 0, y: 0, width: 56, height: 56),
+                contentRect: contentView.bounds,
                 styleMask: [.borderless, .nonactivatingPanel],
                 backing: .buffered,
                 defer: false
             )
             panel.isOpaque = false
             panel.backgroundColor = .clear
-            panel.hasShadow = true
+            // 桌宠逐帧换图，带阴影会每帧重算 alpha 轮廓，Windows 分层窗也没有阴影。
+            panel.hasShadow = !isPetPresentation
             panel.level = .floating
             panel.collectionBehavior = [.canJoinAllSpaces, .stationary]
             panel.ignoresMouseEvents = false
             panel.hidesOnDeactivate = false
+            panel.contentView = contentView
+            if isPetPresentation {
+                // 截图/录制走单窗口合成拍不到桌宠；这里只是防住日后可能出现的整屏路径。
+                panel.sharingType = .none
+            }
             self.panel = panel
         }
 
-        let wantPet = UserDefaults.standard.string(forKey: "ui.mode") == "pet"
-        if !applyDesktopForm(petMode: wantPet, skin: nil), wantPet {
-            // 素材缺失或无法加载时回退悬浮球，与 Windows Program.cs 一致
-            _ = applyDesktopForm(petMode: false, skin: nil)
-        }
-        panel?.orderFrontRegardless()
-    }
-
-    /// 桌面形式切换（悬浮球 / GIF 桌宠，设置页保存时与启动时调用）。
-    /// 桌宠素材缺失时返回 false，调用方负责提示与不落盘。
-    @discardableResult
-    func applyDesktopForm(petMode: Bool, skin: String?) -> Bool {
-        if petMode {
-            let skinName = skin ?? PetAssets.resolveSkin()
-            if gifPetView == nil || gifPetView?.skin != skinName {
-                gifPetView = skinName.flatMap { DesktopPetGifView(skin: $0) }
-            }
-            guard let gifPetView else { return false }
-            gifPetView.onClick = { [weak self] in self?.toggleActionPanel() }
-            gifPetView.onDragged = { [weak self] origin in self?.saveDesktopPetPosition(origin) }
-            gifPetView.onRightClick = { [weak self] event in self?.showPetContextMenu(event) }
-            panel?.hasShadow = false
-            panel?.contentView = gifPetView
-            panel?.setContentSize(DesktopPetGifView.petSize)
-            restoreDesktopPetPosition()
-            gifPetView.startAnimating()
-            return true
-        }
-
-        gifPetView?.stopAnimating()
-        gifPetView = nil
-        let view = petView ?? makeBubbleView()
-        petView = view
-        view.applyIcon(for: target)
-        panel?.hasShadow = true
-        panel?.contentView = view
-        panel?.setContentSize(view.bounds.size)
         panel?.setFrameOrigin(savedOrDefaulPosition())
-        return true
+        panel?.orderFrontRegardless()
+        gifView?.playPose(.idle)
     }
 
-    /// Toast 事件 → 桌宠姿势（与 Windows 端 PetController.OnToastNotified 一致：
-    /// 成功起跳、错误趴下、其余待机）。
-    func reactToToast(symbolName: String) {
-        guard let gifPetView else { return }
-        switch symbolName {
-        case "checkmark":
-            gifPetView.setPose(.jumping)
-        case "exclamationmark.triangle":
-            gifPetView.setPose(.failed)
-        default:
-            gifPetView.setPose(.waiting)
+    /// 切换桌面形式时拆掉当前呈现；截图/追踪机制不受影响。
+    func hide() {
+        closeActionPanel()
+        gifView?.stopAnimating()
+        panel?.orderOut(nil)
+        panel = nil
+        petView = nil
+        gifView = nil
+    }
+
+    func setPose(_ pose: PetPose) {
+        gifView?.setPose(pose)
+    }
+
+    /// 截图流程期间短暂离场（只有 screencapture 选窗这条路径会拍到它）。
+    func setHiddenTemporarily(_ hidden: Bool) {
+        hiddenTemporarily = hidden
+        applyHiddenState()
+    }
+
+    /// macOS 录制走 SCContentFilter 单窗口合成，拍不到桌宠，此开关仅为三端行为对齐而保留，未接入。
+    func setHiddenForRecording(_ hidden: Bool) {
+        hiddenForRecording = hidden
+        applyHiddenState()
+    }
+
+    /// 两个隐藏标志各自独立：任一为真就离场，都清空后才回来。
+    private func applyHiddenState() {
+        guard let panel else { return }
+        if hiddenTemporarily || hiddenForRecording {
+            closeActionPanel()
+            panel.orderOut(nil)
+        } else {
+            panel.orderFrontRegardless()
         }
-    }
-
-    private func makeBubbleView() -> DesktopPetView {
-        let petView = DesktopPetView(frame: NSRect(x: 0, y: 0, width: 56, height: 56))
-        petView.onClick = { [weak self] in self?.toggleActionPanel() }
-        petView.onDragged = { [weak self] origin in self?.savePosition(origin) }
-        petView.onRightClick = { [weak self] event in self?.showContextMenu(event) }
-        return petView
     }
 
     func updateTarget(_ application: NSRunningApplication?) {
@@ -126,9 +161,10 @@ final class DesktopPetController: NSObject {
         }
     }
 
-    /// 右键悬浮窗：弹出「设置…」菜单（统一设置：快捷键 + 润色服务）。
+    /// 右键悬浮窗：弹出「设置…」菜单（统一设置：快捷键 + 润色服务）；
+    /// 桌宠没有菜单栏入口可依靠，再追加一条退出。
     private func showContextMenu(_ event: NSEvent) {
-        guard let petView else { return }
+        guard let view = panel?.contentView else { return }
         let menu = NSMenu()
         let item = NSMenuItem(
             title: "设置…",
@@ -137,7 +173,17 @@ final class DesktopPetController: NSObject {
         )
         item.target = self
         menu.addItem(item)
-        NSMenu.popUpContextMenu(menu, with: event, for: petView)
+        if isPetPresentation {
+            menu.addItem(.separator())
+            let quitItem = NSMenuItem(
+                title: "退出应用快照",
+                action: #selector(quitFromMenu),
+                keyEquivalent: ""
+            )
+            quitItem.target = self
+            menu.addItem(quitItem)
+        }
+        NSMenu.popUpContextMenu(menu, with: event, for: view)
     }
 
     @objc private func openSettingsFromMenu() {
@@ -145,30 +191,7 @@ final class DesktopPetController: NSObject {
         onOpenSettings()
     }
 
-    /// 右键 GIF 桌宠：设置 / 退出（与 Windows 端桌宠右键菜单一致）。
-    private func showPetContextMenu(_ event: NSEvent) {
-        guard let contentView = panel?.contentView else { return }
-        let menu = NSMenu()
-        let settingsItem = NSMenuItem(
-            title: "设置…",
-            action: #selector(openSettingsFromMenu),
-            keyEquivalent: ""
-        )
-        settingsItem.target = self
-        menu.addItem(settingsItem)
-        let quitItem = NSMenuItem(
-            title: "退出应用快照",
-            action: #selector(quitFromMenu),
-            keyEquivalent: "q"
-        )
-        quitItem.keyEquivalentModifierMask = []
-        quitItem.target = self
-        menu.addItem(quitItem)
-        NSMenu.popUpContextMenu(menu, with: event, for: contentView)
-    }
-
     @objc private func quitFromMenu() {
-        closeActionPanel()
         onQuit()
     }
 
@@ -428,7 +451,7 @@ final class DesktopPetController: NSObject {
                 y: CGFloat(defaults.double(forKey: positionYKey))
             )
             if isPointOnScreen(point) {
-                return clampToVisibleArea(point, size: NSSize(width: 56, height: 56))
+                return clampToVisibleArea(point, size: panelSize)
             }
         }
         return defaultPosition()
@@ -439,9 +462,8 @@ final class DesktopPetController: NSObject {
             return NSPoint(x: 100, y: 100)
         }
         let frame = screen.visibleFrame
-        let size: CGFloat = 56
         return NSPoint(
-            x: frame.maxX - size - 16,
+            x: frame.maxX - panelSize.width - 16,
             y: frame.minY + 16
         )
     }
@@ -457,43 +479,12 @@ final class DesktopPetController: NSObject {
         defaults.set(Double(origin.x), forKey: positionXKey)
         defaults.set(Double(origin.y), forKey: positionYKey)
     }
-
-    // ---------- GIF 桌宠位置持久化（键名与 Windows 端一致，坐标系为本机屏幕坐标） ----------
-
-    private func restoreDesktopPetPosition() {
-        let defaults = UserDefaults.standard
-        let size = DesktopPetGifView.petSize
-        if defaults.object(forKey: "desktoppet.x") != nil,
-           defaults.object(forKey: "desktoppet.y") != nil {
-            let point = NSPoint(
-                x: CGFloat(defaults.double(forKey: "desktoppet.x")),
-                y: CGFloat(defaults.double(forKey: "desktoppet.y"))
-            )
-            if isPointOnScreen(point) {
-                panel?.setFrameOrigin(clampToVisibleArea(point, size: size))
-                return
-            }
-        }
-        guard let screen = NSScreen.main ?? NSScreen.screens.first else { return }
-        let frame = screen.visibleFrame
-        panel?.setFrameOrigin(NSPoint(
-            x: frame.maxX - size.width - 16,
-            y: frame.minY + 16
-        ))
-    }
-
-    private func saveDesktopPetPosition(_ origin: NSPoint) {
-        let defaults = UserDefaults.standard
-        defaults.set(Double(origin.x), forKey: "desktoppet.x")
-        defaults.set(Double(origin.y), forKey: "desktoppet.y")
-    }
 }
 
 /// 把悬浮窗原点夹回「锚点所在屏幕」的可见区域（Dock、菜单栏之外）。
 /// 历史位置可能停在屏幕边缘外或 Dock 后面（isPointOnScreen 有 ±200 容差），
 /// 恢复与拖拽时都做约束，避免悬浮窗从视野里消失。
-/// 悬浮球与 GIF 桌宠共用（DesktopPetGifView 的拖动也走这里）。
-func clampToVisibleArea(_ origin: NSPoint, size: NSSize, around anchor: NSPoint? = nil) -> NSPoint {
+private func clampToVisibleArea(_ origin: NSPoint, size: NSSize, around anchor: NSPoint? = nil) -> NSPoint {
     let reference = anchor ?? origin
     let screen = NSScreen.screens.first { $0.frame.contains(reference) } ?? NSScreen.main
     guard let visible = screen?.visibleFrame else { return origin }
@@ -578,6 +569,206 @@ private final class DesktopPetView: NSView {
     override func mouseUp(with event: NSEvent) {
         if didDrag, let window = self.window {
             onDragged(window.frame.origin)
+        } else {
+            onClick()
+        }
+    }
+
+    override func rightMouseDown(with event: NSEvent) {
+        onRightClick(event)
+    }
+}
+
+/// GIF 桌宠视图：逐帧按 GIF 自带延迟推进，透明背景直接落在无背景色的面板上。
+/// 单次动画（起跳/失败/等待）播完回 idle，循环动画（idle/跑动）持续循环。
+private final class PetGifView: NSView {
+    var onClick: () -> Void = {}
+    var onDragged: (NSPoint) -> Void = { _ in }
+    var onDragMoved: () -> Void = {}
+    var onRightClick: (NSEvent) -> Void = { _ in }
+
+    private var clips: [PetClip?]
+    private var currentPose: PetPose = .idle
+    private var frameIndex = 0
+    private var frameTimer: Timer?
+    private var pressCursor: NSPoint = .zero
+    private var pressOrigin: NSPoint = .zero
+    private var dragging = false
+    private let dragThreshold: CGFloat = 4
+    private var alphaMask: [UInt8]?
+    private var alphaMaskKey: (pose: Int, frame: Int)?
+
+    init(frame: NSRect, skin: String) {
+        clips = PetPose.allCases.map {
+            PetClip.load(url: PetAssets.posePath(skin: skin, pose: $0), loops: $0.loops)
+        }
+        super.init(frame: frame)
+        wantsLayer = true
+        // idle 缺失（素材不完整）时退化到任意可用的动画，避免空窗口
+        if clips[PetPose.idle.rawValue] == nil {
+            clips[PetPose.idle.rawValue] = clips.compactMap { $0 }.first
+        }
+    }
+
+    @available(*, unavailable)
+    required init?(coder: NSCoder) {
+        fatalError("init(coder:) has not been implemented")
+    }
+
+    override func draw(_ dirtyRect: NSRect) {
+        guard let clip = clips[currentPose.rawValue],
+              frameIndex < clip.frames.count,
+              let context = NSGraphicsContext.current?.cgContext else {
+            return
+        }
+        context.interpolationQuality = .high
+        context.draw(clip.frames[frameIndex], in: bounds)
+    }
+
+    /// 切换动画。循环态重复调用不重置帧（拖动中持续跑动）；一次性动画重播。
+    func setPose(_ pose: PetPose) {
+        guard Thread.isMainThread else {
+            DispatchQueue.main.async { [weak self] in self?.setPose(pose) }
+            return
+        }
+        guard let clip = clips[pose.rawValue] else { return }
+        if currentPose == pose && clip.loops { return }
+        playPose(pose)
+    }
+
+    func playPose(_ pose: PetPose) {
+        guard let clip = clips[pose.rawValue] else { return }
+        currentPose = pose
+        frameIndex = 0
+        needsDisplay = true
+        scheduleNextFrame(after: clip.delays[0])
+    }
+
+    private func advanceFrame() {
+        guard let clip = clips[currentPose.rawValue] else { return }
+        frameIndex += 1
+        if frameIndex >= clip.frames.count {
+            if clip.loops {
+                frameIndex = 0
+            } else {
+                // 单次动画播完回待机
+                playPose(.idle)
+                return
+            }
+        }
+        needsDisplay = true
+        scheduleNextFrame(after: clip.delays[frameIndex])
+    }
+
+    /// 每帧按当前帧自己的延迟重新排一次，不用固定帧率。
+    /// 挂 .common 模式，否则拖动/菜单跟踪期间动画会停住。
+    private func scheduleNextFrame(after milliseconds: Int) {
+        frameTimer?.invalidate()
+        let timer = Timer(timeInterval: Double(milliseconds) / 1000, repeats: false) { [weak self] _ in
+            self?.advanceFrame()
+        }
+        RunLoop.main.add(timer, forMode: .common)
+        frameTimer = timer
+    }
+
+    /// 拆掉桌宠时停表，否则已离屏的视图会继续按帧醒来。
+    func stopAnimating() {
+        frameTimer?.invalidate()
+        frameTimer = nil
+    }
+
+    override func acceptsFirstMouse(for event: NSEvent?) -> Bool {
+        true
+    }
+
+    /// 透明像素把点击让给下面的窗口，与 Windows UpdateLayeredWindow / Linux ShapeInput 对齐。
+    override func hitTest(_ point: NSPoint) -> NSView? {
+        isOpaque(at: point) ? self : nil
+    }
+
+    private func isOpaque(at point: NSPoint) -> Bool {
+        guard bounds.contains(point),
+              let clip = clips[currentPose.rawValue],
+              frameIndex < clip.frames.count else {
+            return false
+        }
+        let image = clip.frames[frameIndex]
+        refreshAlphaMask(image: image)
+        guard let mask = alphaMask else { return true }
+        let width = image.width
+        let height = image.height
+        guard width > 0, height > 0 else { return false }
+        let x = min(max(Int((point.x / bounds.width) * CGFloat(width)), 0), width - 1)
+        let y = min(max(Int(((bounds.height - point.y) / bounds.height) * CGFloat(height)), 0), height - 1)
+        return mask[y * width + x] >= 128
+    }
+
+    private func refreshAlphaMask(image: CGImage) {
+        if alphaMaskKey?.pose == currentPose.rawValue, alphaMaskKey?.frame == frameIndex {
+            return
+        }
+        let width = image.width
+        let height = image.height
+        var pixels = [UInt8](repeating: 0, count: width * height * 4)
+        let drawn = pixels.withUnsafeMutableBytes { raw -> Bool in
+            guard let ctx = CGContext(
+                data: raw.baseAddress,
+                width: width,
+                height: height,
+                bitsPerComponent: 8,
+                bytesPerRow: width * 4,
+                space: CGColorSpaceCreateDeviceRGB(),
+                bitmapInfo: CGImageAlphaInfo.premultipliedLast.rawValue
+            ) else {
+                return false
+            }
+            ctx.translateBy(x: 0, y: CGFloat(height))
+            ctx.scaleBy(x: 1, y: -1)
+            ctx.draw(image, in: CGRect(x: 0, y: 0, width: width, height: height))
+            return true
+        }
+        guard drawn else {
+            alphaMask = nil
+            alphaMaskKey = (currentPose.rawValue, frameIndex)
+            return
+        }
+        var mask = [UInt8](repeating: 0, count: width * height)
+        for index in 0..<(width * height) {
+            mask[index] = pixels[index * 4 + 3]
+        }
+        alphaMask = mask
+        alphaMaskKey = (currentPose.rawValue, frameIndex)
+    }
+
+    override func mouseDown(with event: NSEvent) {
+        pressCursor = NSEvent.mouseLocation
+        pressOrigin = window?.frame.origin ?? .zero
+        dragging = false
+    }
+
+    override func mouseDragged(with event: NSEvent) {
+        guard let window = self.window else { return }
+        let current = NSEvent.mouseLocation
+        let deltaX = current.x - pressCursor.x
+        let deltaY = current.y - pressCursor.y
+        if abs(deltaX) >= dragThreshold || abs(deltaY) >= dragThreshold {
+            dragging = true
+        }
+        guard dragging else { return }
+
+        // 按「相对按下点的位移」移动，不是把窗口居中到光标——桌宠比悬浮球大得多，居中会瞬移
+        let newOrigin = NSPoint(x: pressOrigin.x + deltaX, y: pressOrigin.y + deltaY)
+        window.setFrameOrigin(clampToVisibleArea(newOrigin, size: window.frame.size, around: current))
+        // 朝向按累计位移的符号定，不看瞬时方向
+        setPose(deltaX >= 0 ? .runningRight : .runningLeft)
+        onDragMoved()
+    }
+
+    override func mouseUp(with event: NSEvent) {
+        if dragging, let window = self.window {
+            dragging = false
+            onDragged(window.frame.origin)
+            setPose(.idle)
         } else {
             onClick()
         }

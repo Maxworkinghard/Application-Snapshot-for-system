@@ -2,8 +2,10 @@
 //! 显示「上一个前台应用」的图标（_NET_WM_ICON），点击弹出功能菜单，
 //! 可拖动、位置持久化并钳制在屏幕内。对应 macOS 端的 DesktopPetController。
 
+use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::mpsc::Sender;
 use std::sync::{Arc, Mutex};
+use std::time::Duration;
 
 use x11rb::connection::{Connection, RequestConnection};
 use x11rb::protocol::shape;
@@ -37,15 +39,39 @@ impl PetAtoms {
     }
 }
 
+static PET_QUIT: AtomicBool = AtomicBool::new(false);
+
 /// 启动桌面宠物线程；任何失败只打印日志，不影响主功能。
-/// `initially_visible` 为假时窗口不显示（GIF 桌宠模式下悬浮球离场），
-/// 但事件循环照常运行——「截取上一个应用」依赖这里的窗口跟踪。
-pub fn spawn(tx: Sender<Msg>, initially_visible: bool) {
+pub fn spawn(tx: Sender<Msg>) {
     std::thread::spawn(move || {
-        if let Err(e) = run(tx, initially_visible) {
+        let result = run(tx);
+        *PET_CONTROL.lock().unwrap() = None;
+        if let Err(e) = result {
             eprintln!("windowsnap: 桌面宠物不可用（{e}），不影响截图与其他功能");
         }
     });
+}
+
+pub fn is_running() -> bool {
+    PET_CONTROL.lock().map(|guard| guard.is_some()).unwrap_or(false)
+}
+
+/// 拆掉悬浮球窗口并等到线程退出；未在跑则立即返回。
+pub fn shutdown() {
+    PET_QUIT.store(true, Ordering::SeqCst);
+    if let Ok(guard) = PET_CONTROL.lock() {
+        if let Some(control) = guard.as_ref() {
+            let _ = control.conn.destroy_window(control.window);
+            let _ = control.conn.flush();
+        }
+    }
+    let start = std::time::Instant::now();
+    while start.elapsed() < Duration::from_secs(2) {
+        if !is_running() {
+            return;
+        }
+        std::thread::sleep(Duration::from_millis(10));
+    }
 }
 
 /// 录制期间隐藏宠物（x11grab 抓屏幕区域，宠物入镜会录进去）。
@@ -56,13 +82,6 @@ struct PetControl {
 
 static PET_CONTROL: Mutex<Option<PetControl>> = Mutex::new(None);
 
-/// 「上一个前台应用」窗口 ID（悬浮球当前显示图标的目标），供「截取上一个应用」快捷键使用。
-static PREVIOUS_WINDOW: std::sync::atomic::AtomicU32 = std::sync::atomic::AtomicU32::new(0);
-
-pub fn previous_window() -> u32 {
-    PREVIOUS_WINDOW.load(std::sync::atomic::Ordering::SeqCst)
-}
-
 pub fn set_pet_visible(visible: bool) {
     if let Ok(guard) = PET_CONTROL.lock() {
         if let Some(control) = guard.as_ref() {
@@ -72,6 +91,7 @@ pub fn set_pet_visible(visible: bool) {
                 control.conn.unmap_window(control.window)
             };
             let _ = control.conn.flush();
+            if let Ok(cookie) = control.conn.get_input_focus() { let _ = cookie.reply(); }
         }
     }
 }
@@ -94,7 +114,8 @@ struct Pet {
     dragging: bool,
 }
 
-fn run(tx: Sender<Msg>, visible: bool) -> Result<()> {
+fn run(tx: Sender<Msg>) -> Result<()> {
+    PET_QUIT.store(false, Ordering::SeqCst);
     let (raw_conn, screen_num) = x11rb::connect(None)?;
     let conn: Arc<RustConnection> = Arc::new(raw_conn);
     let atoms = PetAtoms::intern(&conn)?;
@@ -120,7 +141,8 @@ fn run(tx: Sender<Msg>, visible: bool) -> Result<()> {
                 EventMask::EXPOSURE
                     | EventMask::BUTTON_PRESS
                     | EventMask::BUTTON_RELEASE
-                    | EventMask::BUTTON_MOTION,
+                    | EventMask::BUTTON_MOTION
+                    | EventMask::STRUCTURE_NOTIFY,
             )
             .override_redirect(1),
     )?
@@ -170,9 +192,7 @@ fn run(tx: Sender<Msg>, visible: bool) -> Result<()> {
 
     pet.track_active_window();
     pet.paint_fallback();
-    if visible {
-        conn.map_window(window)?;
-    }
+    if crate::desktop::visible() { conn.map_window(window)?; }
     conn.flush()?;
 
     *PET_CONTROL.lock().unwrap() = Some(PetControl {
@@ -241,57 +261,66 @@ fn apply_circle_shape(conn: &Arc<RustConnection>, window: Window, root: Window) 
 impl Pet {
     fn event_loop(&mut self, tx: Sender<Msg>) -> Result<()> {
         loop {
-            match self.conn.wait_for_event()? {
-                Event::PropertyNotify(event) => {
-                    if event.window == self.root && event.atom == self.atoms.net_active_window {
-                        self.track_active_window();
-                    }
-                }
-                Event::Expose(_) => {
-                    self.copy_pixmap();
-                }
-                Event::ButtonPress(event) if event.detail == 3 => {
-                    // 右键：打开统一设置（快捷键绑定 + 润色服务）
-                    let _ = tx.send(Msg::OpenSettings);
-                }
-                Event::ButtonPress(event) if event.detail == 1 => {
-                    // X 在按钮按下时自动独占指针，松开前事件都发给我们
-                    let geometry = self.conn.get_geometry(self.window)?.reply()?;
-                    self.press_origin = (geometry.x as i32, geometry.y as i32);
-                    self.pressed = Some((event.root_x, event.root_y));
-                    self.dragging = false;
-                }
-                Event::MotionNotify(event) => {
-                    if let Some((press_x, press_y)) = self.pressed {
-                        if (event.root_x as i32 - press_x as i32).abs() > DRAG_THRESHOLD
-                            || (event.root_y as i32 - press_y as i32).abs() > DRAG_THRESHOLD
-                        {
-                            self.dragging = true;
-                        }
-                        if self.dragging {
-                            let x = self.press_origin.0 + event.root_x as i32 - press_x as i32;
-                            let y = self.press_origin.1 + event.root_y as i32 - press_y as i32;
-                            let (screen_w, screen_h) = self.screen_size();
-                            let (x, y) = clamp_position(x, y, screen_w, screen_h);
-                            let _ = self
-                                .conn
-                                .configure_window(self.window, &ConfigureWindowAux::new().x(x).y(y))?;
-                            let _ = self.conn.flush();
-                        }
-                    }
-                }
-                Event::ButtonRelease(event) if event.detail == 1 => {
-                    self.pressed = None;
-                    if self.dragging {
-                        self.dragging = false;
-                        let geometry = self.conn.get_geometry(self.window)?.reply()?;
-                        save_pet_position(geometry.x as i32, geometry.y as i32);
-                    } else {
-                        let _ = tx.send(Msg::TogglePanel);
-                    }
-                }
-                _ => {}
+            if PET_QUIT.load(Ordering::SeqCst) {
+                let _ = self.conn.destroy_window(self.window);
+                let _ = self.conn.flush();
+                return Ok(());
             }
+            while let Some(event) = self.conn.poll_for_event()? {
+                match event {
+                    Event::PropertyNotify(event) => {
+                        if event.window == self.root && event.atom == self.atoms.net_active_window {
+                            self.track_active_window();
+                        }
+                    }
+                    Event::Expose(_) => {
+                        self.copy_pixmap();
+                    }
+                    Event::ButtonPress(event) if event.detail == 3 => {
+                        // 右键：打开统一设置（快捷键绑定 + 润色服务）
+                        let _ = tx.send(Msg::OpenSettings);
+                    }
+                    Event::ButtonPress(event) if event.detail == 1 => {
+                        // X 在按钮按下时自动独占指针，松开前事件都发给我们
+                        let geometry = self.conn.get_geometry(self.window)?.reply()?;
+                        self.press_origin = (geometry.x as i32, geometry.y as i32);
+                        self.pressed = Some((event.root_x, event.root_y));
+                        self.dragging = false;
+                    }
+                    Event::MotionNotify(event) => {
+                        if let Some((press_x, press_y)) = self.pressed {
+                            if (event.root_x as i32 - press_x as i32).abs() > DRAG_THRESHOLD
+                                || (event.root_y as i32 - press_y as i32).abs() > DRAG_THRESHOLD
+                            {
+                                self.dragging = true;
+                            }
+                            if self.dragging {
+                                let x = self.press_origin.0 + event.root_x as i32 - press_x as i32;
+                                let y = self.press_origin.1 + event.root_y as i32 - press_y as i32;
+                                let (screen_w, screen_h) = self.screen_size();
+                                let (x, y) = clamp_position(x, y, screen_w, screen_h);
+                                let _ = self
+                                    .conn
+                                    .configure_window(self.window, &ConfigureWindowAux::new().x(x).y(y))?;
+                                let _ = self.conn.flush();
+                            }
+                        }
+                    }
+                    Event::ButtonRelease(event) if event.detail == 1 => {
+                        self.pressed = None;
+                        if self.dragging {
+                            self.dragging = false;
+                            let geometry = self.conn.get_geometry(self.window)?.reply()?;
+                            save_pet_position(geometry.x as i32, geometry.y as i32);
+                        } else {
+                            let _ = tx.send(Msg::TogglePanel);
+                        }
+                    }
+                    Event::DestroyNotify(event) if event.window == self.window => return Ok(()),
+                    _ => {}
+                }
+            }
+            std::thread::sleep(Duration::from_millis(16));
         }
     }
 
@@ -312,7 +341,6 @@ impl Pet {
         if active != self.current {
             self.previous = self.current;
             self.current = active;
-            PREVIOUS_WINDOW.store(self.previous, std::sync::atomic::Ordering::SeqCst);
             if self.previous != x11rb::NONE {
                 match self.window_icon(self.previous) {
                     Some((width, height, pixels)) => self.paint_icon(width, height, &pixels),
@@ -525,8 +553,7 @@ impl Pet {
     }
 
     fn copy_pixmap(&self) {
-        let size = PET_SIZE as i16;
-        let _ = self.conn.copy_area(self.pixmap, self.window, self.gc, 0, 0, size, size, 0, 0);
+        let _ = self.conn.copy_area(self.pixmap, self.window, self.gc, 0, 0, 0, 0, PET_SIZE, PET_SIZE);
         let _ = self.conn.flush();
     }
 }

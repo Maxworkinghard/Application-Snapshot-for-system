@@ -1,15 +1,21 @@
 import AppKit
 
+enum ToastKind {
+    case success
+    case warning
+    case error
+}
+
 final class ToastController {
+    /// 每次弹出 Toast 时触发；桌宠据此做成功/失败/警告反应动画。
+    var onNotify: ((ToastKind) -> Void)?
+    var anchorBounds: (() -> NSRect?)?
+
     private var panel: NSPanel?
     private var closeWorkItem: DispatchWorkItem?
 
-    /// 每次弹出 Toast 时回调（symbolName）；AppDelegate 借此驱动 GIF 桌宠的
-    /// 反应动画，对应 Windows 端 ToastController.Notified 事件。
-    var onToast: ((String) -> Void)?
-
-    func show(message: String, symbolName: String) {
-        onToast?(symbolName)
+    func show(message: String, symbolName: String, kind: ToastKind) {
+        onNotify?(kind)
         closeWorkItem?.cancel()
         panel?.close()
 
@@ -61,11 +67,12 @@ final class ToastController {
         panel.collectionBehavior = [.canJoinAllSpaces, .transient, .ignoresCycle]
         panel.ignoresMouseEvents = true
 
-        let screen = NSScreen.main ?? NSScreen.screens.first
+        let anchor = anchorBounds?().map { NSPoint(x: $0.midX, y: $0.midY) } ?? NSEvent.mouseLocation
+        let screen = NSScreen.screens.first { $0.frame.contains(anchor) } ?? NSScreen.main ?? NSScreen.screens.first
         if let visibleFrame = screen?.visibleFrame {
             panel.setFrameOrigin(NSPoint(
                 x: visibleFrame.maxX - panel.frame.width - 16,
-                y: visibleFrame.maxY - panel.frame.height - 16
+                y: visibleFrame.minY + 12
             ))
         }
 

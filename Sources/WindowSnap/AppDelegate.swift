@@ -15,6 +15,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     private let shortcutStore = ShortcutStore()
     private let saveDirectoryStore = SaveDirectoryStore()
     private let capturableApplicationService = CapturableApplicationService()
+    private let desktopModeStore = DesktopModeStore()
     /// 润色调用「润色设置…」中配置的真实模型；未配置完整时直接报错引导配置，不再回退本地模板。
     private let polishConfigurationStore = PolishBackendConfigurationStore()
     private lazy var promptPolishingService: PromptPolishingService = RemotePromptPolishingService(
@@ -54,6 +55,18 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         shortcutSet = shortcutStore.configuration
         configureStatusItem()
         configureDesktopPet()
+        // 所有成败结果都汇入 Toast，这里一处订阅即可覆盖截图/录制/润色
+        toastController.anchorBounds = { [weak self] in self?.petController?.currentBounds }
+        toastController.onNotify = { [weak self] kind in
+            switch kind {
+            case .success:
+                self?.petController?.setPose(.jumping)
+            case .error:
+                self?.petController?.setPose(.failed)
+            case .warning:
+                self?.petController?.setPose(.waiting)
+            }
+        }
 
         if let capture = shortcutSet.capture {
             if !registerCaptureShortcut(capture) {
@@ -61,21 +74,21 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
                 shortcutStore.save(shortcutSet)
 
                 if !registerCaptureShortcut(shortcutSet.capture!) {
-                    toastController.show(message: "快捷键注册失败，请从菜单栏截取", symbolName: "exclamationmark.triangle")
+                    toastController.show(message: "快捷键注册失败，请从菜单栏截取", symbolName: "exclamationmark.triangle", kind: .error)
                 } else {
-                    toastController.show(message: "原快捷键被占用，已恢复默认快捷键", symbolName: "exclamationmark.triangle")
+                    toastController.show(message: "原快捷键被占用，已恢复默认快捷键", symbolName: "exclamationmark.triangle", kind: .error)
                 }
             }
         }
 
         if let record = shortcutSet.record, !registerRecordShortcut(record) {
-            toastController.show(message: "录制快捷键 \(record.displayString) 被占用", symbolName: "exclamationmark.triangle")
+            toastController.show(message: "录制快捷键 \(record.displayString) 被占用", symbolName: "exclamationmark.triangle", kind: .error)
         }
         if let capturePrevious = shortcutSet.capturePrevious, !registerPreviousAppShortcut(capturePrevious) {
-            toastController.show(message: "截取上一个应用的快捷键被占用", symbolName: "exclamationmark.triangle")
+            toastController.show(message: "截取上一个应用的快捷键被占用", symbolName: "exclamationmark.triangle", kind: .error)
         }
         if let polish = shortcutSet.polish, !registerPolishShortcut(polish) {
-            toastController.show(message: "润色快捷键被占用", symbolName: "exclamationmark.triangle")
+            toastController.show(message: "润色快捷键被占用", symbolName: "exclamationmark.triangle", kind: .error)
         }
         updateMenuShortcuts()
     }
@@ -112,7 +125,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     /// 截取「上一个前台应用」窗口（悬浮球当前显示图标的目标应用）。
     @objc private func capturePreviousAppWindow() {
         guard let application = previousExternalApplication else {
-            toastController.show(message: "还没有上一个应用可截取", symbolName: "exclamationmark.triangle")
+            toastController.show(message: "还没有上一个应用可截取", symbolName: "exclamationmark.triangle", kind: .error)
             return
         }
         captureWindow(of: application)
@@ -132,12 +145,14 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
                 self.playShutterSound()
                 self.toastController.show(
                     message: "已复制 \(capturedWindow.applicationName) 窗口，60 秒后自动清空",
-                    symbolName: "checkmark"
+                    symbolName: "checkmark",
+                    kind: .success
                 )
             case .failure(let error):
                 self.toastController.show(
                     message: error.localizedDescription,
-                    symbolName: "exclamationmark.triangle"
+                    symbolName: "exclamationmark.triangle",
+                    kind: .error
                 )
             }
         }
@@ -157,7 +172,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     private func startRecording(of application: NSRunningApplication?) {
         guard recordingState == .idle else { return }
         guard let application else {
-            toastController.show(message: "没有找到可录制的应用", symbolName: "exclamationmark.triangle")
+            toastController.show(message: "没有找到可录制的应用", symbolName: "exclamationmark.triangle", kind: .error)
             return
         }
         recordingState = .starting
@@ -179,7 +194,8 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
                         self.recordingState = .idle
                         self.toastController.show(
                             message: error.localizedDescription,
-                            symbolName: "exclamationmark.triangle"
+                            symbolName: "exclamationmark.triangle",
+                            kind: .error
                         )
                     }
                 }
@@ -187,7 +203,8 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
                 self.recordingState = .idle
                 self.toastController.show(
                     message: error.localizedDescription,
-                    symbolName: "exclamationmark.triangle"
+                    symbolName: "exclamationmark.triangle",
+                    kind: .error
                 )
             }
         }
@@ -216,12 +233,14 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
             case .success(let recording):
                 self.toastController.show(
                     message: "已保存到 \(recording.url.lastPathComponent)",
-                    symbolName: "checkmark"
+                    symbolName: "checkmark",
+                    kind: .success
                 )
             case .failure(let error):
                 self.toastController.show(
                     message: error.localizedDescription,
-                    symbolName: "exclamationmark.triangle"
+                    symbolName: "exclamationmark.triangle",
+                    kind: .error
                 )
             }
         }
@@ -274,6 +293,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
                 guard let self else { return }
                 self.removeWindowSelectionMonitor()
                 self.windowPickerProcess = nil
+                self.petController?.setHiddenTemporarily(false)
 
                 guard !self.windowPickerWasCancelled,
                       process.terminationStatus == 0 else {
@@ -281,16 +301,19 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
                 }
 
                 self.playShutterSound()
-                self.toastController.show(message: "窗口已复制，可直接 ⌘V", symbolName: "checkmark")
+                self.toastController.show(message: "窗口已复制，可直接 ⌘V", symbolName: "checkmark", kind: .success)
             }
         }
 
         do {
+            // 选窗走系统 screencapture 拍屏幕，桌宠/悬浮球必须先离场
+            petController?.setHiddenTemporarily(true)
             try process.run()
         } catch {
             removeWindowSelectionMonitor()
             windowPickerProcess = nil
-            toastController.show(message: error.localizedDescription, symbolName: "exclamationmark.triangle")
+            petController?.setHiddenTemporarily(false)
+            toastController.show(message: error.localizedDescription, symbolName: "exclamationmark.triangle", kind: .error)
         }
     }
 
@@ -328,55 +351,29 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         guard panel.runModal() == .OK, let url = panel.url else { return }
         saveDirectoryStore.save(url)
         let display = (url.path as NSString).abbreviatingWithTildeInPath
-        toastController.show(message: "录制将保存到 \(display)", symbolName: "checkmark")
+        toastController.show(message: "录制将保存到 \(display)", symbolName: "checkmark", kind: .success)
     }
 
-    /// 右键悬浮球「设置…」与菜单栏「设置…」的统一入口：快捷键绑定 + 润色服务配置 + 桌面形式。
+    /// 右键悬浮球「设置…」与菜单栏「设置…」的统一入口：快捷键绑定 + 润色服务配置。
     @objc private func openSettings() {
         if settingsController == nil {
             settingsController = AppSettingsController(
                 currentSet: shortcutSet,
                 polishStore: polishConfigurationStore,
+                desktopModeStore: desktopModeStore,
                 onSaveShortcuts: { [weak self] set in
                     self?.applyShortcuts(set) ?? false
                 },
-                onApplyDesktopForm: { [weak self] petMode, skin in
-                    self?.applyDesktopForm(petMode: petMode, skin: skin) ?? false
+                onSwitchDesktopMode: { [weak self] toPet in
+                    self?.switchDesktopMode(toPet: toPet)
+                },
+                onSwitchPetSkin: { [weak self] skin in
+                    self?.switchPetSkin(skin)
                 }
             )
         }
         settingsController?.currentSet = shortcutSet
         settingsController?.show()
-    }
-
-    /// 桌面形式切换（设置页保存时调用）：先应用再落盘，桌宠素材缺失或加载失败返回 false。
-    private func applyDesktopForm(petMode: Bool, skin: String?) -> Bool {
-        if petMode && PetAssets.resolveSkin() == nil {
-            toastController.show(
-                message: "未找到桌宠素材（\(PetAssets.root.path)/<形象>/*.gif）",
-                symbolName: "exclamationmark.triangle"
-            )
-            return false
-        }
-        let previousPet = UserDefaults.standard.string(forKey: "ui.mode") == "pet"
-        guard petController?.applyDesktopForm(petMode: petMode, skin: skin) == true else {
-            toastController.show(
-                message: "桌宠未能启动，请检查素材文件",
-                symbolName: "exclamationmark.triangle"
-            )
-            return false
-        }
-        UserDefaults.standard.set(petMode ? "pet" : "bubble", forKey: "ui.mode")
-        if let skin {
-            UserDefaults.standard.set(skin, forKey: "pet.skin")
-        }
-        if previousPet != petMode {
-            toastController.show(
-                message: petMode ? "已切换到桌宠模式" : "已切换到悬浮球模式",
-                symbolName: "checkmark"
-            )
-        }
-        return true
     }
 
     @objc private func quit() {
@@ -638,7 +635,20 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     }
 
     private func configureDesktopPet() {
-        let controller = DesktopPetController(applicationService: capturableApplicationService)
+        petController?.hide()
+        petController = nil
+        // 默认悬浮球；仅当设置选了桌宠且本地素材可用时才用桌宠，素材消失会自动退回悬浮球
+        let presentation: DesktopPetController.Presentation
+        if desktopModeStore.isPetMode, let skin = desktopModeStore.resolveSkin() {
+            presentation = .pet(skin: skin)
+        } else {
+            presentation = .ball
+        }
+
+        let controller = DesktopPetController(
+            applicationService: capturableApplicationService,
+            presentation: presentation
+        )
         controller.onCapture = { [weak self] app in self?.captureWindow(of: app) }
         controller.onRecord = { [weak self] app in self?.startRecording(of: app) }
         controller.onStopRecording = { [weak self] in self?.stopRecording() }
@@ -647,15 +657,39 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         controller.onPolishBusy = { [weak self] in self?.isPolishBusy() ?? false }
         controller.onOpenScreenRecordingSettings = { [weak self] in self?.openScreenRecordingSettings() }
         controller.onOpenSettings = { [weak self] in self?.openSettings() }
-        controller.onQuit = { NSApplication.shared.terminate(nil) }
+        controller.onQuit = { [weak self] in self?.quit() }
         controller.show()
+        controller.setHiddenTemporarily(windowPickerProcess?.isRunning == true)
         controller.updateTarget(previousExternalApplication)
         petController = controller
+    }
 
-        // Toast 事件 → GIF 桌宠反应（成功起跳 / 错误趴下 / 其余待机）
-        toastController.onToast = { [weak self] symbol in
-            self?.petController?.reactToToast(symbolName: symbol)
+    /// 切换悬浮球/桌宠形式，设置窗口保存时调用；无素材可切桌宠时拒绝并提示。
+    private func switchDesktopMode(toPet: Bool) {
+        guard toPet != desktopModeStore.isPetMode || toPet != (petController?.isPetMode ?? false) else { return }
+        if toPet, desktopModeStore.resolveSkin() == nil {
+            toastController.show(
+                message: "未找到桌宠素材(\(PetAssets.root.path)/<形象>/*.gif)，无法启用桌宠",
+                symbolName: "exclamationmark.triangle",
+                kind: .warning
+            )
+            return
         }
+        desktopModeStore.isPetMode = toPet
+        configureDesktopPet()
+        toastController.show(
+            message: toPet ? "已切换到桌宠模式" : "已切换到悬浮球模式",
+            symbolName: "checkmark",
+            kind: .success
+        )
+    }
+
+    /// 切换桌宠形象；桌宠显示中时立即换装（位置沿用 desktoppet.x/y）。
+    private func switchPetSkin(_ skin: String) {
+        guard skin != desktopModeStore.skin else { return }
+        desktopModeStore.skin = skin
+        guard desktopModeStore.isPetMode else { return }
+        configureDesktopPet()
     }
 
     private static let maxPolishInputLength = 12_000
@@ -679,7 +713,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         if case .polishing(let task, _) = polishRuntimeState {
             task.cancel()
             polishRuntimeState = .idle
-            toastController.show(message: "已停止润色，剪切板未改动", symbolName: "xmark")
+            toastController.show(message: "已停止润色，剪切板未改动", symbolName: "xmark", kind: .warning)
             return
         }
 
@@ -688,22 +722,22 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
             .trimmingCharacters(in: .whitespacesAndNewlines)
 
         guard !text.isEmpty else {
-            toastController.show(message: "剪切板没有文字，请先复制 Prompt", symbolName: "exclamationmark.triangle")
+            toastController.show(message: "剪切板没有文字，请先复制 Prompt", symbolName: "exclamationmark.triangle", kind: .error)
             return
         }
         guard text.count <= Self.maxPolishInputLength else {
-            toastController.show(message: "剪切板内容过长（上限 \(Self.maxPolishInputLength) 字）", symbolName: "exclamationmark.triangle")
+            toastController.show(message: "剪切板内容过长（上限 \(Self.maxPolishInputLength) 字）", symbolName: "exclamationmark.triangle", kind: .error)
             return
         }
 
         let baselineChangeCount = pasteboard.changeCount
         guard confirmPolish(previewText: text) else { return }
         guard pasteboard.changeCount == baselineChangeCount else {
-            toastController.show(message: "剪切板内容已变化，请重新点击润色", symbolName: "exclamationmark.triangle")
+            toastController.show(message: "剪切板内容已变化，请重新点击润色", symbolName: "exclamationmark.triangle", kind: .error)
             return
         }
 
-        toastController.show(message: "正在润色…", symbolName: "wand.and.stars")
+        toastController.show(message: "正在润色…", symbolName: "wand.and.stars", kind: .warning)
 
         let requestID = UUID()
         let task = promptPolishingService.polish(
@@ -718,19 +752,21 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
             switch result {
             case .success(let response):
                 guard pasteboard.changeCount == baselineChangeCount else {
-                    self.toastController.show(message: "剪切板内容已变化，润色结果未写入", symbolName: "exclamationmark.triangle")
+                    self.toastController.show(message: "剪切板内容已变化，润色结果未写入", symbolName: "exclamationmark.triangle", kind: .error)
                     return
                 }
                 pasteboard.clearContents()
                 pasteboard.setString(response.polishedText, forType: .string)
                 self.toastController.show(
                     message: "润色完成，结果已替换剪切板",
-                    symbolName: "checkmark"
+                    symbolName: "checkmark",
+                    kind: .success
                 )
             case .failure(let error):
                 self.toastController.show(
                     message: error.localizedDescription,
-                    symbolName: "exclamationmark.triangle"
+                    symbolName: "exclamationmark.triangle",
+                    kind: .error
                 )
             }
         }

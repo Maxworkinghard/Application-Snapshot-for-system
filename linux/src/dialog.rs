@@ -50,7 +50,6 @@ pub fn confirm_polish(preview: &str) -> bool {
         None => {
             // 没有对话框工具：无法获得用户确认就不动剪贴板
             crate::notify::notify(
-                crate::notify::ToastKind::Error,
                 "无法确认润色",
                 "未找到 zenity 或 kdialog，请安装其一后再使用润色",
             );
@@ -93,7 +92,6 @@ pub fn choose_action(items: &[&str]) -> Option<usize> {
         }
         None => {
             crate::notify::notify(
-                crate::notify::ToastKind::Error,
                 "无法打开菜单",
                 "未找到 zenity 或 kdialog，请安装其一以使用悬浮球菜单",
             );
@@ -112,18 +110,17 @@ pub struct SettingsFormValues {
     pub shortcut_record: String,
     pub shortcut_previous_app: String,
     pub shortcut_polish: String,
-    pub ui_mode: String,
-    pub pet_skin: String,
     pub polish_kind: String,
     pub polish_base_url: String,
     pub polish_model: String,
     pub polish_api_key: String,
+    pub ui_mode_pet: bool,
+    pub pet_skin: String,
 }
 
 pub fn settings_form(values: &SettingsFormValues) -> Option<SettingsFormValues> {
     let zenity_only = || {
         crate::notify::notify(
-            crate::notify::ToastKind::Error,
             "设置界面不可用",
             "设置表单需要 zenity（kdialog 不支持多字段表单）；也可直接编辑 ~/.config/windowsnap/config.toml",
         );
@@ -137,31 +134,28 @@ pub fn settings_form(values: &SettingsFormValues) -> Option<SettingsFormValues> 
                     value.to_string()
                 }
             };
-            let skins = crate::gif_pet::available_skins();
-            let skins_hint = if skins.is_empty() {
-                "无；素材放 ~/.local/share/windowsnap/pet/<形象>/".to_string()
-            } else {
-                skins.join("、")
-            };
+            let mut skins = crate::settings::available_skins();
+            if let Some(current) = crate::settings::resolve_skin(&values.pet_skin) {
+                if let Some(index) = skins.iter().position(|skin| *skin == current) { skins.swap(0,index); }
+            }
+            // zenity 的 combo-values 固定以 | 分项；特殊字符只转义显示，不改真实目录名。
+            let labels: Vec<String> = skins.iter().map(|skin| skin_label(skin)).collect();
+            let combo = if labels.is_empty() { "（未找到素材）".to_string() } else { labels.join("|") };
+            let modes = if values.ui_mode_pet { "桌宠|悬浮窗（默认）" } else { "悬浮窗（默认）|桌宠" };
             let hint = format!(
                 "当前：截取当前应用={}，录制={}，截取上一个应用={}，润色={}；协议={}，模型={}，Base URL={}\n\
-                 桌面形式={}（可用形象：{}）；桌面形式与形象留空表示不变，形式填 bubble 或 pet\n\
                  润色提示词（切换 / 自定义）：托盘菜单「管理润色提示词…」\n\
-                 快捷键填 none 表示解除绑定；格式如 Alt+Shift+2",
+                 每项留空表示保持不变；快捷键填 none 表示解除绑定；快捷键格式如 Alt+Shift+2",
                 current_shortcut(&values.shortcut),
                 current_shortcut(&values.shortcut_record),
                 current_shortcut(&values.shortcut_previous_app),
                 current_shortcut(&values.shortcut_polish),
                 if values.polish_kind == "anthropic" { "anthropic" } else { "openai" },
                 values.polish_model,
-                values.polish_base_url,
-                if values.ui_mode == "pet" {
-                    "pet（GIF 桌宠，X11 / XWayland）"
-                } else {
-                    "bubble（悬浮球）"
-                },
-                skins_hint
+                values.polish_base_url
             );
+            let hint = format!("{hint}\n桌宠素材：{}/<形象>/\nidle / waving / jumping / failed / waiting / running-left / running-right.gif；重开设置即可选择。保存后桌面形式立即切换。",
+                crate::settings::pet_asset_root().map(|p|p.display().to_string()).unwrap_or_default());
             let mut command = Command::new("zenity");
             command
                 .args(["--forms", "--title", "应用快照设置", "--width", "500"])
@@ -170,18 +164,19 @@ pub fn settings_form(values: &SettingsFormValues) -> Option<SettingsFormValues> 
                 .args(["--add-entry", "录制当前应用窗口快捷键"])
                 .args(["--add-entry", "截取上一个应用快捷键"])
                 .args(["--add-entry", "润色提示词快捷键"])
-                .args(["--add-entry", "桌面形式（bubble / pet）"])
-                .args(["--add-entry", "桌宠形象"])
                 .args(["--add-entry", "润色协议（openai / anthropic）"])
                 .args(["--add-entry", "润色 Base URL"])
                 .args(["--add-entry", "润色模型"])
-                .args(["--add-password", "润色 API Key"]);
+                .args(["--add-password", "润色 API Key"])
+                .args(["--separator", "\x1f"])
+                .args(["--add-combo", "桌面形式", "--combo-values", modes])
+                .args(["--add-combo", "桌宠形象", "--combo-values", &combo]);
             let output = command.output().ok()?;
             if !output.status.success() {
                 return None;
             }
             let text = String::from_utf8_lossy(&output.stdout).trim_end().to_string();
-            let fields: Vec<String> = text.split('|').map(str::trim).map(str::to_string).collect();
+            let fields: Vec<String> = text.split('\x1f').map(str::to_string).collect();
             if fields.len() != 10 {
                 return None;
             }
@@ -190,12 +185,12 @@ pub fn settings_form(values: &SettingsFormValues) -> Option<SettingsFormValues> 
                 shortcut_record: fields[1].clone(),
                 shortcut_previous_app: fields[2].clone(),
                 shortcut_polish: fields[3].clone(),
-                ui_mode: fields[4].clone(),
-                pet_skin: fields[5].clone(),
-                polish_kind: fields[6].clone(),
-                polish_base_url: fields[7].clone(),
-                polish_model: fields[8].clone(),
-                polish_api_key: fields[9].clone(),
+                polish_kind: fields[4].clone(),
+                polish_base_url: fields[5].clone(),
+                polish_model: fields[6].clone(),
+                polish_api_key: fields[7].clone(),
+                ui_mode_pet: fields[8] == "桌宠",
+                pet_skin: labels.iter().position(|label| *label == fields[9]).map(|i| skins[i].clone()).unwrap_or_default(),
             })
         }
         Some(DialogTool::Kdialog) | None => {
@@ -212,7 +207,6 @@ pub fn settings_form(values: &SettingsFormValues) -> Option<SettingsFormValues> 
 pub fn manage_prompts() {
     if !tool_runs("zenity", &["--version"]) {
         crate::notify::notify(
-            crate::notify::ToastKind::Error,
             "无法管理润色提示词",
             "需要 zenity（多行文本编辑仅 zenity 支持），请安装后再试",
         );
@@ -244,11 +238,7 @@ pub fn manage_prompts() {
             Some(0) => {
                 if !text.is_empty() {
                     crate::prompts::set_active(&text);
-                    crate::notify::notify(
-                        crate::notify::ToastKind::Success,
-                        "已切换润色提示词",
-                        &format!("当前使用：{text}"),
-                    );
+                    crate::notify::notify("已切换润色提示词", &format!("当前使用：{text}"));
                 }
             }
             // zenity 约定：额外按钮退出码 5，stdout 为按钮文字
@@ -269,14 +259,9 @@ fn create_prompt(prefill: &str) {
     let Some(text) = edit_prompt_text(&name, prefill) else { return };
     if crate::prompts::save(&name, &text, None) {
         crate::prompts::set_active(name.trim());
-        crate::notify::notify(
-            crate::notify::ToastKind::Success,
-            "已保存并切换",
-            &format!("当前使用：{}", name.trim()),
-        );
+        crate::notify::notify("已保存并切换", &format!("当前使用：{}", name.trim()));
     } else {
         crate::notify::notify(
-            crate::notify::ToastKind::Error,
             "保存失败",
             "名称为空、与内置重名或已存在同名提示词",
         );
@@ -317,14 +302,9 @@ fn edit_prompt() {
     let Some(new_name) = entry_prompt_name(&prompt.name) else { return };
     let Some(new_text) = edit_prompt_text(&prompt.name, &prompt.text) else { return };
     if crate::prompts::save(&new_name, &new_text, Some(&prompt.name)) {
-        crate::notify::notify(
-            crate::notify::ToastKind::Success,
-            "已保存",
-            &format!("提示词「{}」已更新", new_name.trim()),
-        );
+        crate::notify::notify("已保存", &format!("提示词「{}」已更新", new_name.trim()));
     } else {
         crate::notify::notify(
-            crate::notify::ToastKind::Error,
             "保存失败",
             "名称为空、与内置重名或已存在同名提示词",
         );
@@ -334,7 +314,7 @@ fn edit_prompt() {
 fn delete_prompt() {
     let custom = crate::prompts::custom_list();
     if custom.is_empty() {
-        crate::notify::notify(crate::notify::ToastKind::Info, "没有自定义提示词", "内置提示词不可删除");
+        crate::notify::notify("没有自定义提示词", "内置提示词不可删除");
         return;
     }
     let mut command = Command::new("zenity");
@@ -408,7 +388,7 @@ fn edit_prompt_text(title: &str, initial: &str) -> Option<String> {
 /// 窗口选择列表：返回所选标题；取消/关闭返回 None。
 pub fn choose_window(titles: &[String]) -> Option<String> {
     if titles.is_empty() {
-        crate::notify::notify(crate::notify::ToastKind::Info, "没有可截取的窗口", "未找到其他可见窗口");
+        crate::notify::notify("没有可截取的窗口", "未找到其他可见窗口");
         return None;
     }
     match detect_tool() {
@@ -451,11 +431,30 @@ pub fn choose_window(titles: &[String]) -> Option<String> {
         }
         None => {
             crate::notify::notify(
-                crate::notify::ToastKind::Error,
                 "无法选择窗口",
                 "未找到 zenity 或 kdialog，请安装其一以使用窗口选择",
             );
             None
         }
+    }
+}
+
+/// 百分号先转义，保证形象名与下拉显示值一一对应，包括字面量 %7C。
+fn skin_label(name: &str) -> String {
+    name.chars().map(|c| match c {
+        '%' => "%25".to_string(), '|' => "%7C".to_string(),
+        c if c.is_control() => format!("%{:02X}",c as u32),
+        c => c.to_string(),
+    }).collect()
+}
+
+#[cfg(test)]
+mod pet_settings_tests {
+    use super::*;
+    #[test]
+    fn skin_choices_do_not_split_or_alias() {
+        assert_eq!(skin_label("猫|狗"),"猫%7C狗");
+        assert_ne!(skin_label("猫|狗"),skin_label("猫%7C狗"));
+        assert!(!skin_label("猫\n\x1f").contains('\x1f'));
     }
 }
