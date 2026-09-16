@@ -54,6 +54,8 @@ powershell.exe -NoProfile -ExecutionPolicy Bypass -File .\build.ps1
 - 目录：`%APPDATA%\AppSnapshot\pet\<形象>\`（子目录名即形象名，可放多套）
 - 状态文件（192×208 透明背景 GIF）：`idle` / `waving` / `jumping` / `failed` / `waiting` / `running-left` / `running-right`，可选 `running` / `review`
 - 目录为空或素材缺失时，设置中的桌宠选项会提示不可用，应用回退悬浮窗
+- 三端目录结构相同（macOS 在 `~/Library/Application Support/AppSnapshot/pet/`，Linux 在
+  `~/.local/share/windowsnap/pet/`），同一套素材可直接复用
 
 桌宠交互：单击打开功能面板（与悬浮窗一致），拖动移动（面板跟随），右键菜单 = 设置 / 退出；截图与录制期间自动离场避镜。
 
