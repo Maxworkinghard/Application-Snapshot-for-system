@@ -1,6 +1,6 @@
-# 应用快照
+# Application Snapshot
 
-[中文](README.md)
+[简体中文](README.md) · **English**
 
 Captures the current application window and copies it to the system clipboard. Nothing is written to disk or uploaded. The clipboard entry is cleared after about 60 seconds, unless something else was copied in the meantime.
 
