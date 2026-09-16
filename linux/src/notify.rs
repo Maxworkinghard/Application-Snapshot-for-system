@@ -1,9 +1,20 @@
-//! 桌面通知（org.freedesktop.Notifications），对应 macOS 端的 Toast。
+//! 桌面通知（org.freedesktop.Notifications），对应 macOS / Windows 端的 Toast。
+//! 携带事件种类：桌宠据此做成功 / 失败 / 待机反应动画
+//! （对应 Windows 端 ToastController.Notified 事件）。
 
 use std::collections::HashMap;
 
-/// 发通知，失败静默（无通知服务时不影响截图主流程）。
-pub fn notify(summary: &str, body: &str) {
+/// Toast 事件种类，对应 Windows 端 ToastKind。
+#[derive(Clone, Copy)]
+pub enum ToastKind {
+    Success,
+    Error,
+    Info,
+}
+
+/// 发通知并联动桌宠反应；通知本身失败静默（无通知服务时不影响截图主流程）。
+pub fn notify(kind: ToastKind, summary: &str, body: &str) {
+    crate::gif_pet::react(kind);
     let _ = try_notify(summary, body);
 }
 

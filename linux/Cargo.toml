@@ -8,6 +8,7 @@ license = "MIT"
 [dependencies]
 # 全部为纯 Rust 实现，无 C 库依赖，可在任意架构上直接 cargo build / 交叉编译
 png = "0.17"
+gif = "0.13"
 x11rb = { version = "0.13", features = ["shape"] }
 zbus = "5"
 wl-clipboard-rs = "0.9"

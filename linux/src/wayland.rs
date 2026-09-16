@@ -112,6 +112,7 @@ pub fn spawn_global_shortcuts(tx: Sender<Msg>, shortcut: String) {
         if let Err(e) = run_global_shortcuts(&tx, &shortcut) {
             eprintln!("windowsnap: GlobalShortcuts portal 不可用：{e}");
             notify::notify(
+                notify::ToastKind::Error,
                 "全局快捷键不可用",
                 "请在系统快捷键设置中把组合键绑定到命令：windowsnap capture",
             );

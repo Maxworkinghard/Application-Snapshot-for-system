@@ -10,7 +10,8 @@ macOS 版的 Linux 移植。常驻后台，功能与 macOS / Windows 端对齐�
 - **快捷键录制**：默认 `Alt+Shift+R`，开始 / 停止录制当前活动窗口
 - **可选绑定**：截取上一个前台应用窗口、润色当前剪切板提示词——默认不绑定，在设置中自行决定
 - **悬浮球**：圆形悬浮图标，显示上一个前台应用的图标；点击弹出操作菜单，可拖动，位置记忆；右键打开「设置…」
-- **设置**：右键悬浮球或托盘菜单 `设置…` 打开 zenity 表单（快捷键绑定 + 润色服务），保存后即时生效（润色配置更新内存，快捷键重新注册；仅 X11）
+- **桌宠模式**（可选，X11 / XWayland）：设置里把桌面形式切为 `pet`，GIF 桌宠替代悬浮球；素材放 `~/.local/share/windowsnap/pet/<形象>/`，可放多套随时切换；截图成功起跳、失败趴下的反应动画，拖动触发跑动，截图与录制期间自动离场
+- **设置**：右键悬浮球 / 桌宠或托盘菜单 `设置…` 打开 zenity 表单（快捷键绑定 + 润色服务 + 桌面形式），保存后即时生效（润色配置更新内存，快捷键重新注册；仅 X11）
 - **管理润色提示词…**（托盘）：内置改写规则常驻；可新建/编辑/删除自定义提示词，列表选中点「切换」即时生效（不替换内置）；「编辑」里有「基于内置新建…」入口，自定义提示词存 `~/.config/windowsnap/prompts.json`（权限 600）
 - **应用快照**：从窗口列表选择任意窗口截图
 - **窗口录制**：`ffmpeg` 录制当前活动窗口为 MP4，保存到配置目录（仅 X11）
@@ -40,16 +41,27 @@ macOS 版的 Linux 移植。常驻后台，功能与 macOS / Windows 端对齐�
 | `ScreenCaptureKit` 截窗口 | `PrintWindow` / 屏幕像素回退 | X11：`_NET_ACTIVE_WINDOW` + root 裁剪；Wayland：Screenshot portal（无法只截单窗口，由桌面环境决定交互） |
 | `NSPasteboard` (PNG) | Win32 剪贴板 | X11：原生 CLIPBOARD selection（`image/png`）；Wayland：data-control 协议 |
 | `NSStatusBar` 菜单栏 | `NotifyIcon` 托盘 | StatusNotifierItem 托盘（KDE 原生支持；GNOME 需 AppIndicator 扩展） |
-| 桌面宠物 | 悬浮球 | X11：圆形悬浮窗（shape 扩展 + `_NET_WM_ICON`） |
+| 悬浮球 | 悬浮球 | 悬浮球（shape 扩展圆形窗 + `_NET_WM_ICON`） |
+| 桌宠模式（GIF 形象、可换肤、事件动画） | 桌宠（设置里切换形式 + 形象） | 桌宠（X11 / XWayland：32 位 ARGB 窗口逐帧渲染 GIF，设置表单切换） |
 | 窗口录制 MP4 | 窗口录制 MP4 | `ffmpeg` x11grab（仅 X11；Wayland 下无标准窗口级录制接口） |
 | 润色 Prompt | 润色 Prompt | 剪贴板草稿 → 确认 → API 改写 → 写回，处理中可停止 |
-| 统一设置窗口 | 统一设置窗口 | zenity `--forms` 表单（快捷键 + 润色服务，右键悬浮球或托盘打开） |
+| 统一设置窗口 | 统一设置窗口 | zenity `--forms` 表单（快捷键 + 润色服务 + 桌面形式，右键悬浮球 / 桌宠或托盘打开） |
 | Toast 提示 | Toast 提示 | `org.freedesktop.Notifications` 桌面通知 |
 | 60 秒自动清空 | 同 | 同款逻辑（仍持有剪贴板且未被覆盖才清空） |
 
+## 桌宠模式（可选，X11 / XWayland）
+
+初始桌面形式为**悬浮球**；在「设置…」表单的「桌面形式」填 `pet` 即切换为**桌宠**，切换持久化、即时生效（悬浮球与桌宠互斥显示）。素材**不随应用分发**（素材并非本项目制作，避免版权问题），由用户自行放置：
+
+- 目录：`~/.local/share/windowsnap/pet/<形象>/`（子目录名即形象名，可放多套）
+- 姿势文件（192×208 透明背景 GIF，等比缩到 155×168 显示）：`idle` / `waving` / `jumping` / `failed` / `waiting` / `running-left` / `running-right`
+- 目录为空时设置表单会拒绝切换并提示；桌宠位置独立持久化于 `desktoppet_x/y`
+
+桌宠交互与 macOS / Windows 端一致：单击打开功能菜单，拖动移动（拖动中跑动），右键菜单 = 设置 / 退出；截图成功起跳、失败趴下、其余通知待机反应；截图与录制期间自动离场避镜（`get_image` / x11grab 都抓屏幕像素）。纯 Wayland 无 XWayland 时桌宠不可用，设置会拒绝切换并保持悬浮球。
+
 ## 构建
 
-需要 Rust 工具链（https://rustup.rs）。依赖全部为纯 Rust 实现（x11rb / zbus / wl-clipboard-rs / png / ksni / serde_json / chrono），**无需安装任何 C 库头文件**。
+需要 Rust 工具链（https://rustup.rs）。依赖全部为纯 Rust 实现（x11rb / zbus / wl-clipboard-rs / png / gif / ksni / serde_json / chrono），**无需安装任何 C 库头文件**。
 
 ```bash
 cd linux
@@ -99,8 +111,12 @@ shortcut_record = "Alt+Shift+R"   # 录制快捷键；留空 = 不绑定
 shortcut_previous_app = ""        # 截取上一个应用；默认不绑定
 shortcut_polish = ""              # 润色提示词；默认不绑定
 save_dir = "~/Videos/应用快照"     # 录制文件保存目录（~ 不会自动展开，建议写绝对路径）
+ui_mode = "bubble"                # 桌面形式：bubble（悬浮球，默认）| pet（GIF 桌宠，X11 / XWayland）
+pet_skin = ""  # 桌宠形象（~/.local/share/windowsnap/pet/ 下的目录名）
 pet_x = "1896"                    # 悬浮球位置（拖动后自动写回）
 pet_y = "78"
+desktoppet_x = "100"              # 桌宠位置（拖动后自动写回，与悬浮球独立）
+desktoppet_y = "100"
 polish.kind = "openai"            # openai（OpenAI 兼容接口）| anthropic
 polish.base_url = "https://api.deepseek.com"
 polish.model = "deepseek-chat"
@@ -113,13 +129,13 @@ polish.api_key = "sk-..."
 
 ## X11 与 Wayland 的行为差异
 
-- **X11**：全功能。截取当前活动窗口（含标题栏，去 GTK 阴影）、窗口列表选择、悬浮球、录制、润色。
+- **X11**：全功能。截取当前活动窗口（含标题栏，去 GTK 阴影）、窗口列表选择、悬浮球、桌宠模式、录制、润色。
   窗口截图取自屏幕合成结果，若截图瞬间有置顶窗口遮挡目标窗口，遮挡部分会一并截入。
 - **Wayland**：出于安全模型限制，应用无法静默截取任意窗口：
   - 截图走 xdg-desktop-portal，**首次会弹权限/交互对话框**（各桌面环境行为不同，多为全屏截图）
   - 全局快捷键走 GlobalShortcuts portal（GNOME 48+ / KDE 6 支持，绑定时会弹一次确认框）；
     不支持的环境请在系统快捷键设置里把组合键绑定到命令 `windowsnap capture`
-  - 窗口列表选择与窗口录制不可用（无标准接口）；悬浮球与润色可用（润色走 data-control 剪贴板协议）
+  - 窗口列表选择与窗口录制不可用（无标准接口）；悬浮球与桌宠在带 XWayland 的会话下可用（同走 X11 悬浮窗），润色可用（走 data-control 剪贴板协议）
 - 使用剪贴板管理器（GPaste / klipper 等）时，剪贴板所有权会被管理器接管，60 秒自动清空随之失效（与 macOS 版行为一致）。
 
 ## 项目结构
@@ -131,10 +147,11 @@ linux/
 ├── windowsnap.service      ← systemd 用户服务
 └── src/
     ├── main.rs             ← CLI 入口、主事件循环（消息分发 + 60 秒清空计时）
-    ├── settings.rs         ← config.toml 读写（快捷键 / 保存目录 / 悬浮球位置 / 润色配置）
+    ├── settings.rs         ← config.toml 读写（快捷键 / 保存目录 / 悬浮球与桌宠位置 / 桌面形式 / 润色配置）
     ├── x11.rs              ← XGrabKey 热键 + 活动窗口截图 + 剪贴板（图片与文本）+ 窗口列表
     ├── wayland.rs          ← portal 截图 / GlobalShortcuts + data-control 剪贴板
     ├── pet.rs              ← 悬浮球（圆形窗口 / 活动窗口图标跟踪 / 拖动 / 位置持久化）
+    ├── gif_pet.rs          ← GIF 桌宠（素材发现 / ARGB 窗口 / 姿势状态机 / 事件反应）
     ├── record.rs           ← 窗口录制（ffmpeg x11grab）
     ├── polish.rs           ← 提示词润色（确认 → curl 调 API → 写回，处理中可停止）
     ├── tray.rs             ← StatusNotifierItem 托盘
@@ -154,3 +171,4 @@ linux/
 7. ffmpeg 录制参数（crf / preset）在不同机器上的实际效果
 8. 润色流程中 zenity / kdialog 的弹窗焦点与取消路径
 9. 设置表单（zenity `--forms`）保存后 X11 快捷键重新注册与生效路径
+10. GIF 桌宠在各 WM 下的 ARGB 半透明、拖动跑动、截图/录制离场与设置切换（含 XWayland）

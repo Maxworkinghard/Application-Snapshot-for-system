@@ -38,9 +38,11 @@ impl PetAtoms {
 }
 
 /// 启动桌面宠物线程；任何失败只打印日志，不影响主功能。
-pub fn spawn(tx: Sender<Msg>) {
+/// `initially_visible` 为假时窗口不显示（GIF 桌宠模式下悬浮球离场），
+/// 但事件循环照常运行——「截取上一个应用」依赖这里的窗口跟踪。
+pub fn spawn(tx: Sender<Msg>, initially_visible: bool) {
     std::thread::spawn(move || {
-        if let Err(e) = run(tx) {
+        if let Err(e) = run(tx, initially_visible) {
             eprintln!("windowsnap: 桌面宠物不可用（{e}），不影响截图与其他功能");
         }
     });
@@ -92,7 +94,7 @@ struct Pet {
     dragging: bool,
 }
 
-fn run(tx: Sender<Msg>) -> Result<()> {
+fn run(tx: Sender<Msg>, visible: bool) -> Result<()> {
     let (raw_conn, screen_num) = x11rb::connect(None)?;
     let conn: Arc<RustConnection> = Arc::new(raw_conn);
     let atoms = PetAtoms::intern(&conn)?;
@@ -168,7 +170,9 @@ fn run(tx: Sender<Msg>) -> Result<()> {
 
     pet.track_active_window();
     pet.paint_fallback();
-    conn.map_window(window)?;
+    if visible {
+        conn.map_window(window)?;
+    }
     conn.flush()?;
 
     *PET_CONTROL.lock().unwrap() = Some(PetControl {

@@ -16,7 +16,14 @@ pub struct Settings {
     /// 润色快捷键；空 = 未绑定（默认未绑定）。
     pub shortcut_polish: String,
     pub save_dir: String,
+    /// 桌面呈现形式："bubble"（悬浮球，默认）或 "pet"（GIF 桌宠）。
+    pub ui_mode: String,
+    /// 桌宠形象（pet 素材目录下的子目录名）。
+    pub pet_skin: String,
+    /// 悬浮球位置。
     pub pet: Option<(i32, i32)>,
+    /// GIF 桌宠位置（与悬浮球位置键独立）。
+    pub desktoppet: Option<(i32, i32)>,
     pub polish: PolishConfig,
 }
 
@@ -77,6 +84,13 @@ pub fn load() -> Settings {
         (Some(x), Some(y)) => Some((x, y)),
         _ => None,
     };
+    let desktoppet = match (
+        map.get("desktoppet_x").and_then(|value| value.parse().ok()),
+        map.get("desktoppet_y").and_then(|value| value.parse().ok()),
+    ) {
+        (Some(x), Some(y)) => Some((x, y)),
+        _ => None,
+    };
     let polish = PolishConfig {
         kind: if map
             .get("polish.kind")
@@ -90,13 +104,27 @@ pub fn load() -> Settings {
         model: map.get("polish.model").cloned().unwrap_or_default(),
         api_key: map.get("polish.api_key").cloned().unwrap_or_default(),
     };
+    // 桌面形式：只有显式写 "pet" 才进桌宠模式，其余值（含未配置）回悬浮球
+    let ui_mode = map
+        .get("ui_mode")
+        .filter(|value| *value == "pet")
+        .cloned()
+        .unwrap_or_else(|| "bubble".to_string());
+    let pet_skin = map
+        .get("pet_skin")
+        .filter(|value| !value.is_empty())
+        .cloned()
+        .unwrap_or_else(|| "".to_string());
     Settings {
         shortcut,
         shortcut_record,
         shortcut_previous_app,
         shortcut_polish,
         save_dir,
+        ui_mode,
+        pet_skin,
         pet,
+        desktoppet,
         polish,
     }
 }
@@ -111,6 +139,18 @@ pub fn save_directory() -> String {
 
 pub fn save_pet_position(x: i32, y: i32) {
     upsert(&[("pet_x", &x.to_string()), ("pet_y", &y.to_string())]);
+}
+
+pub fn save_desktoppet_position(x: i32, y: i32) {
+    upsert(&[(
+        "desktoppet_x",
+        &x.to_string(),
+    ), ("desktoppet_y", &y.to_string())]);
+}
+
+/// 设置表单保存桌面形式（bubble / pet）与桌宠形象。
+pub fn save_desktop_form(ui_mode: &str, pet_skin: &str) {
+    upsert(&[("ui_mode", ui_mode), ("pet_skin", pet_skin)]);
 }
 
 /// 设置对话框保存快捷键（空值即解除绑定，含默认项）。

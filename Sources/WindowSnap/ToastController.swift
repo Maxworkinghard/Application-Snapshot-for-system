@@ -4,7 +4,12 @@ final class ToastController {
     private var panel: NSPanel?
     private var closeWorkItem: DispatchWorkItem?
 
+    /// 每次弹出 Toast 时回调（symbolName）；AppDelegate 借此驱动 GIF 桌宠的
+    /// 反应动画，对应 Windows 端 ToastController.Notified 事件。
+    var onToast: ((String) -> Void)?
+
     func show(message: String, symbolName: String) {
+        onToast?(symbolName)
         closeWorkItem?.cancel()
         panel?.close()
 

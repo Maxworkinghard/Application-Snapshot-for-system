@@ -331,18 +331,52 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         toastController.show(message: "录制将保存到 \(display)", symbolName: "checkmark")
     }
 
-    /// 右键悬浮球「设置…」与菜单栏「设置…」的统一入口：快捷键绑定 + 润色服务配置。
+    /// 右键悬浮球「设置…」与菜单栏「设置…」的统一入口：快捷键绑定 + 润色服务配置 + 桌面形式。
     @objc private func openSettings() {
         if settingsController == nil {
             settingsController = AppSettingsController(
                 currentSet: shortcutSet,
-                polishStore: polishConfigurationStore
-            ) { [weak self] set in
-                self?.applyShortcuts(set) ?? false
-            }
+                polishStore: polishConfigurationStore,
+                onSaveShortcuts: { [weak self] set in
+                    self?.applyShortcuts(set) ?? false
+                },
+                onApplyDesktopForm: { [weak self] petMode, skin in
+                    self?.applyDesktopForm(petMode: petMode, skin: skin) ?? false
+                }
+            )
         }
         settingsController?.currentSet = shortcutSet
         settingsController?.show()
+    }
+
+    /// 桌面形式切换（设置页保存时调用）：先应用再落盘，桌宠素材缺失或加载失败返回 false。
+    private func applyDesktopForm(petMode: Bool, skin: String?) -> Bool {
+        if petMode && PetAssets.resolveSkin() == nil {
+            toastController.show(
+                message: "未找到桌宠素材（\(PetAssets.root.path)/<形象>/*.gif）",
+                symbolName: "exclamationmark.triangle"
+            )
+            return false
+        }
+        let previousPet = UserDefaults.standard.string(forKey: "ui.mode") == "pet"
+        guard petController?.applyDesktopForm(petMode: petMode, skin: skin) == true else {
+            toastController.show(
+                message: "桌宠未能启动，请检查素材文件",
+                symbolName: "exclamationmark.triangle"
+            )
+            return false
+        }
+        UserDefaults.standard.set(petMode ? "pet" : "bubble", forKey: "ui.mode")
+        if let skin {
+            UserDefaults.standard.set(skin, forKey: "pet.skin")
+        }
+        if previousPet != petMode {
+            toastController.show(
+                message: petMode ? "已切换到桌宠模式" : "已切换到悬浮球模式",
+                symbolName: "checkmark"
+            )
+        }
+        return true
     }
 
     @objc private func quit() {
@@ -613,9 +647,15 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         controller.onPolishBusy = { [weak self] in self?.isPolishBusy() ?? false }
         controller.onOpenScreenRecordingSettings = { [weak self] in self?.openScreenRecordingSettings() }
         controller.onOpenSettings = { [weak self] in self?.openSettings() }
+        controller.onQuit = { NSApplication.shared.terminate(nil) }
         controller.show()
         controller.updateTarget(previousExternalApplication)
         petController = controller
+
+        // Toast 事件 → GIF 桌宠反应（成功起跳 / 错误趴下 / 其余待机）
+        toastController.onToast = { [weak self] symbol in
+            self?.petController?.reactToToast(symbolName: symbol)
+        }
     }
 
     private static let maxPolishInputLength = 12_000
