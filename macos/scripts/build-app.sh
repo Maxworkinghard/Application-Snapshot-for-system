@@ -2,22 +2,24 @@
 
 set -euo pipefail
 
-ROOT_DIR="${0:A:h:h}"
+SCRIPT_DIR="${0:A:h}"          # macos/scripts
+MACOS_DIR="${SCRIPT_DIR:h}"    # macos/（Package.swift 所在目录）
+REPO_DIR="${MACOS_DIR:h}"      # 仓库根（dist/ 所在目录）
 APP_NAME="应用快照"
-APP_DIR="$ROOT_DIR/dist/$APP_NAME.app"
+APP_DIR="$REPO_DIR/dist/$APP_NAME.app"
 INSTALL_DIR="/Applications/$APP_NAME.app"
 LAUNCH_AGENT_LABEL="local.windowsnap.app"
 LAUNCH_AGENT_PLIST="$HOME/Library/LaunchAgents/$LAUNCH_AGENT_LABEL.plist"
 
-cd "$ROOT_DIR"
+cd "$MACOS_DIR"
 # 同时编译 Apple Silicon (arm64) 与 Intel (x86_64)，产出 universal 2 二进制
 swift build -c release --arch arm64 --arch x86_64
-BINARY="$ROOT_DIR/.build/apple/Products/Release/WindowSnap"
+BINARY="$MACOS_DIR/.build/apple/Products/Release/WindowSnap"
 
 rm -rf "$APP_DIR"
 mkdir -p "$APP_DIR/Contents/MacOS" "$APP_DIR/Contents/Resources"
 cp "$BINARY" "$APP_DIR/Contents/MacOS/WindowSnap"
-cp "$ROOT_DIR/Resources/Info.plist" "$APP_DIR/Contents/Info.plist"
+cp "$MACOS_DIR/Resources/Info.plist" "$APP_DIR/Contents/Info.plist"
 LIPO_INFO="$(lipo -info "$APP_DIR/Contents/MacOS/WindowSnap")"
 echo "$LIPO_INFO"
 echo "$LIPO_INFO" | grep -q "arm64" || { echo "error: missing Apple Silicon (arm64) slice" >&2; exit 1; }

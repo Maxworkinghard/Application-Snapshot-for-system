@@ -46,7 +46,7 @@ Windows 实现。全局快捷键截取应用窗口、悬浮球或桌宠、窗口
 需要 [.NET 10 SDK](https://aka.ms/dotnet/download)。在 x64 机器上一次打出两个原生包（ARM64 为交叉编译，不需要 ARM 设备）：
 
 ```powershell
-powershell.exe -NoProfile -ExecutionPolicy Bypass -File .\build.ps1
+powershell.exe -NoProfile -ExecutionPolicy Bypass -File .\scripts\build.ps1
 ```
 
 | 产物 | 架构 |
@@ -59,12 +59,12 @@ powershell.exe -NoProfile -ExecutionPolicy Bypass -File .\build.ps1
 发行命名（GitHub Release 附件）再跑一次：
 
 ```powershell
-powershell.exe -NoProfile -ExecutionPolicy Bypass -File .\package-release.ps1
+powershell.exe -NoProfile -ExecutionPolicy Bypass -File .\scripts\package-release.ps1
 ```
 
 会把两份 exe 复制到仓库 `dist\release\`，改名为 `Application-Snapshot-{版本}-windows-x64.exe` / `windows-arm64.exe`，并写一份仅含这两文件的 `SHA256SUMS.txt`。
 
-代码签名：`.\sign.ps1` 默认会递归签署 `dist` 下两份 `AppSnapshot.exe`。签发后再跑 `package-release.ps1 -SkipBuild`，避免把未签名副本覆盖进去。
+代码签名：`.\scripts\sign.ps1` 默认会递归签署 `dist` 下两份 `AppSnapshot.exe`。签发后再跑 `scripts\package-release.ps1 -SkipBuild`，避免把未签名副本覆盖进去。
 
 ## 桌宠模式（可选）
 
@@ -89,9 +89,9 @@ powershell.exe -NoProfile -ExecutionPolicy Bypass -File .\package-release.ps1
 ### 用 `sign.ps1` 签名
 
 ```powershell
-.\sign.ps1 -SelfTest                                    # 用一次性自签证书验证签名链路，自动清理
-.\sign.ps1 -PfxPath C:\certs\codesign.pfx -PfxPassword YOUR_PFX_PASSWORD
-.\sign.ps1 -Thumbprint <证书指纹>
+.\scripts\sign.ps1 -SelfTest                                    # 用一次性自签证书验证签名链路，自动清理
+.\scripts\sign.ps1 -PfxPath C:\certs\codesign.pfx -PfxPassword YOUR_PFX_PASSWORD
+.\scripts\sign.ps1 -Thumbprint <证书指纹>
 ```
 
 `-SelfTest` 会临时创建一张自签证书、对 `dist` 内文件的副本签名并校验，随后删除证书和副本，不会改动真实产物。

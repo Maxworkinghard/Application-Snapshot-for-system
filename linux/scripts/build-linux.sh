@@ -3,7 +3,7 @@
 # 交叉编译见 README「多架构」一节。
 set -eu
 
-cd "$(dirname "$0")"
+cd "$(dirname "$0")/.."
 cargo build --release
 
 BIN="target/release/windowsnap"

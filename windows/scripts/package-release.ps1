@@ -29,7 +29,7 @@ function Get-ReleaseVersion {
     if ($env:RELEASE_VERSION) {
         return $env:RELEASE_VERSION.Trim().TrimStart('v')
     }
-    $versionFile = Join-Path $PSScriptRoot "..\VERSION"
+    $versionFile = Join-Path $PSScriptRoot "..\..\VERSION"
     return (Get-Content -LiteralPath $versionFile -Raw).Trim()
 }
 
@@ -40,7 +40,7 @@ if (-not $SkipBuild) {
 
 $version = Get-ReleaseVersion
 $prefix = "Application-Snapshot-$version"
-$repoRoot = Split-Path $PSScriptRoot -Parent
+$repoRoot = Split-Path (Split-Path $PSScriptRoot -Parent) -Parent
 $stage = Join-Path $repoRoot "dist\release"
 New-Item -ItemType Directory -Force -Path $stage | Out-Null
 
@@ -50,7 +50,7 @@ $pairs = @(
 )
 
 foreach ($pair in $pairs) {
-    $source = Join-Path $PSScriptRoot "dist\$($pair.Rid)\AppSnapshot.exe"
+    $source = Join-Path $PSScriptRoot "..\dist\$($pair.Rid)\AppSnapshot.exe"
     if (-not (Test-Path -LiteralPath $source)) {
         throw "Missing $source. Run build.ps1 first."
     }

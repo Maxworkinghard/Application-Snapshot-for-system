@@ -10,8 +10,8 @@ if [ "$(uname -s)" != "Linux" ]; then
     exit 1
 fi
 
-cd "$(dirname "$0")"
-ROOT_DIR="$(cd .. && pwd)"
+cd "$(dirname "$0")/.."
+ROOT_DIR="$(cd ../.. && pwd)"
 VERSION="${RELEASE_VERSION:-$(tr -d ' \n\r' < "$ROOT_DIR/VERSION")}"
 VERSION="${VERSION#v}"
 PREFIX="Application-Snapshot-${VERSION}"
