@@ -2,6 +2,7 @@
 //! Linux 无系统级确认弹窗 API，统一走桌面环境自带的对话框工具，
 //! 与托盘通知同为进程外 UI。
 
+use crate::pet_assets;
 use std::process::Command;
 
 /// 可用的对话框工具。
@@ -114,6 +115,35 @@ pub struct SettingsFormValues {
     pub polish_base_url: String,
     pub polish_model: String,
     pub polish_api_key: String,
+    /// 桌面形式："pet" = 桌宠，其余 = 悬浮球。
+    pub desktop_form: String,
+    /// 桌宠形象（素材目录下的子目录名）；无可用素材时为空。
+    pub pet_skin: String,
+}
+
+/// 没有任何素材时下拉里的占位项，选中等同「没有形象」。
+const NO_SKIN: &str = "（无可用素材）";
+
+fn form_values(current: &str) -> String {
+    if current == "pet" {
+        "桌宠|悬浮球".to_string()
+    } else {
+        "悬浮球|桌宠".to_string()
+    }
+}
+
+fn skin_values(current: &str) -> String {
+    let skins = pet_assets::available_skins();
+    if skins.is_empty() {
+        return NO_SKIN.to_string();
+    }
+    let mut ordered: Vec<String> = skins
+        .iter()
+        .filter(|skin| skin.as_str() == current)
+        .cloned()
+        .collect();
+    ordered.extend(skins.iter().filter(|skin| skin.as_str() != current).cloned());
+    ordered.join("|")
 }
 
 pub fn settings_form(values: &SettingsFormValues) -> Option<SettingsFormValues> {
@@ -135,14 +165,16 @@ pub fn settings_form(values: &SettingsFormValues) -> Option<SettingsFormValues> 
             let hint = format!(
                 "当前：截取当前应用={}，录制={}，截取上一个应用={}，润色={}；协议={}，模型={}，Base URL={}\n\
                  润色提示词（切换 / 自定义）：托盘菜单「管理润色提示词…」\n\
-                 每项留空表示保持不变；快捷键填 none 表示解除绑定；快捷键格式如 Alt+Shift+2",
+                 每项留空表示保持不变；快捷键填 none 表示解除绑定；快捷键格式如 Alt+Shift+2\n\
+                 桌宠素材不随应用分发，放入 {}/<形象>/ 后重开设置即可在下拉中选择",
                 current_shortcut(&values.shortcut),
                 current_shortcut(&values.shortcut_record),
                 current_shortcut(&values.shortcut_previous_app),
                 current_shortcut(&values.shortcut_polish),
                 if values.polish_kind == "anthropic" { "anthropic" } else { "openai" },
                 values.polish_model,
-                values.polish_base_url
+                values.polish_base_url,
+                pet_assets::root_display()
             );
             let mut command = Command::new("zenity");
             command
@@ -155,14 +187,18 @@ pub fn settings_form(values: &SettingsFormValues) -> Option<SettingsFormValues> 
                 .args(["--add-entry", "润色协议（openai / anthropic）"])
                 .args(["--add-entry", "润色 Base URL"])
                 .args(["--add-entry", "润色模型"])
-                .args(["--add-password", "润色 API Key"]);
+                .args(["--add-password", "润色 API Key"])
+                .args(["--add-combo", "桌面形式"])
+                .args(["--combo-values", &form_values(&values.desktop_form)])
+                .args(["--add-combo", "桌宠形象"])
+                .args(["--combo-values", &skin_values(&values.pet_skin)]);
             let output = command.output().ok()?;
             if !output.status.success() {
                 return None;
             }
             let text = String::from_utf8_lossy(&output.stdout).trim_end().to_string();
             let fields: Vec<String> = text.split('|').map(str::trim).map(str::to_string).collect();
-            if fields.len() != 8 {
+            if fields.len() != 10 {
                 return None;
             }
             Some(SettingsFormValues {
@@ -174,6 +210,8 @@ pub fn settings_form(values: &SettingsFormValues) -> Option<SettingsFormValues> 
                 polish_base_url: fields[5].clone(),
                 polish_model: fields[6].clone(),
                 polish_api_key: fields[7].clone(),
+                desktop_form: if fields[8] == "桌宠" { "pet".to_string() } else { "bubble".to_string() },
+                pet_skin: if fields[9] == NO_SKIN { String::new() } else { fields[9].clone() },
             })
         }
         Some(DialogTool::Kdialog) | None => {

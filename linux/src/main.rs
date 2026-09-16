@@ -2,6 +2,7 @@ mod dbus_service;
 mod dialog;
 mod notify;
 mod pet;
+mod pet_assets;
 mod polish;
 mod prompts;
 mod record;
@@ -17,7 +18,10 @@ use std::sync::mpsc;
 use std::sync::Arc;
 use std::time::{Duration, Instant};
 
-pub use settings::{pet_position, save_directory, save_pet_position};
+pub use settings::{
+    desktop_pet_position, pet_position, save_desktop_pet_position, save_directory,
+    save_pet_position,
+};
 
 pub type Error = Box<dyn std::error::Error + Send + Sync>;
 pub type Result<T> = std::result::Result<T, Error>;
@@ -388,6 +392,12 @@ impl Daemon {
             polish_base_url: current.polish.base_url.clone(),
             polish_model: current.polish.model.clone(),
             polish_api_key: current.polish.api_key.clone(),
+            desktop_form: if current.ui_mode == "pet" {
+                "pet".to_string()
+            } else {
+                "bubble".to_string()
+            },
+            pet_skin: pet_assets::resolve_skin(&current.pet_skin).unwrap_or_default(),
         };
         let Some(input) = dialog::settings_form(&values) else { return };
 
@@ -435,6 +445,7 @@ impl Daemon {
 
         settings::save_shortcuts(&shortcut, &shortcut_record, &shortcut_previous_app, &shortcut_polish);
         settings::save_polish(&polish_kind, &polish_base_url, &polish_model, &polish_api_key);
+        self.apply_desktop_form(&input, &values);
         self.polish_config = polish::PolishConfig {
             kind: if polish_kind == "anthropic" {
                 polish::PolishProtocolKind::Anthropic
@@ -464,6 +475,34 @@ impl Daemon {
                 }
             }
             None => notify::notify("设置已保存", "润色配置已生效；Wayland 下快捷键由桌面环境管理"),
+        }
+    }
+
+    /// 桌面形式：选桌宠但素材不可用时拒绝并提示，与 Windows / macOS 端同规则；
+    /// 形式或形象变了才重建悬浮件窗口。
+    fn apply_desktop_form(
+        &self,
+        input: &dialog::SettingsFormValues,
+        current: &dialog::SettingsFormValues,
+    ) {
+        let skin = pet_assets::resolve_skin(&input.pet_skin);
+        let (ui_mode, pet_skin) = match (input.desktop_form == "pet", &skin) {
+            (true, Some(skin)) => ("pet", skin.clone()),
+            (true, None) => {
+                notify::notify(
+                    "桌宠不可用",
+                    &format!(
+                        "未找到桌宠素材（{}/<形象>/*.gif），已保持悬浮球",
+                        pet_assets::root_display()
+                    ),
+                );
+                ("bubble", String::new())
+            }
+            (false, _) => ("bubble", skin.clone().unwrap_or_default()),
+        };
+        settings::save_desktop_form(ui_mode, &pet_skin);
+        if ui_mode != current.desktop_form || pet_skin != current.pet_skin {
+            pet::request_restart();
         }
     }
 

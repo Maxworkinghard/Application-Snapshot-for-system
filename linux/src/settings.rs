@@ -17,6 +17,12 @@ pub struct Settings {
     pub shortcut_polish: String,
     pub save_dir: String,
     pub pet: Option<(i32, i32)>,
+    /// 桌宠形式的窗口位置；与悬浮球尺寸差得远，位置各存各的。
+    pub desktop_pet: Option<(i32, i32)>,
+    /// 桌面呈现形式："pet" 表示桌宠，其余（含缺省）表示悬浮球。
+    pub ui_mode: String,
+    /// 桌宠形象 = 素材目录下的子目录名。
+    pub pet_skin: String,
     pub polish: PolishConfig,
 }
 
@@ -77,6 +83,15 @@ pub fn load() -> Settings {
         (Some(x), Some(y)) => Some((x, y)),
         _ => None,
     };
+    let desktop_pet = match (
+        map.get("desktop_pet_x").and_then(|value| value.parse().ok()),
+        map.get("desktop_pet_y").and_then(|value| value.parse().ok()),
+    ) {
+        (Some(x), Some(y)) => Some((x, y)),
+        _ => None,
+    };
+    let ui_mode = map.get("ui_mode").cloned().unwrap_or_default();
+    let pet_skin = map.get("pet_skin").cloned().unwrap_or_default();
     let polish = PolishConfig {
         kind: if map
             .get("polish.kind")
@@ -97,6 +112,9 @@ pub fn load() -> Settings {
         shortcut_polish,
         save_dir,
         pet,
+        desktop_pet,
+        ui_mode,
+        pet_skin,
         polish,
     }
 }
@@ -111,6 +129,22 @@ pub fn save_directory() -> String {
 
 pub fn save_pet_position(x: i32, y: i32) {
     upsert(&[("pet_x", &x.to_string()), ("pet_y", &y.to_string())]);
+}
+
+pub fn desktop_pet_position() -> Option<(i32, i32)> {
+    load().desktop_pet
+}
+
+pub fn save_desktop_pet_position(x: i32, y: i32) {
+    upsert(&[
+        ("desktop_pet_x", &x.to_string()),
+        ("desktop_pet_y", &y.to_string()),
+    ]);
+}
+
+/// 设置对话框保存桌面形式与桌宠形象。
+pub fn save_desktop_form(ui_mode: &str, pet_skin: &str) {
+    upsert(&[("ui_mode", ui_mode), ("pet_skin", pet_skin)]);
 }
 
 /// 设置对话框保存快捷键（空值即解除绑定，含默认项）。
