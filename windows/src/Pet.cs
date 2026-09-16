@@ -426,6 +426,10 @@ namespace AppSnapshot
 
         private PoseClip LoadPose(string skin, string name, bool loop)
         {
+            // 中途解析失败(损坏的 gif 等)也要放掉流和 Image,否则文件句柄一直锁着素材;
+            // 成功构造 PoseClip 后两者置 null 交出所有权,finally 只兜底未接管的
+            Stream source = null;
+            Image gif = null;
             try
             {
                 string path = PetAssets.PosePath(skin, name);
@@ -434,8 +438,8 @@ namespace AppSnapshot
                     return null;
                 }
                 // GDI+ 要求流在 Image 存活期内保持打开,与 Image 一起在 Dispose 释放
-                Stream source = new FileStream(path, FileMode.Open, FileAccess.Read);
-                Image gif = Image.FromStream(source);
+                source = new FileStream(path, FileMode.Open, FileAccess.Read);
+                gif = Image.FromStream(source);
                 var dimension = new FrameDimension(gif.FrameDimensionsList[0]);
                 int frameCount = gif.GetFrameCount(dimension);
                 var delays = new int[frameCount];
@@ -463,7 +467,7 @@ namespace AppSnapshot
                         delays[i] = 100;
                     }
                 }
-                return new PoseClip
+                PoseClip clip = new PoseClip
                 {
                     Gif = gif,
                     Source = source,
@@ -472,10 +476,24 @@ namespace AppSnapshot
                     DelaysMs = delays,
                     Loop = loop
                 };
+                gif = null;
+                source = null;
+                return clip;
             }
             catch
             {
                 return null;
+            }
+            finally
+            {
+                if (gif != null)
+                {
+                    gif.Dispose();
+                }
+                if (source != null)
+                {
+                    source.Dispose();
+                }
             }
         }
 
