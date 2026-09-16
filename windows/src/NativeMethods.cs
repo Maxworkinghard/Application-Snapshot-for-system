@@ -132,9 +132,6 @@ namespace AppSnapshot
         internal static extern uint GetWindowThreadProcessId(IntPtr hWnd, out uint processId);
 
         [DllImport("user32.dll")]
-        internal static extern bool SetProcessDPIAware();
-
-        [DllImport("user32.dll")]
         internal static extern uint GetClipboardSequenceNumber();
 
         [DllImport("user32.dll", SetLastError = true)]

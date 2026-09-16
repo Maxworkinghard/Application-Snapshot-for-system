@@ -3,7 +3,8 @@
     Authenticode-sign the Windows build of AppSnapshot.
 
 .DESCRIPTION
-    Smart App Control (SAC) blocks the unsigned dist\AppSnapshot.exe. SAC allows a
+    Smart App Control (SAC) blocks unsigned dist\win-x64\AppSnapshot.exe and
+    dist\win-arm64\AppSnapshot.exe. SAC allows a
     binary to run when either Microsoft's cloud intelligence rates it as safe, or the
     binary carries a valid signature from a certificate authority that participates in
     the Microsoft Trusted Root Program.
@@ -98,10 +99,16 @@ function Get-TargetFiles {
     if (-not (Test-Path -LiteralPath $Path -PathType Container)) {
         throw "Target not found: $Path"
     }
-    $files = Get-ChildItem -LiteralPath $Path -File |
-             Where-Object { $_.Extension -in @(".exe", ".dll") } |
-             Sort-Object Name
-    if (-not $files) { throw "No .exe or .dll files found in $Path" }
+    # Self-contained publish puts one AppSnapshot.exe per RID folder (win-x64 / win-arm64).
+    $files = Get-ChildItem -LiteralPath $Path -Recurse -File |
+             Where-Object { $_.Name -eq "AppSnapshot.exe" } |
+             Sort-Object FullName
+    if (-not $files) {
+        $files = Get-ChildItem -LiteralPath $Path -File |
+                 Where-Object { $_.Extension -in @(".exe", ".dll") } |
+                 Sort-Object Name
+    }
+    if (-not $files) { throw "No AppSnapshot.exe found in $Path" }
     return @($files)
 }
 
@@ -243,8 +250,12 @@ try {
 
         $source = Join-Path $TargetPath "AppSnapshot.exe"
         if (-not (Test-Path -LiteralPath $source)) {
+            $source = Join-Path $TargetPath "win-x64\AppSnapshot.exe"
+        }
+        if (-not (Test-Path -LiteralPath $source)) {
             if (Test-Path -LiteralPath $TargetPath -PathType Container) {
-                $first = Get-ChildItem -LiteralPath $TargetPath -File | Select-Object -First 1
+                $first = Get-ChildItem -LiteralPath $TargetPath -Recurse -File -Filter "AppSnapshot.exe" |
+                         Select-Object -First 1
                 if ($first) { $source = $first.FullName }
             }
         }

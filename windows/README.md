@@ -2,6 +2,8 @@
 
 macOS 版的 Windows 移植。常驻后台，功能与 macOS 端对齐：全局快捷键截取应用窗口、悬浮球、窗口录制、提示词润色。
 
+运行要求：Windows 10 22H2 或 Windows 11。x64 与 ARM64 各有一份原生自包含 exe，不必安装 .NET。不支持 32 位 Windows。
+
 ## 功能
 
 - **`Alt+Shift+2`**（默认，可改）：立即截取当前应用窗口并复制到剪贴板，成功时播放快门音效（内置合成，无需外部文件）
@@ -35,17 +37,34 @@ macOS 版的 Windows 移植。常驻后台，功能与 macOS 端对齐：全局�
 
 ## 使用
 
-1. 启动 `dist\AppSnapshot.exe`。
+1. 按芯片启动对应产物：x64 用 `dist\win-x64\AppSnapshot.exe`，ARM64 用 `dist\win-arm64\AppSnapshot.exe`。
 2. 在应用之间切换，悬浮图标会显示上一个使用过的应用。
 3. 按 `Alt+Shift+2` 或点击悬浮图标截取，在微信、文档或其他支持图片的输入框中按 `Ctrl+V` 粘贴。
 
 ## 构建
 
+需要 [.NET 10 SDK](https://aka.ms/dotnet/download)。在 x64 机器上一次打出两个原生包（ARM64 为交叉编译，不需要 ARM 设备）：
+
 ```powershell
 powershell.exe -NoProfile -ExecutionPolicy Bypass -File .\build.ps1
 ```
 
-输出文件：`dist\AppSnapshot.exe`。程序使用 Windows 自带的 .NET Framework 4.0+ 和 WinForms，不需要 Electron 或额外依赖。
+| 产物 | 架构 |
+|---|---|
+| `dist\win-x64\AppSnapshot.exe` | 原生 x64（Intel / AMD） |
+| `dist\win-arm64\AppSnapshot.exe` | 原生 ARM64（骁龙本等） |
+
+均为自包含单文件，用户不必安装 .NET 运行时。不提供 32 位（`win-x86`）。构建脚本会读取 PE 头核对架构，切片不对会失败。
+
+发行命名（GitHub Release 附件）再跑一次：
+
+```powershell
+powershell.exe -NoProfile -ExecutionPolicy Bypass -File .\package-release.ps1
+```
+
+会把两份 exe 复制到仓库 `dist\release\`，改名为 `Application-Snapshot-{版本}-windows-x64.exe` / `windows-arm64.exe`，并写一份仅含这两文件的 `SHA256SUMS.txt`。
+
+代码签名：`.\sign.ps1` 默认会递归签署 `dist` 下两份 `AppSnapshot.exe`。签发后再跑 `package-release.ps1 -SkipBuild`，避免把未签名副本覆盖进去。
 
 ## 桌宠模式（可选）
 

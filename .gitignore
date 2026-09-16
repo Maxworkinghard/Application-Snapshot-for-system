@@ -3,6 +3,7 @@
 .DS_Store
 /linux/target/
 /windows/**/bin/
+/windows/bin/
 /windows/**/obj/
 /windows/dist/
 /windows/obj/

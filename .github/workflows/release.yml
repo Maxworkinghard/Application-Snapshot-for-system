@@ -1,0 +1,156 @@
+# 推送 v* tag（或手工 workflow_dispatch）后，为每种芯片打一份原生附件，
+# 合成 SHA256SUMS.txt，并创建 **draft + pre-release**。不会直接公开。
+# 人工检查附件与说明后再在 GitHub 上点 Publish。
+name: Release
+
+on:
+  push:
+    tags:
+      - "v*"
+  workflow_dispatch:
+    inputs:
+      tag:
+        description: "Version tag, e.g. v0.1.0"
+        required: true
+        type: string
+
+permissions:
+  contents: write
+
+concurrency:
+  group: release-${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: false
+
+jobs:
+  version:
+    runs-on: ubuntu-24.04
+    outputs:
+      tag: ${{ steps.pick.outputs.tag }}
+      version: ${{ steps.pick.outputs.version }}
+    steps:
+      - id: pick
+        shell: bash
+        run: |
+          if [ "${{ github.event_name }}" = "workflow_dispatch" ]; then
+            TAG="${{ inputs.tag }}"
+          else
+            TAG="${{ github.ref_name }}"
+          fi
+          TAG="${TAG#refs/tags/}"
+          VERSION="${TAG#v}"
+          if ! printf '%s' "$VERSION" | grep -Eq '^[0-9]+\.[0-9]+\.[0-9]+([.-].*)?$'; then
+            echo "error: version '$VERSION' is not like 0.1.0" >&2
+            exit 1
+          fi
+          echo "tag=$TAG" >> "$GITHUB_OUTPUT"
+          echo "version=$VERSION" >> "$GITHUB_OUTPUT"
+
+  macos:
+    needs: version
+    runs-on: macos-latest
+    env:
+      RELEASE_VERSION: ${{ needs.version.outputs.version }}
+      MACOSX_DEPLOYMENT_TARGET: "14.0"
+    steps:
+      - uses: actions/checkout@v4
+      - name: Package universal 2 zip
+        run: bash scripts/package-macos.sh
+      - uses: actions/upload-artifact@v4
+        with:
+          name: macos
+          path: dist/release/Application-Snapshot-*.zip
+          if-no-files-found: error
+
+  windows:
+    needs: version
+    runs-on: windows-latest
+    env:
+      RELEASE_VERSION: ${{ needs.version.outputs.version }}
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-dotnet@v4
+        with:
+          dotnet-version: "10.0.x"
+      - name: Package x64 and ARM64
+        shell: pwsh
+        run: ./windows/package-release.ps1
+      - uses: actions/upload-artifact@v4
+        with:
+          name: windows
+          path: |
+            dist/release/Application-Snapshot-*-windows-x64.exe
+            dist/release/Application-Snapshot-*-windows-arm64.exe
+          if-no-files-found: error
+
+  linux:
+    needs: version
+    runs-on: ubuntu-24.04
+    env:
+      RELEASE_VERSION: ${{ needs.version.outputs.version }}
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@stable
+        with:
+          targets: x86_64-unknown-linux-gnu,aarch64-unknown-linux-gnu
+      - name: Cross linker for aarch64
+        run: sudo apt-get update && sudo apt-get install -y gcc-aarch64-linux-gnu
+      - name: Package x86_64 and aarch64
+        run: chmod +x linux/package-release.sh && linux/package-release.sh
+      - uses: actions/upload-artifact@v4
+        with:
+          name: linux
+          path: dist/release/Application-Snapshot-*-linux-*.tar.gz
+          if-no-files-found: error
+
+  publish:
+    needs: [version, macos, windows, linux]
+    runs-on: ubuntu-24.04
+    env:
+      TAG: ${{ needs.version.outputs.tag }}
+      VERSION: ${{ needs.version.outputs.version }}
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/download-artifact@v4
+        with:
+          path: dist/release
+          merge-multiple: true
+      - name: Verify set and checksums
+        working-directory: dist/release
+        run: |
+          set -euo pipefail
+          expected=(
+            "Application-Snapshot-${VERSION}-macos-universal.zip"
+            "Application-Snapshot-${VERSION}-windows-x64.exe"
+            "Application-Snapshot-${VERSION}-windows-arm64.exe"
+            "Application-Snapshot-${VERSION}-linux-x86_64.tar.gz"
+            "Application-Snapshot-${VERSION}-linux-aarch64.tar.gz"
+          )
+          for f in "${expected[@]}"; do
+            test -f "$f" || { echo "missing $f" >&2; ls -la; exit 1; }
+          done
+          if ls -1 Application-Snapshot-*-windows-x86.exe >/dev/null 2>&1; then
+            echo "error: 32-bit Windows asset must not be shipped" >&2
+            exit 1
+          fi
+          sha256sum "${expected[@]}" | tee SHA256SUMS.txt
+      - name: Render notes
+        run: |
+          sed "s/{{VERSION}}/${VERSION}/g" scripts/release-notes.md > /tmp/release-notes.md
+      - name: Create draft pre-release
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          shopt -s nullglob
+          assets=(
+            dist/release/Application-Snapshot-${VERSION}-macos-universal.zip
+            dist/release/Application-Snapshot-${VERSION}-windows-x64.exe
+            dist/release/Application-Snapshot-${VERSION}-windows-arm64.exe
+            dist/release/Application-Snapshot-${VERSION}-linux-x86_64.tar.gz
+            dist/release/Application-Snapshot-${VERSION}-linux-aarch64.tar.gz
+            dist/release/SHA256SUMS.txt
+          )
+          gh release create "$TAG" "${assets[@]}" \
+            --draft \
+            --prerelease \
+            --title "应用快照 ${VERSION}" \
+            --notes-file /tmp/release-notes.md

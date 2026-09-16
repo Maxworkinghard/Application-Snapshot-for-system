@@ -18,7 +18,10 @@ rm -rf "$APP_DIR"
 mkdir -p "$APP_DIR/Contents/MacOS" "$APP_DIR/Contents/Resources"
 cp "$BINARY" "$APP_DIR/Contents/MacOS/WindowSnap"
 cp "$ROOT_DIR/Resources/Info.plist" "$APP_DIR/Contents/Info.plist"
-lipo -info "$APP_DIR/Contents/MacOS/WindowSnap"
+LIPO_INFO="$(lipo -info "$APP_DIR/Contents/MacOS/WindowSnap")"
+echo "$LIPO_INFO"
+echo "$LIPO_INFO" | grep -q "arm64" || { echo "error: missing Apple Silicon (arm64) slice" >&2; exit 1; }
+echo "$LIPO_INFO" | grep -q "x86_64" || { echo "error: missing Intel (x86_64) slice" >&2; exit 1; }
 
 # 有 WindowSnapDev 证书就用（按哈希解析，避免 keychain 中同名证书歧义）；
 # 没有则退回 ad-hoc 签名（每次重建都需重新授予屏幕录制权限）
@@ -28,6 +31,12 @@ if [ -z "$SIGN_IDENTITY" ]; then
     echo "未找到 WindowSnapDev 证书，使用 ad-hoc 签名"
 fi
 codesign --force --deep --sign "$SIGN_IDENTITY" "$APP_DIR"
+
+# 发行打包 / CI：只产出 dist 里的 .app，不改本机已安装副本、不杀进程。
+if [ "${WINDOWSNAP_PACKAGE_ONLY:-0}" = "1" ]; then
+    echo "$APP_DIR"
+    exit 0
+fi
 
 # 同步安装到 /Applications（若已安装则覆盖）
 if [ -d "$INSTALL_DIR" ]; then

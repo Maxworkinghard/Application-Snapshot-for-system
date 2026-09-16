@@ -76,6 +76,14 @@ cargo check --target x86_64-unknown-linux-gnu
 cargo check --target aarch64-unknown-linux-gnu
 ```
 
+GitHub 发行包一次打两个 GNU 目标（需 `gcc-aarch64-linux-gnu` 做 ARM 链接）：
+
+```bash
+./package-release.sh
+```
+
+产物：`../dist/release/Application-Snapshot-{版本}-linux-x86_64.tar.gz` 与 `linux-aarch64.tar.gz`。脚本会读 ELF `e_machine`，架构不对就失败。
+
 ## 运行
 
 ```bash

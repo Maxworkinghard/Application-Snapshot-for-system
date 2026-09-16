@@ -1,10 +1,10 @@
 ﻿using System;
-using System.Collections.Generic;
 using System.IO;
 using System.Net;
 using System.Text;
+using System.Text.Json;
+using System.Text.Json.Serialization;
 using System.Text.RegularExpressions;
-using System.Web.Script.Serialization;
 
 namespace AppSnapshot
 {
@@ -257,96 +257,80 @@ namespace AppSnapshot
         private static string BuildRequestBody(
             PolishConfiguration configuration, string systemPrompt, string userText)
         {
-            var serializer = new JavaScriptSerializer();
-            serializer.MaxJsonLength = int.MaxValue;
-            var body = new Dictionary<string, object>();
-            body["model"] = configuration.Model;
-            body["max_tokens"] = 16384;
-            body["temperature"] = 0.3;
+            var body = new PolishRequestBody
+            {
+                Model = configuration.Model,
+                MaxTokens = 16384,
+                Temperature = 0.3
+            };
 
             if (configuration.Kind == PolishProtocolKind.Anthropic)
             {
-                body["system"] = systemPrompt;
-                body["messages"] = new object[]
+                body.System = systemPrompt;
+                body.Messages = new[]
                 {
-                    new Dictionary<string, object> { { "role", "user" }, { "content", userText } }
+                    new PolishChatMessage { Role = "user", Content = userText }
                 };
             }
             else
             {
-                body["messages"] = new object[]
+                body.Messages = new[]
                 {
-                    new Dictionary<string, object> { { "role", "system" }, { "content", systemPrompt } },
-                    new Dictionary<string, object> { { "role", "user" }, { "content", userText } }
+                    new PolishChatMessage { Role = "system", Content = systemPrompt },
+                    new PolishChatMessage { Role = "user", Content = userText }
                 };
             }
-            return serializer.Serialize(body);
+            return JsonUtil.Serialize(body);
         }
 
         private static string ExtractPolishedText(string json, PolishProtocolKind kind)
         {
             try
             {
-                var serializer = new JavaScriptSerializer();
-                serializer.MaxJsonLength = int.MaxValue;
-                var root = serializer.DeserializeObject(json) as Dictionary<string, object>;
-                if (root == null)
+                using (JsonDocument document = JsonUtil.Parse(json))
                 {
-                    return null;
-                }
+                    JsonElement root = document.RootElement;
+                    if (kind == PolishProtocolKind.Anthropic)
+                    {
+                        JsonElement content;
+                        if (!root.TryGetProperty("content", out content)
+                            || content.ValueKind != JsonValueKind.Array)
+                        {
+                            return null;
+                        }
+                        foreach (JsonElement block in content.EnumerateArray())
+                        {
+                            JsonElement text;
+                            if (block.ValueKind == JsonValueKind.Object
+                                && block.TryGetProperty("text", out text)
+                                && text.ValueKind == JsonValueKind.String)
+                            {
+                                return Normalize(text.GetString());
+                            }
+                        }
+                        return null;
+                    }
 
-                if (kind == PolishProtocolKind.Anthropic)
-                {
-                    object content;
-                    if (!root.TryGetValue("content", out content))
+                    JsonElement choices;
+                    if (!root.TryGetProperty("choices", out choices)
+                        || choices.ValueKind != JsonValueKind.Array
+                        || choices.GetArrayLength() == 0)
                     {
                         return null;
                     }
-                    var blocks = content as object[];
-                    if (blocks != null)
+                    JsonElement choice = choices[0];
+                    JsonElement message;
+                    JsonElement contentText;
+                    if (choice.ValueKind != JsonValueKind.Object
+                        || !choice.TryGetProperty("message", out message)
+                        || message.ValueKind != JsonValueKind.Object
+                        || !message.TryGetProperty("content", out contentText)
+                        || contentText.ValueKind != JsonValueKind.String)
                     {
-                        foreach (object block in blocks)
-                        {
-                            var blockMap = block as Dictionary<string, object>;
-                            object text;
-                            if (blockMap != null
-                                && blockMap.TryGetValue("text", out text)
-                                && text is string)
-                            {
-                                return Normalize((string)text);
-                            }
-                        }
+                        return null;
                     }
-                    return null;
+                    return Normalize(contentText.GetString());
                 }
-
-                object choices;
-                if (!root.TryGetValue("choices", out choices))
-                {
-                    return null;
-                }
-                var choiceList = choices as object[];
-                if (choiceList == null || choiceList.Length == 0)
-                {
-                    return null;
-                }
-                var choice = choiceList[0] as Dictionary<string, object>;
-                if (choice == null)
-                {
-                    return null;
-                }
-                object messageObject;
-                if (!choice.TryGetValue("message", out messageObject))
-                {
-                    return null;
-                }
-                var message = messageObject as Dictionary<string, object>;
-                object contentText;
-                if (message == null || !message.TryGetValue("content", out contentText))
-                {
-                    return null;
-                }
-                return contentText is string ? Normalize((string)contentText) : null;
             }
             catch
             {
@@ -386,6 +370,33 @@ namespace AppSnapshot
             text = text.Trim();
             return text.Length <= maxLength ? text : text.Substring(0, maxLength) + "…";
         }
+    }
+
+    internal sealed class PolishChatMessage
+    {
+        [JsonPropertyName("role")]
+        public string Role { get; set; }
+
+        [JsonPropertyName("content")]
+        public string Content { get; set; }
+    }
+
+    internal sealed class PolishRequestBody
+    {
+        [JsonPropertyName("model")]
+        public string Model { get; set; }
+
+        [JsonPropertyName("max_tokens")]
+        public int MaxTokens { get; set; }
+
+        [JsonPropertyName("temperature")]
+        public double Temperature { get; set; }
+
+        [JsonPropertyName("system")]
+        public string System { get; set; }
+
+        [JsonPropertyName("messages")]
+        public PolishChatMessage[] Messages { get; set; }
     }
 
     /// <summary>发给润色模型的 system prompt，与 macOS 端保持一致。</summary>

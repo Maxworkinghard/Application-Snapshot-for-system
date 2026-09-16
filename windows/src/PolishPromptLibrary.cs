@@ -2,7 +2,6 @@
 using System.Collections.Generic;
 using System.IO;
 using System.Text;
-using System.Web.Script.Serialization;
 
 namespace AppSnapshot
 {
@@ -28,7 +27,7 @@ namespace AppSnapshot
             public string Text { get; set; }
         }
 
-        private sealed class PromptFile
+        internal sealed class PromptFile
         {
             public string Active { get; set; }
             public List<CustomPrompt> Custom { get; set; }
@@ -168,7 +167,7 @@ namespace AppSnapshot
                 if (File.Exists(FilePath))
                 {
                     string json = File.ReadAllText(FilePath, Encoding.UTF8);
-                    PromptFile file = new JavaScriptSerializer().Deserialize<PromptFile>(json);
+                    PromptFile file = JsonUtil.Deserialize<PromptFile>(json);
                     if (file != null)
                     {
                         if (file.Custom == null)
@@ -190,7 +189,7 @@ namespace AppSnapshot
             try
             {
                 Directory.CreateDirectory(DirectoryPath);
-                string json = new JavaScriptSerializer().Serialize(file);
+                string json = JsonUtil.Serialize(file);
                 File.WriteAllText(FilePath, json, Encoding.UTF8);
             }
             catch

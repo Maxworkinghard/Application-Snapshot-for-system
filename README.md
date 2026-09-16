@@ -4,8 +4,8 @@
 
 | 平台 | 技术栈 | 支持架构 | 状态 |
 |---|---|---|---|
-| macOS（本目录） | Swift + ScreenCaptureKit | Apple Silicon + Intel（universal 2） | ✅ 日常使用中 |
-| [Windows](windows/) | .NET Framework 4.0+ WinForms + Win32 | x64 | ✅ Windows 真机运行验证 |
+| macOS（本目录） | Swift + ScreenCaptureKit | Apple Silicon + Intel（一份 universal 2） | ✅ 日常使用中 |
+| [Windows](windows/) | .NET 10 WinForms + Win32（自包含） | x64 原生 + ARM64 原生 | ✅ x64 真机；ARM64 已出原生包，待 ARM 设备验证 |
 | [Linux](linux/) | Rust + X11 / Wayland portal | x86_64 + aarch64（任意架构可自行编译） | ⚠️ 编译已验证，待真机运行验证 |
 
 ## 三端功能对照
@@ -50,7 +50,7 @@ chmod +x scripts/build-app.sh
 open "dist/应用快照.app"
 ```
 
-- 产物同时支持 Apple Silicon（M 系列）与 Intel 芯片的 Mac
+- 产物是 universal 2：同一份 `.app` 含 Apple Silicon（arm64）与 Intel（x86_64）两个切片，M 系列跑原生、Intel 跑原生，不走 Rosetta。缺任一切片时构建脚本会失败
 - 有名为 `WindowSnapDev` 的代码签名证书时使用之，否则自动退回 ad-hoc 签名（仅限本机运行；重签后需重新授予屏幕录制权限）
 - 开机自启：`./scripts/install-launch-agent.sh`
 
@@ -84,6 +84,59 @@ Linux 的 Wayland 覆盖不是 100%：原生 layer-shell 只覆盖实现了 `wlr
 
 ## 系统要求
 
-- macOS 14 或更高版本（Apple Silicon 或 Intel）
+- macOS 14 或更高版本，Apple Silicon 或 Intel（一份应用同时覆盖）
 - Xcode 及 Swift 6 工具链
-- Windows / Linux 版要求见各自目录的 README
+- Windows 10 22H2 或 Windows 11，**x64 或 ARM64 各用对应原生包**；不提供 32 位（win-x86）
+- Windows / Linux 版细节见各自目录的 README
+
+## 芯片架构
+
+合格产品按芯片出原生包，不把模拟当正式支持。
+
+| 机器 | 用哪份产物 | 说明 |
+|---|---|---|
+| Mac Apple Silicon（M 系列） | `dist/应用快照.app` | universal 2 的 arm64 切片 |
+| Mac Intel | 同上 | universal 2 的 x86_64 切片 |
+| Windows x64（Intel / AMD） | `windows/dist/win-x64/AppSnapshot.exe` | 原生 x64，自包含，无需安装 .NET |
+| Windows ARM64（骁龙本等） | `windows/dist/win-arm64/AppSnapshot.exe` | 原生 ARM64，不是 x64 模拟 |
+| Windows 32 位 x86 | 不提供 | Windows 11 只有 64 位；32 位对截窗没有收益 |
+| Linux x86_64 | `linux` 目录交叉/原生编 | 发行附件 `linux-x86_64` |
+| Linux aarch64 | 同上 | 发行附件 `linux-aarch64` |
+
+Windows 两份 exe 都是自包含单文件，体积会比旧的 .NET Framework 4.0 构建大（内嵌运行时）。这是原生 ARM64 的代价：.NET Framework 没有 ARM64 运行时，不能靠改 `PlatformTarget` 出 ARM 包。
+
+录制仍调用系统 PATH 上的 `ffmpeg`，x64 / ARM64 的 ffmpeg 都可以（进程架构与 ffmpeg 不一致时由系统模拟）。
+
+## GitHub 发行包
+
+一个 git tag（`v0.1.0`）对应一条 GitHub Release，下面挂**五种原生附件**加一份校验和。文件名全部 ASCII；Mac zip 里面的应用仍叫「应用快照.app」。
+
+| 附件 | 内容 | 校验 |
+|---|---|---|
+| `Application-Snapshot-{ver}-macos-universal.zip` | 一份 universal 2 `.app`（arm64 + x86_64） | zip 解开后 `lipo` 必须同时看到两个切片 |
+| `Application-Snapshot-{ver}-windows-x64.exe` | .NET 10 自包含单文件 | PE Machine = `x64` |
+| `Application-Snapshot-{ver}-windows-arm64.exe` | 同上，ARM64 原生 | PE Machine = `ARM64` |
+| `Application-Snapshot-{ver}-linux-x86_64.tar.gz` | `windowsnap` + README + user systemd unit | ELF `EM_X86_64` |
+| `Application-Snapshot-{ver}-linux-aarch64.tar.gz` | 同上 | ELF `EM_AARCH64` |
+| `SHA256SUMS.txt` | 上述五个文件的 SHA-256 | GNU `sha256sum` 格式 |
+
+不提供 `windows-x86`。不把 Source code zip 当安装包。
+
+本地打包（只在对应操作系统上跑；不会创建 GitHub Release）：
+
+```bash
+# macOS
+bash scripts/package-macos.sh
+
+# Linux（一次打 x86_64 与 aarch64，需 aarch64-linux-gnu-gcc）
+linux/package-release.sh
+```
+
+```powershell
+# Windows（一次打 x64 与 ARM64）
+powershell.exe -NoProfile -ExecutionPolicy Bypass -File .\windows\package-release.ps1
+```
+
+产物都进仓库根目录 `dist/release/`。
+
+推送 `v*` tag 后，`.github/workflows/release.yml` 会在三种 runner 上各打各的包，收齐后创建 **draft + pre-release**。检查附件无误再在网页上点 Publish。没有签名/公证证书时保持 pre-release，不要当正式版。

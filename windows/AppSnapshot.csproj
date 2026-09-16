@@ -1,47 +1,24 @@
-<Project ToolsVersion="4.0" xmlns="http://schemas.microsoft.com/developer/msbuild/2003">
-  <Import Project="$(MSBuildToolsPath)\Microsoft.CSharp.targets" Condition="false" />
+<Project Sdk="Microsoft.NET.Sdk">
   <PropertyGroup>
     <OutputType>WinExe</OutputType>
-    <TargetFrameworkVersion>v4.0</TargetFrameworkVersion>
+    <TargetFramework>net10.0-windows</TargetFramework>
+    <UseWindowsForms>true</UseWindowsForms>
     <AssemblyName>AppSnapshot</AssemblyName>
     <RootNamespace>AppSnapshot</RootNamespace>
-    <OutputPath>dist\</OutputPath>
-    <PlatformTarget>x64</PlatformTarget>
-    <ApplicationIcon />
-    <StartupObject>AppSnapshot.Program</StartupObject>
-    <FileAlignment>512</FileAlignment>
-    <AutoGenerateBindingRedirects>true</AutoGenerateBindingRedirects>
+    <Version>0.1.0</Version>
+    <Product>应用快照</Product>
+    <Nullable>disable</Nullable>
+    <ImplicitUsings>disable</ImplicitUsings>
+    <ApplicationManifest>app.manifest</ApplicationManifest>
+    <RuntimeIdentifiers>win-x64;win-arm64</RuntimeIdentifiers>
+    <SelfContained>true</SelfContained>
+    <PublishSingleFile>true</PublishSingleFile>
+    <IncludeNativeLibrariesForSelfExtract>true</IncludeNativeLibrariesForSelfExtract>
+    <EnableCompressionInSingleFile>true</EnableCompressionInSingleFile>
+    <PublishTrimmed>false</PublishTrimmed>
+    <DebugType>embedded</DebugType>
+    <DebugSymbols>true</DebugSymbols>
+    <SatelliteResourceLanguages>en</SatelliteResourceLanguages>
+    <EnableDefaultCompileItems>true</EnableDefaultCompileItems>
   </PropertyGroup>
-  <ItemGroup>
-    <Compile Include="src\ActionPanel.cs" />
-    <Compile Include="src\App.cs" />
-    <Compile Include="src\AppSettings.cs" />
-    <Compile Include="src\CaptureService.cs" />
-    <Compile Include="src\HotKeys.cs" />
-    <Compile Include="src\NativeMethods.cs" />
-    <Compile Include="src\Pet.cs" />
-    <Compile Include="src\PolishController.cs" />
-    <Compile Include="src\PolishPromptLibrary.cs" />
-    <Compile Include="src\PolishPromptEditorForm.cs" />
-    <Compile Include="src\PolishService.cs" />
-    <Compile Include="src\SettingsForm.cs" />
-    <Compile Include="src\Program.cs" />
-    <Compile Include="src\RecordingControlsForm.cs" />
-    <Compile Include="src\RecordingService.cs" />
-    <Compile Include="src\ShutterSound.cs" />
-    <Compile Include="src\SnapshotBubbleForm.cs" />
-    <Compile Include="src\TargetAppTracker.cs" />
-    <Compile Include="src\Toast.cs" />
-    <Compile Include="src\TrayController.cs" />
-    <Compile Include="src\UiScale.cs" />
-    <Compile Include="src\WindowIconLoader.cs" />
-  </ItemGroup>
-  <ItemGroup>
-    <Reference Include="System" />
-    <Reference Include="System.Core" />
-    <Reference Include="System.Drawing" />
-    <Reference Include="System.Web.Extensions" />
-    <Reference Include="System.Windows.Forms" />
-  </ItemGroup>
-  <Import Project="$(MSBuildToolsPath)\Microsoft.CSharp.targets" />
 </Project>

@@ -4,7 +4,7 @@ using System.Drawing;
 namespace AppSnapshot
 {
     /// <summary>
-    /// 高 DPI 换算：进程通过 SetProcessDPIAware 声明了系统级 DPI 感知，
+    /// 高 DPI 换算：进程通过 HighDpiMode.SystemAware 声明系统级 DPI 感知，
     /// 拿到的坐标全部是物理像素，而布局常量是按 96 DPI 设计的。
     /// 字体按磅值定义会随 DPI 自动放大，像素常量必须手动乘以该系数，
     /// 否则在 150%/200% 缩放的屏幕上所有面板只剩一半有效宽度。
