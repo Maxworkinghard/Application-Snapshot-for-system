@@ -13,13 +13,24 @@ final class DesktopPetController: NSObject {
     private let applicationService: CapturableApplicationService
     private var panel: NSPanel?
     private var petView: DesktopPetView?
+    private var animationView: PetAnimationView?
     private var actionPanel: NSPanel?
     private var snapshotListController: ApplicationSnapshotViewController?
     private weak var recordButton: NSButton?
     private var target: NSRunningApplication?
 
+    /// 当前桌面形式；由设置决定，素材缺失时强制回退悬浮球。
+    private(set) var currentForm: DesktopForm = .bubble
+
+    /// 两种形式尺寸差得远，位置各存各的，来回切换不会把对方挤到屏幕外。
     private let positionXKey = "pet.position.x"
     private let positionYKey = "pet.position.y"
+    private let petPositionXKey = "desktoppet.position.x"
+    private let petPositionYKey = "desktoppet.position.y"
+
+    private static let bubbleSize: CGFloat = 56
+    /// 桌宠显示高度，宽度按素材比例换算（Windows 端同为 168pt 等效值）。
+    private static let petHeight: CGFloat = 168
 
     /// 一级菜单宽度固定，高度随按钮内容自然撑开。
     private static let menuPageWidth: CGFloat = 248
@@ -30,33 +41,85 @@ final class DesktopPetController: NSObject {
         self.applicationService = applicationService
     }
 
+    /// 显示悬浮窗：按设置里的「桌面形式」决定是悬浮球还是桌宠。
     func show() {
-        if panel == nil {
-            let petView = DesktopPetView(frame: NSRect(x: 0, y: 0, width: 56, height: 56))
-            petView.onClick = { [weak self] in self?.toggleActionPanel() }
-            petView.onDragged = { [weak self] origin in self?.savePosition(origin) }
-            petView.onRightClick = { [weak self] event in self?.showContextMenu(event) }
-            self.petView = petView
+        applyForm(DesktopFormStore.form, skin: DesktopFormStore.resolvedSkin())
+    }
 
-            let panel = NSPanel(
-                contentRect: petView.bounds,
-                styleMask: [.borderless, .nonactivatingPanel],
-                backing: .buffered,
-                defer: false
-            )
-            panel.isOpaque = false
-            panel.backgroundColor = .clear
-            panel.hasShadow = true
-            panel.level = .floating
-            panel.collectionBehavior = [.canJoinAllSpaces, .stationary]
-            panel.ignoresMouseEvents = false
-            panel.hidesOnDeactivate = false
-            panel.contentView = petView
-            self.panel = panel
+    /// 应用桌面形式并重建悬浮窗。要桌宠但素材不可用时回退悬浮球并返回 false，
+    /// 调用方据此提示用户（与 Windows 端 SwitchUiMode 的拒绝规则一致）。
+    @discardableResult
+    func applyForm(_ form: DesktopForm, skin: String?) -> Bool {
+        closeActionPanel()
+        teardownPanel()
+
+        var animation: PetAnimationView?
+        if form == .pet, let skin {
+            animation = PetAnimationView(skin: skin, height: Self.petHeight)
         }
+        currentForm = animation == nil ? .bubble : .pet
 
-        panel?.setFrameOrigin(savedOrDefaulPosition())
-        panel?.orderFrontRegardless()
+        let content: FloatingPetBaseView
+        if let animation {
+            animationView = animation
+            content = animation
+        } else {
+            let bubble = DesktopPetView(
+                frame: NSRect(x: 0, y: 0, width: Self.bubbleSize, height: Self.bubbleSize)
+            )
+            bubble.applyIcon(for: target)
+            petView = bubble
+            content = bubble
+        }
+        content.onClick = { [weak self] in self?.toggleActionPanel() }
+        content.onDragged = { [weak self] origin in self?.savePosition(origin) }
+        content.onRightClick = { [weak self] event in self?.showContextMenu(event) }
+
+        let panel = NSPanel(
+            contentRect: content.bounds,
+            styleMask: [.borderless, .nonactivatingPanel],
+            backing: .buffered,
+            defer: false
+        )
+        panel.isOpaque = false
+        panel.backgroundColor = .clear
+        // 桌宠逐帧换形状，窗口阴影每帧重算既费又闪，只有圆形悬浮球带阴影
+        panel.hasShadow = currentForm == .bubble
+        panel.level = .floating
+        panel.collectionBehavior = [.canJoinAllSpaces, .stationary]
+        panel.ignoresMouseEvents = false
+        panel.hidesOnDeactivate = false
+        panel.contentView = content
+        self.panel = panel
+
+        panel.setFrameOrigin(savedOrDefaultPosition(size: content.bounds.size))
+        panel.orderFrontRegardless()
+        return currentForm == form
+    }
+
+    private func teardownPanel() {
+        animationView?.stop()
+        animationView = nil
+        petView = nil
+        panel?.orderOut(nil)
+        panel = nil
+    }
+
+    /// 把一次提示翻译成桌宠动作，与 Windows 端 ToastKind → PetPose 同规则；
+    /// 悬浮球形式下没有动画视图，调用是空操作。
+    func notify(symbolName: String) {
+        switch symbolName {
+        case "checkmark":
+            setPose(.jumping)
+        case "exclamationmark.triangle", "xmark":
+            setPose(.failed)
+        default:
+            setPose(.waiting)
+        }
+    }
+
+    func setPose(_ pose: PetPose) {
+        animationView?.setPose(pose)
     }
 
     func updateTarget(_ application: NSRunningApplication?) {
@@ -73,7 +136,7 @@ final class DesktopPetController: NSObject {
 
     /// 右键悬浮窗：弹出「设置…」菜单（统一设置：快捷键 + 润色服务）。
     private func showContextMenu(_ event: NSEvent) {
-        guard let petView else { return }
+        guard let host = (animationView as NSView?) ?? (petView as NSView?) else { return }
         let menu = NSMenu()
         let item = NSMenuItem(
             title: "设置…",
@@ -82,7 +145,7 @@ final class DesktopPetController: NSObject {
         )
         item.target = self
         menu.addItem(item)
-        NSMenu.popUpContextMenu(menu, with: event, for: petView)
+        NSMenu.popUpContextMenu(menu, with: event, for: host)
     }
 
     @objc private func openSettingsFromMenu() {
@@ -337,29 +400,33 @@ final class DesktopPetController: NSObject {
         }
     }
 
-    private func savedOrDefaulPosition() -> NSPoint {
-        let defaults = UserDefaults.standard
-        if defaults.object(forKey: positionXKey) != nil,
-           defaults.object(forKey: positionYKey) != nil {
-            let point = NSPoint(
-                x: CGFloat(defaults.double(forKey: positionXKey)),
-                y: CGFloat(defaults.double(forKey: positionYKey))
-            )
-            if isPointOnScreen(point) {
-                return clampToVisibleArea(point, size: NSSize(width: 56, height: 56))
-            }
-        }
-        return defaultPosition()
+    private var positionKeys: (x: String, y: String) {
+        currentForm == .pet ? (petPositionXKey, petPositionYKey) : (positionXKey, positionYKey)
     }
 
-    private func defaultPosition() -> NSPoint {
+    private func savedOrDefaultPosition(size: NSSize) -> NSPoint {
+        let defaults = UserDefaults.standard
+        let keys = positionKeys
+        if defaults.object(forKey: keys.x) != nil,
+           defaults.object(forKey: keys.y) != nil {
+            let point = NSPoint(
+                x: CGFloat(defaults.double(forKey: keys.x)),
+                y: CGFloat(defaults.double(forKey: keys.y))
+            )
+            if isPointOnScreen(point) {
+                return clampToVisibleArea(point, size: size)
+            }
+        }
+        return defaultPosition(size: size)
+    }
+
+    private func defaultPosition(size: NSSize) -> NSPoint {
         guard let screen = NSScreen.main ?? NSScreen.screens.first else {
             return NSPoint(x: 100, y: 100)
         }
         let frame = screen.visibleFrame
-        let size: CGFloat = 56
         return NSPoint(
-            x: frame.maxX - size - 16,
+            x: frame.maxX - size.width - 16,
             y: frame.minY + 16
         )
     }
@@ -372,34 +439,14 @@ final class DesktopPetController: NSObject {
 
     private func savePosition(_ origin: NSPoint) {
         let defaults = UserDefaults.standard
-        defaults.set(Double(origin.x), forKey: positionXKey)
-        defaults.set(Double(origin.y), forKey: positionYKey)
+        let keys = positionKeys
+        defaults.set(Double(origin.x), forKey: keys.x)
+        defaults.set(Double(origin.y), forKey: keys.y)
     }
 }
 
-/// 把悬浮窗原点夹回「锚点所在屏幕」的可见区域（Dock、菜单栏之外）。
-/// 历史位置可能停在屏幕边缘外或 Dock 后面（isPointOnScreen 有 ±200 容差），
-/// 恢复与拖拽时都做约束，避免悬浮窗从视野里消失。
-private func clampToVisibleArea(_ origin: NSPoint, size: NSSize, around anchor: NSPoint? = nil) -> NSPoint {
-    let reference = anchor ?? origin
-    let screen = NSScreen.screens.first { $0.frame.contains(reference) } ?? NSScreen.main
-    guard let visible = screen?.visibleFrame else { return origin }
-    let margin: CGFloat = 8
-    return NSPoint(
-        x: min(max(origin.x, visible.minX + margin), visible.maxX - size.width - margin),
-        y: min(max(origin.y, visible.minY + margin), visible.maxY - size.height - margin)
-    )
-}
-
-private final class DesktopPetView: NSView {
-    var onClick: () -> Void = {}
-    var onDragged: (NSPoint) -> Void = { _ in }
-    var onRightClick: (NSEvent) -> Void = { _ in }
-
+private final class DesktopPetView: FloatingPetBaseView {
     private var icon: NSImage?
-    private var mouseDownLocation: NSPoint = .zero
-    private var didDrag = false
-    private let dragThreshold: CGFloat = 4
 
     override init(frame: NSRect) {
         super.init(frame: frame)
@@ -437,40 +484,4 @@ private final class DesktopPetView: NSView {
         }
     }
 
-    override func acceptsFirstMouse(for event: NSEvent?) -> Bool {
-        true
-    }
-
-    override func mouseDown(with event: NSEvent) {
-        mouseDownLocation = NSEvent.mouseLocation
-        didDrag = false
-    }
-
-    override func mouseDragged(with event: NSEvent) {
-        let current = NSEvent.mouseLocation
-        let dx = abs(current.x - mouseDownLocation.x)
-        let dy = abs(current.y - mouseDownLocation.y)
-        if dx > dragThreshold || dy > dragThreshold {
-            didDrag = true
-        }
-
-        guard let window = self.window else { return }
-        let newOrigin = NSPoint(
-            x: current.x - window.frame.width / 2,
-            y: current.y - window.frame.height / 2
-        )
-        window.setFrameOrigin(clampToVisibleArea(newOrigin, size: window.frame.size, around: current))
-    }
-
-    override func mouseUp(with event: NSEvent) {
-        if didDrag, let window = self.window {
-            onDragged(window.frame.origin)
-        } else {
-            onClick()
-        }
-    }
-
-    override func rightMouseDown(with event: NSEvent) {
-        onRightClick(event)
-    }
 }

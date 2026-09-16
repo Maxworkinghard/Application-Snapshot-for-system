@@ -336,7 +336,10 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         if settingsController == nil {
             settingsController = AppSettingsController(
                 currentSet: shortcutSet,
-                polishStore: polishConfigurationStore
+                polishStore: polishConfigurationStore,
+                onApplyDesktopForm: { [weak self] form, skin in
+                    self?.applyDesktopForm(form, skin: skin)
+                }
             ) { [weak self] set in
                 self?.applyShortcuts(set) ?? false
             }
@@ -616,6 +619,38 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         controller.show()
         controller.updateTarget(previousExternalApplication)
         petController = controller
+        // 截图/录制/润色的成败都汇入 Toast，这里一处订阅即可驱动桌宠动作
+        toastController.onShow = { [weak controller] symbolName in
+            controller?.notify(symbolName: symbolName)
+        }
+    }
+
+    /// 设置窗口保存时应用桌面形式：素材缺失返回错误文案（显示在设置窗口状态栏），
+    /// 成功则持久化并重建悬浮窗。与 Windows 端 SwitchUiMode / SwitchPetSkin 同规则。
+    private func applyDesktopForm(_ form: DesktopForm, skin: String?) -> String? {
+        if form == .pet, skin == nil {
+            return "未找到桌宠素材（\(PetAssets.root.path)/<形象>/*.gif）"
+        }
+        let previousForm = petController?.currentForm ?? DesktopFormStore.form
+        let previousSkin = DesktopFormStore.skin
+        guard form != previousForm || (form == .pet && skin != previousSkin) else {
+            return nil
+        }
+
+        DesktopFormStore.form = form
+        if let skin {
+            DesktopFormStore.skin = skin
+        }
+        guard let petController else { return nil }
+        guard petController.applyForm(form, skin: skin) else {
+            DesktopFormStore.form = .bubble
+            return "桌宠素材不可用（\(PetAssets.root.path)/<形象>/*.gif），已回退悬浮球"
+        }
+        toastController.show(
+            message: form == .pet ? "已切换到桌宠模式" : "已切换到悬浮球模式",
+            symbolName: "checkmark"
+        )
+        return nil
     }
 
     private static let maxPolishInputLength = 12_000
