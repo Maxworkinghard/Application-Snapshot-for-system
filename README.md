@@ -5,7 +5,7 @@
 | 平台 | 技术栈 | 支持架构 | 状态 |
 |---|---|---|---|
 | macOS（本目录） | Swift + ScreenCaptureKit | Apple Silicon + Intel（universal 2） | ✅ 日常使用中 |
-| [Windows](windows/) | .NET Framework 4.0+ WinForms + Win32 | x64 | ✅ Windows 真机运行验证 |
+| [Windows](windows/) | .NET Framework 4.0+ WinForms + Win32 | x64（ARM64 需 Windows 11 x64 模拟） | ✅ Windows 真机运行验证 |
 | [Linux](linux/) | Rust + X11 / Wayland portal | x86_64 + aarch64（任意架构可自行编译） | ⚠️ 编译已验证，待真机运行验证 |
 
 ## 三端功能对照
