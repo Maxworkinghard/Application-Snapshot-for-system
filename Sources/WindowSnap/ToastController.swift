@@ -4,7 +4,11 @@ final class ToastController {
     private var panel: NSPanel?
     private var closeWorkItem: DispatchWorkItem?
 
+    /// 每次提示都回调一次符号名，桌宠据此把成败翻译成动作（对应 Windows 端 Toast.Notified）。
+    var onShow: ((String) -> Void)?
+
     func show(message: String, symbolName: String) {
+        onShow?(symbolName)
         closeWorkItem?.cancel()
         panel?.close()
 
