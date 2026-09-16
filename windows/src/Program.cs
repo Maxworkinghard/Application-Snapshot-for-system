@@ -17,7 +17,7 @@ namespace AppSnapshot
                     return;
                 }
 
-                NativeMethods.SetProcessDPIAware();
+                Application.SetHighDpiMode(HighDpiMode.SystemAware);
                 Application.EnableVisualStyles();
                 Application.SetCompatibleTextRenderingDefault(false);
 
