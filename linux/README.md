@@ -2,8 +2,6 @@
 
 Linux 实现。全局快捷键截取当前活动窗口、悬浮球或桌宠、窗口录制、提示词润色。总览见 [README](../README.md)（英文）或 [简体中文](../README.zh-CN.md)。会话限制（尤其是 Wayland）见下文。
 
-> **状态**：**未在真实 Linux 桌面上运行验证**。仓库提供 `cargo build` 与发行打包脚本；首次跑通时请对照报错原文。
-
 ## 功能
 
 - **快捷键截图**：默认 `Alt+Shift+2`，截取当前活动窗口并复制到剪贴板，成功时播放快门声，60 秒后自动清空（期间复制过别的内容则跳过）
@@ -182,17 +180,3 @@ linux/
     ├── dbus_service.rs     ← local.windowsnap D-Bus 端点（CLI 触发 + 单实例锁）
     └── notify.rs           ← 桌面通知
 ```
-
-## 已知未验证点（需要在真实 Linux 桌面上跑一次）
-
-1. X11 各 WM 下 `_NET_FRAME_EXTENTS` / `_GTK_FRAME_EXTENTS` 的边框裁剪效果
-2. GNOME / KDE 的 Screenshot portal 返回文件的路径格式与权限弹框行为
-3. GlobalShortcuts portal 的 `BindShortcuts` 确认框与 `Activated` 信号
-4. 大尺寸截图（4K 窗口，PNG 数 MB）经 X11 property 传输的兼容性
-5. wl-clipboard-rs 前台供数模式在 GNOME（ext-data-control-v1）上的表现
-6. 悬浮球在各 WM 下的 shape 圆形裁剪、`_NET_WM_ICON` 图标读取与拖动手感
-7. 桌宠：X11 合成器开/关时的 ShapeBounding、layer-shell 在 sway/Hyprland/KWin 上的 Overlay 层级与点击穿透、GNOME Wayland 的 XWayland 回退、无 XWayland 会话下的失败提示
-8. 设置表单切换桌面形式后，旧窗口拆除与新窗口拉起是否在各发行版上瞬时完成
-9. ffmpeg 录制参数（crf / preset）在不同机器上的实际效果
-10. 润色流程中 zenity / kdialog 的弹窗焦点与取消路径
-11. 设置表单（zenity `--forms`）保存后 X11 快捷键重新注册与生效路径
