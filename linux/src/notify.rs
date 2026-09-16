@@ -3,7 +3,9 @@
 use std::collections::HashMap;
 
 /// 发通知，失败静默（无通知服务时不影响截图主流程）。
+/// 所有成败结果都汇入这里，顺带驱动桌宠动作（对应 Windows 端 Toast.Notified）。
 pub fn notify(summary: &str, body: &str) {
+    crate::pet::notify_pose(summary);
     let _ = try_notify(summary, body);
 }
 
