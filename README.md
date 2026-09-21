@@ -17,15 +17,16 @@ System capabilities sit behind a shared interface with one adapter per platform,
 | | Windows | macOS | Linux |
 |---|---|---|---|
 | Window capture | xcap | xcap | xcap |
-| Window recording | ffmpeg `gdigrab` | not wired up yet — ScreenCaptureKit | ffmpeg `x11grab` |
+| Window recording | ffmpeg `gdigrab` | ffmpeg `avfoundation` (main screen, cropped to the window) | ffmpeg `x11grab` |
 | Text recognition | `Windows.Media.Ocr` | Vision via a `snapshot-ocr` helper | `tesseract` |
 | Snapshot history, companion, prompt polishing | yes | yes | yes |
 
-The Windows adapters and the macOS `snapshot-ocr` helper have been exercised on a real machine and their recognition output verified. The rest of the macOS adapter (window capture, recording) and the Linux adapter have not been compiled or run yet.
+The Windows adapters, the macOS `snapshot-ocr` helper, and the macOS window adapters (capture, previous-app icon via `NSRunningApplication`, minimized-window restore via the Accessibility API) have been exercised on a real machine. macOS recording is wired via ffmpeg `avfoundation` and compile-tested, but has not been live-tested end to end. The Linux adapter has not been compiled or run yet.
 
 ## Requirements
 
 - **Recording** needs `ffmpeg` on `PATH`. Capture, OCR and polishing do not.
+- **macOS permissions**: window capture and recording need Screen Recording permission; restoring a minimized window before capturing it needs Accessibility permission.
 - **Linux OCR** needs `tesseract` plus at least one language pack (`apt install tesseract-ocr tesseract-ocr-chi-sim`).
 - **macOS OCR** needs a `snapshot-ocr` helper on `PATH`. Vision has no built-in command line entry point, so the mainline shells out to a small Swift bridge ([src-tauri/snapshot-ocr/](src-tauri/snapshot-ocr/)): reads a PNG on stdin and writes one line of text per recognised line to stdout; `--probe` reports the recognition language. Build with `cd src-tauri/snapshot-ocr && swift build -c release`, then copy the binary onto `PATH` (e.g. `~/.local/bin`).
 - **Prompt polishing** needs an OpenAI-compatible endpoint, configured under Settings. The API key goes to the OS keychain, never to a config file.
@@ -60,7 +61,7 @@ A snapshot goes to the clipboard and into the local history. The clipboard entry
 
 ## Companion asset packs
 
-The companion reads a `.zip` chosen on the Companion page. GIF, WebP, APNG and PNG are accepted, as are MP4 and WebM. A video has to be H.264, HEVC, AV1 or VP9 — the codec is checked on import, and a package whose clips cannot be decoded is rejected by name rather than silently showing a blank companion.
+The companion reads a `.zip` chosen on the Companion page. GIF, WebP, APNG and PNG are accepted, as are MP4 and WebM. A video has to be H.264, HEVC, AV1 or VP9 (H.264 or HEVC on macOS — WKWebView's codec support varies by system version) — the codec is checked on import, and a package whose clips cannot be decoded is rejected by name rather than silently showing a blank companion.
 
 One file per action; a file name containing `idle` becomes the default pose. The archive is read in place and never unpacked, so moving it breaks the companion. Limits: 100MB per package, 50MB per file.
 

@@ -32,6 +32,14 @@ thiserror = "2"
 xcap = "0.9.8"
 zip = { version = "6", default-features = false, features = ["deflate"] }
 
+[target.'cfg(target_os = "macos")'.dependencies]
+# AXUIElement 用于还原最小化窗口
+core-foundation = "0.10"
+# NSRunningApplication.icon 用于「上一个应用」图标
+objc2 = "0.6"
+objc2-app-kit = { version = "0.3", features = ["NSBitmapImageRep", "NSImage", "NSRunningApplication"] }
+objc2-foundation = { version = "0.3", features = ["NSData", "NSDictionary"] }
+
 [target.'cfg(windows)'.dependencies]
 # Windows.Media.Ocr 走 WinRT，需要 windows 而非 windows-sys
 windows = { version = "0.62", features = [

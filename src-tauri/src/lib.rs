@@ -610,7 +610,7 @@ fn find_pet_animation_entries(path: &PathBuf) -> Result<Vec<String>, String> {
         let name = entry.name().to_string();
         let lower = name.to_lowercase();
         let Some((mime, is_motion)) = pet_asset_media(&lower) else { continue };
-        // MP4/MOV 只看扩展名不够：mp4v 这类编码能通过扩展名但 WebView2 解不出来，导入后是一片空白。
+        // MP4/MOV 只看扩展名不够：mp4v 这类编码能通过扩展名但内置 WebView 解不出来，导入后是一片空白。
         // WebM 的容器里只会是 VP8/VP9/AV1，都在支持范围内，不必解析。
         if mime == "video/mp4" {
             let mut bytes = Vec::with_capacity(entry.size() as usize);
@@ -645,7 +645,7 @@ fn find_pet_animation_entries(path: &PathBuf) -> Result<Vec<String>, String> {
     // 视频全部因编码被剔掉时，直接报编码问题——退回静态图只会让人以为素材做错了
     if !rejected_codecs.is_empty() {
         return Err(format!(
-            "压缩包内的视频用的是 {} 编码，应用内置的 WebView2 无法解码；请转成 H.264 (avc1) 的 MP4 或 WebM",
+            "压缩包内的视频用的是 {} 编码，应用内置的 {WEBVIEW_NAME} 无法解码；请转成 H.264 (avc1) 的 MP4 或 WebM",
             rejected_codecs.join("、")
         ));
     }
@@ -654,8 +654,20 @@ fn find_pet_animation_entries(path: &PathBuf) -> Result<Vec<String>, String> {
         .ok_or_else(|| "压缩包内没有 GIF、WebP、APNG、PNG 或 MP4/WebM 形象资源".to_string())
 }
 
-/// WebView2 (Chromium) 能解码的视频 sample entry 4CC。
+/// 内置 WebView 能解码的视频 sample entry 4CC。
+/// Windows 的 WebView2 是 Chromium，AV1/VP9 都在支持范围内。
+#[cfg(not(target_os = "macos"))]
 const SUPPORTED_VIDEO_CODECS: [&str; 6] = ["avc1", "avc3", "hev1", "hvc1", "av01", "vp09"];
+/// macOS 的 WKWebView 稳定支持 H.264 与 HEVC；
+/// AV1/VP9 是否可解取决于系统版本与硬件，保守起见不算作可用。
+#[cfg(target_os = "macos")]
+const SUPPORTED_VIDEO_CODECS: [&str; 4] = ["avc1", "avc3", "hev1", "hvc1"];
+
+/// 报错文案里的 WebView 内核名
+#[cfg(not(target_os = "macos"))]
+const WEBVIEW_NAME: &str = "WebView2";
+#[cfg(target_os = "macos")]
+const WEBVIEW_NAME: &str = "WKWebView";
 
 /// 从 ISO-BMFF (MP4 / MOV) 字节里收集所有 sample entry 的 4CC。
 /// 解析不出来就返回空表，调用方按"无法确认"处理，不阻断导入。
@@ -705,7 +717,7 @@ fn mp4_sample_formats(bytes: &[u8]) -> Vec<String> {
     found
 }
 
-/// 判断一段 MP4/MOV 字节能否被 WebView2 播放。返回 Err 时带上实际读到的编码名。
+/// 判断一段 MP4/MOV 字节能否被内置 WebView 播放。返回 Err 时带上实际读到的编码名。
 fn mp4_playable(bytes: &[u8]) -> Result<(), Vec<String>> {
     let formats = mp4_sample_formats(bytes);
     if formats.is_empty() {
@@ -1098,7 +1110,89 @@ fn restore_minimized_window(id: u32) -> Result<(), String> {
     Ok(())
 }
 
-#[cfg(not(target_os = "windows"))]
+/// macOS：用 Accessibility API 还原最小化窗口。
+/// AX 只能按进程操作，所以先由窗口 id 反查 pid，再把该进程所有最小化窗口还原。
+#[cfg(target_os = "macos")]
+fn restore_minimized_window(id: u32) -> Result<(), String> {
+    mac_ax::unminimize_window(id)?;
+    // Dock 还原动画比 Windows 的 SW_RESTORE 慢，多等一会再截
+    thread::sleep(Duration::from_millis(400));
+    Ok(())
+}
+
+#[cfg(target_os = "macos")]
+mod mac_ax {
+    use core_foundation::{
+        array::CFArray,
+        base::{CFType, TCFType},
+        boolean::CFBoolean,
+        string::CFString,
+    };
+    use std::{ffi::c_void, os::raw::c_int, ptr};
+
+    type AXUIElementRef = *const c_void;
+
+    extern "C" {
+        fn AXIsProcessTrusted() -> bool;
+        fn AXUIElementCreateApplication(pid: c_int) -> AXUIElementRef;
+        fn AXUIElementCopyAttributeValue(element: AXUIElementRef, attribute: *const c_void, value: *mut *const c_void) -> c_int;
+        fn AXUIElementSetAttributeValue(element: AXUIElementRef, attribute: *const c_void, value: *const c_void) -> c_int;
+        fn CFRelease(cf: *const c_void);
+    }
+
+    pub fn unminimize_window(window_id: u32) -> Result<(), String> {
+        let pid = xcap::Window::all()
+            .map_err(|error| error.to_string())?
+            .into_iter()
+            .find(|window| window.id().ok() == Some(window_id))
+            .and_then(|window| window.pid().ok())
+            .ok_or_else(|| "目标窗口已关闭".to_string())?;
+        unsafe {
+            if !AXIsProcessTrusted() {
+                return Err("还原最小化窗口需要「辅助功能」权限，请在系统设置 → 隐私与安全性中授权后重试".into());
+            }
+            let app = AXUIElementCreateApplication(pid as c_int);
+            if app.is_null() {
+                return Err("无法访问目标应用".into());
+            }
+            let result = unminimize_app_windows(app);
+            CFRelease(app);
+            result
+        }
+    }
+
+    unsafe fn unminimize_app_windows(app: AXUIElementRef) -> Result<(), String> {
+        let attr_windows = CFString::new("AXWindows");
+        let mut raw: *const c_void = ptr::null();
+        let err = AXUIElementCopyAttributeValue(app, attr_windows.as_concrete_TypeRef() as *const c_void, &mut raw);
+        if err != 0 || raw.is_null() {
+            return Err("无法读取目标应用的窗口列表".into());
+        }
+        let windows: CFArray<CFType> = CFArray::wrap_under_create_rule(raw as _);
+        let attr_minimized = CFString::new("AXMinimized");
+        for index in 0..windows.len() {
+            let Some(item) = windows.get(index) else { continue };
+            let element = item.as_concrete_TypeRef() as AXUIElementRef;
+            let mut value: *const c_void = ptr::null();
+            if AXUIElementCopyAttributeValue(element, attr_minimized.as_concrete_TypeRef() as *const c_void, &mut value) != 0
+                || value.is_null()
+            {
+                continue;
+            }
+            let minimized = CFBoolean::wrap_under_create_rule(value as _);
+            if minimized == CFBoolean::true_value() {
+                let _ = AXUIElementSetAttributeValue(
+                    element,
+                    attr_minimized.as_concrete_TypeRef() as *const c_void,
+                    CFBoolean::false_value().as_concrete_TypeRef() as *const c_void,
+                );
+            }
+        }
+        Ok(())
+    }
+}
+
+#[cfg(all(unix, not(target_os = "macos")))]
 fn restore_minimized_window(_id: u32) -> Result<(), String> {
     Err("目标窗口已最小化，请先还原".into())
 }
@@ -1181,11 +1275,62 @@ fn build_ffmpeg_command(target: &TrackedWindow, output: &PathBuf) -> Result<Comm
     }
     #[cfg(target_os = "macos")]
     {
-        return Err("macOS 录制后端将在下一轮接入 ScreenCaptureKit".into());
+        // avfoundation 没有"按窗口采集"，只能采主屏整屏，再按窗口边界 crop。
+        // CGWindow 边界是点坐标（主屏左上角原点），Retina 屏要乘缩放系数换成像素；
+        // 副屏上的窗口不在主屏采集范围内，crop 越界时 ffmpeg 会直接失败。
+        let window = Window::all().map_err(|error| error.to_string())?.into_iter()
+            .find(|window| window.id().ok() == Some(target.id)).ok_or_else(|| "目标窗口已关闭".to_string())?;
+        let (x, y) = (window.x().map_err(|e| e.to_string())?, window.y().map_err(|e| e.to_string())?);
+        let (w, h) = (window.width().map_err(|e| e.to_string())?, window.height().map_err(|e| e.to_string())?);
+        // 用一次试截换算缩放：截出的像素宽 / 点宽。截不了（如屏幕录制权限未授）按 1x 处理
+        let scale = window.capture_image().ok()
+            .and_then(|image| (w > 0).then(|| image.width() as f64 / w as f64))
+            .filter(|scale| (0.5..=4.0).contains(scale))
+            .unwrap_or(1.0);
+        let to_px = |points: f64| (points * scale).round() as i64;
+        // yuv420p 要求偶数宽高
+        let (cw, ch) = (to_px(w as f64) & !1, to_px(h as f64) & !1);
+        let device = macos_avfoundation_screen_device();
+        command.args(["-f", "avfoundation", "-capture_cursor", "1", "-framerate", "30", "-i", &format!("{device}:")]);
+        command.args(["-vf", &format!("crop={cw}:{ch}:{}:{}", to_px(x as f64), to_px(y as f64))]);
     }
     command.args(["-c:v", "libx264", "-preset", "veryfast", "-pix_fmt", "yuv420p", "-crf", "23"]);
     command.arg(output);
     Ok(command)
+}
+
+/// ffmpeg 的 avfoundation 屏幕设备序号随机器而异（通常摄像头 0、屏幕 1），
+/// 列一次设备找名字里带 screen 的；探测失败（如没装 ffmpeg）回退 "1"，
+/// 由 spawn 处统一报「未找到 ffmpeg」。
+#[cfg(target_os = "macos")]
+fn macos_avfoundation_screen_device() -> String {
+    let fallback = "1".to_string();
+    let output = match Command::new("ffmpeg")
+        .args(["-f", "avfoundation", "-list_devices", "true", "-i", ""])
+        .stdin(Stdio::null())
+        .stdout(Stdio::null())
+        .stderr(Stdio::piped())
+        .output()
+    {
+        Ok(output) => output,
+        Err(_) => return fallback,
+    };
+    let text = String::from_utf8_lossy(&output.stderr);
+    // 形如 "[AVFoundation indev @ 0x7f8] [1] Capture screen 0"
+    for line in text.lines() {
+        if !line.to_lowercase().contains("screen") {
+            continue;
+        }
+        if let Some(start) = line.rfind('[') {
+            if let Some(end) = line[start + 1..].find(']') {
+                let candidate = &line[start + 1..start + 1 + end];
+                if !candidate.is_empty() && candidate.chars().all(|c| c.is_ascii_digit()) {
+                    return candidate.to_string();
+                }
+            }
+        }
+    }
+    fallback
 }
 
 /// 待润色草稿的长度上限（字符）
@@ -1463,6 +1608,7 @@ fn start_tracker(app: AppHandle, tracker: Arc<Mutex<TrackerState>>) {
     });
 }
 
+#[cfg(target_os = "windows")]
 fn rgba_to_data_url(image: RgbaImage) -> Option<String> {
     let mut bytes = Vec::new();
     DynamicImage::ImageRgba8(image).write_to(&mut Cursor::new(&mut bytes), ImageFormat::Png).ok()?;
@@ -1474,9 +1620,36 @@ fn app_icon_data_url(pid: u32) -> Option<String> {
     windows_icon::icon_for_process(pid).and_then(rgba_to_data_url)
 }
 
-#[cfg(not(target_os = "windows"))]
+#[cfg(target_os = "macos")]
+fn app_icon_data_url(pid: u32) -> Option<String> {
+    mac_icon::png_data_url_for_pid(pid)
+}
+
+#[cfg(all(unix, not(target_os = "macos")))]
 fn app_icon_data_url(_pid: u32) -> Option<String> {
     None
+}
+
+/// macOS：NSRunningApplication.icon → 64×64 PNG data URL。
+/// 拿到的是 PNG 字节，直接 base64，不必像 Windows 那样走 RgbaImage。
+#[cfg(target_os = "macos")]
+mod mac_icon {
+    use base64::{engine::general_purpose::STANDARD as BASE64, Engine as _};
+    use objc2_app_kit::{NSBitmapImageFileType, NSBitmapImageRep, NSRunningApplication};
+    use objc2_foundation::{NSDictionary, NSSize};
+
+    pub fn png_data_url_for_pid(pid: u32) -> Option<String> {
+        unsafe {
+            let app = NSRunningApplication::runningApplicationWithProcessIdentifier(pid as i32)?;
+            let icon = app.icon()?;
+            // 不压尺寸的话 TIFF 会带 1024×1024 原图，白白膨胀 base64
+            icon.setSize(NSSize::new(64.0, 64.0));
+            let tiff = icon.TIFFRepresentation()?;
+            let rep = NSBitmapImageRep::imageRepWithData(&tiff)?;
+            let png = rep.representationUsingType_properties(NSBitmapImageFileType::PNG, &NSDictionary::new())?;
+            Some(format!("data:image/png;base64,{}", BASE64.encode(png.to_vec())))
+        }
+    }
 }
 
 #[cfg(target_os = "windows")]
@@ -1714,6 +1887,18 @@ pub fn run() {
         .expect("运行 snapshot 失败");
 }
 
+#[cfg(all(test, target_os = "macos"))]
+mod mac_icon_tests {
+    #[test]
+    fn finder_icon_encodes_as_png() {
+        let Ok(output) = std::process::Command::new("pgrep").args(["-x", "Finder"]).output() else { return };
+        let text = String::from_utf8_lossy(&output.stdout);
+        let Some(pid) = text.lines().next().and_then(|line| line.trim().parse::<u32>().ok()) else { return };
+        let url = crate::mac_icon::png_data_url_for_pid(pid).expect("Finder 应当能取到图标");
+        assert!(url.starts_with("data:image/png;base64,"), "应返回 PNG data URL");
+    }
+}
+
 #[cfg(test)]
 mod pet_asset_tests {
     use super::*;
@@ -1824,6 +2009,8 @@ mod pet_asset_tests {
     fn h264_passes_and_mp4v_is_reported() {
         assert!(mp4_playable(&fake_mp4(b"avc1")).is_ok());
         assert!(mp4_playable(&fake_mp4(b"hvc1")).is_ok());
+        // AV1 在 WebView2（Chromium）可用；mac 的 WKWebView 白名单保守不含 AV1
+        #[cfg(not(target_os = "macos"))]
         assert!(mp4_playable(&fake_mp4(b"av01")).is_ok());
         assert_eq!(mp4_playable(&fake_mp4(b"mp4v")).unwrap_err(), vec!["mp4v".to_string()]);
         // 解析不出盒子结构时放行，不替用户做判断

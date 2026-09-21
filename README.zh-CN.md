@@ -19,15 +19,16 @@
 | | Windows | macOS | Linux |
 |---|---|---|---|
 | 窗口截图 | xcap | xcap | xcap |
-| 窗口录制 | ffmpeg `gdigrab` | 待接入 ScreenCaptureKit | ffmpeg `x11grab` |
+| 窗口录制 | ffmpeg `gdigrab` | ffmpeg `avfoundation`（采主屏整屏后按窗口裁剪） | ffmpeg `x11grab` |
 | 文字识别 | `Windows.Media.Ocr` | Vision（经 `snapshot-ocr` 桥） | `tesseract` |
 | 快照历史、桌面伴侣、Prompt 润色 | 有 | 有 | 有 |
 
-目前 Windows 侧的 adapter、以及 macOS 的 `snapshot-ocr` 桥接程序已经在真机上跑过并验证识别结果；macOS 其余能力（窗口截图、录制）与 Linux 的 adapter 尚未编译、也未运行。
+目前 Windows 侧的 adapter、macOS 的 `snapshot-ocr` 桥接程序、以及 macOS 的窗口能力（截图、`NSRunningApplication` 取上一个应用图标、Accessibility API 还原最小化窗口）已经在真机上跑过；macOS 录制已接入 ffmpeg `avfoundation` 并通过编译与单测，但尚未端到端实测。Linux 的 adapter 尚未编译、也未运行。
 
 ## 依赖
 
 - **录制**需要 `ffmpeg` 且在 `PATH` 中。截图、OCR、润色都不需要。
+- **macOS 权限**：窗口截图与录制需要「屏幕录制」权限；还原已最小化的窗口再截图需要「辅助功能」权限。
 - **Linux 的 OCR** 需要 `tesseract` 及至少一个语言包（`apt install tesseract-ocr tesseract-ocr-chi-sim`）。
 - **macOS 的 OCR** 需要 `PATH` 中有 `snapshot-ocr`。Vision 没有系统自带的命令行入口，主线改为调用一个 Swift 小桥（[src-tauri/snapshot-ocr/](src-tauri/snapshot-ocr/)）：stdin 收 PNG，stdout 每行输出一行识别结果；`--probe` 报告识别语言。构建方式：`cd src-tauri/snapshot-ocr && swift build -c release`，产物拷到 `PATH` 内任意目录（如 `~/.local/bin`）。
 - **Prompt 润色**需要一个 OpenAI 兼容端点，在「模型设置」里填写。API Key 存入系统钥匙串，不写进配置文件。
@@ -62,7 +63,7 @@ cd linux && ./scripts/build-linux.sh
 
 ## 伴侣素材包
 
-伴侣形象来自「桌面伴侣」页选择的 `.zip`。支持 GIF、WebP、APNG、PNG，以及 MP4、WebM。视频须为 H.264、HEVC、AV1 或 VP9——导入时会校验编码，放不出来的素材包会被点名拒绝，而不是装进去之后显示一片空白。
+伴侣形象来自「桌面伴侣」页选择的 `.zip`。支持 GIF、WebP、APNG、PNG，以及 MP4、WebM。视频须为 H.264、HEVC、AV1 或 VP9（macOS 上只认 H.264/HEVC——WKWebView 对 AV1/VP9 的支持随系统版本变化）——导入时会校验编码，放不出来的素材包会被点名拒绝，而不是装进去之后显示一片空白。
 
 一个动作一个文件，文件名含 `idle` 的作为默认形象。压缩包不会解压、按需读取，所以移走原文件形象会失效。上限：整包 100MB，单个文件 50MB。
 
