@@ -1,0 +1,81 @@
+{
+  "$schema": "https://schema.tauri.app/config/2",
+  "productName": "snapshot",
+  "version": "0.1.0",
+  "identifier": "com.appsnapshot.prompt-pet-shortcut",
+  "build": {
+    "beforeDevCommand": "npm run dev",
+    "devUrl": "http://localhost:1420",
+    "beforeBuildCommand": "npm run build",
+    "frontendDist": "../dist"
+  },
+  "app": {
+    "withGlobalTauri": false,
+    "windows": [
+      {
+        "label": "main",
+        "title": "snapshot",
+        "width": 960,
+        "height": 580,
+        "minWidth": 820,
+        "minHeight": 520,
+        "center": true,
+        "resizable": true,
+        "decorations": false,
+        "visible": true
+      },
+      {
+        "label": "pet",
+        "title": "桌宠",
+        "width": 60,
+        "height": 60,
+        "x": 24,
+        "y": 24,
+        "resizable": false,
+        "decorations": false,
+        "transparent": true,
+        "alwaysOnTop": true,
+        "skipTaskbar": true,
+        "shadow": false,
+        "visible": true
+      },
+      {
+        "label": "quick-menu",
+        "title": "快速操作",
+        "width": 286,
+        "height": 150,
+        "resizable": false,
+        "decorations": false,
+        "transparent": true,
+        "alwaysOnTop": true,
+        "skipTaskbar": true,
+        "shadow": false,
+        "visible": false
+      }
+    ],
+    "security": {
+      "csp": "default-src 'self' customprotocol: asset:; img-src 'self' asset: http://asset.localhost data: blob:; style-src 'self' 'unsafe-inline'; connect-src 'self' ipc: http://ipc.localhost https:"
+    }
+  },
+  "bundle": {
+    "active": true,
+    "targets": "all",
+    "icon": [
+      "icons/icon.png",
+      "icons/icon.ico",
+      "icons/icon.icns"
+    ],
+    "windows": {
+      "wix": {
+        "language": "zh-CN"
+      },
+      "nsis": {
+        "languages": [
+          "SimpChinese"
+        ]
+      }
+    },
+    "shortDescription": "应用快照、Prompt 润色、桌宠和快捷键",
+    "longDescription": "将应用快照、窗口录制、Prompt 润色、桌宠和全局快捷键统一在一个 Tauri 桌面端。"
+  }
+}

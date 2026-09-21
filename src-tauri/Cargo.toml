@@ -1,0 +1,57 @@
+[package]
+name = "snapshot"
+version = "0.1.0"
+description = "统一的应用快照、Prompt 润色、桌宠和快捷键桌面端"
+authors = ["App Snapshot"]
+edition = "2021"
+
+[lib]
+name = "prompt_pet_shortcut_lib"
+crate-type = ["staticlib", "cdylib", "rlib"]
+
+[build-dependencies]
+tauri-build = { version = "2", features = [] }
+
+[dependencies]
+arboard = "3.6"
+base64 = "0.22"
+chrono = { version = "0.4", features = ["clock"] }
+dirs = "6"
+image = { version = "0.25", default-features = false, features = ["png"] }
+keyring = { version = "3.6", features = ["apple-native", "windows-native", "sync-secret-service"] }
+parking_lot = "0.12"
+regex = "1.11"
+reqwest = { version = "0.12", default-features = false, features = ["json", "rustls-tls"] }
+serde = { version = "1", features = ["derive"] }
+serde_json = "1"
+tauri = { version = "2", features = ["tray-icon"] }
+tauri-plugin-global-shortcut = "2"
+tauri-plugin-dialog = "2"
+tauri-plugin-single-instance = "2"
+thiserror = "2"
+xcap = "0.9.8"
+zip = { version = "6", default-features = false, features = ["deflate"] }
+
+[target.'cfg(windows)'.dependencies]
+# Windows.Media.Ocr 走 WinRT，需要 windows 而非 windows-sys
+windows = { version = "0.62", features = [
+  "Foundation",
+  "Globalization",
+  "Graphics_Imaging",
+  "Media_Ocr",
+  "Storage_Streams"
+] }
+windows-sys = { version = "0.61", features = [
+  "Win32_Foundation",
+  "Win32_Graphics_Gdi",
+  "Win32_System_Threading",
+  "Win32_UI_Shell",
+  "Win32_UI_WindowsAndMessaging"
+] }
+
+[profile.release]
+codegen-units = 1
+lto = true
+opt-level = "s"
+panic = "abort"
+strip = true
