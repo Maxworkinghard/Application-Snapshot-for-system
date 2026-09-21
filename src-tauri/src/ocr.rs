@@ -142,6 +142,20 @@ static PLATFORM: PlatformOcr = PlatformOcr;
 #[cfg(target_os = "macos")]
 const MACOS_HELPER: &str = "snapshot-ocr";
 
+/// 打包后 snapshot-ocr 作为 sidecar 与主程序同目录（Contents/MacOS/）；
+/// 开发期没有 sidecar 布局，退回 PATH（如 ~/.local/bin/snapshot-ocr）。
+#[cfg(target_os = "macos")]
+fn helper_program() -> String {
+    if let Ok(exe) = std::env::current_exe() {
+        let sidecar = exe.with_file_name(MACOS_HELPER);
+        if sidecar.is_file() {
+            return sidecar.to_string_lossy().into_owned();
+        }
+    }
+    MACOS_HELPER.to_string()
+}
+
+
 #[cfg(target_os = "macos")]
 impl OcrAdapter for PlatformOcr {
     fn backend(&self) -> &'static str {
@@ -149,7 +163,7 @@ impl OcrAdapter for PlatformOcr {
     }
 
     fn language(&self) -> Result<String, String> {
-        let output = Command::new(MACOS_HELPER)
+        let output = Command::new(helper_program())
             .arg("--probe")
             .output()
             .map_err(|_| format!("未找到 {MACOS_HELPER}，请先构建 macOS OCR 桥接程序"))?;
@@ -164,7 +178,7 @@ impl OcrAdapter for PlatformOcr {
     }
 
     fn recognize_png(&self, png: &[u8]) -> Result<String, String> {
-        let output = pipe_png(MACOS_HELPER, &[], png)
+        let output = pipe_png(&helper_program(), &[], png)
             .map_err(|error| format!("调用 {MACOS_HELPER} 失败：{error}"))?;
         if !output.status.success() {
             return Err(stderr_or(&output.stderr, "识别失败"));
