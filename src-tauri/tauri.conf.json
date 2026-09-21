@@ -6,7 +6,7 @@
   "build": {
     "beforeDevCommand": "npm run dev",
     "devUrl": "http://localhost:1420",
-    "beforeBuildCommand": "npm run build",
+    "beforeBuildCommand": "npm run build && node scripts/prepare-sidecar.mjs",
     "frontendDist": "../dist"
   },
   "app": {
@@ -61,6 +61,9 @@
   "bundle": {
     "active": true,
     "targets": "all",
+    "externalBin": [
+      "snapshot-ocr"
+    ],
     "icon": [
       "icons/icon.png",
       "icons/icon.ico",

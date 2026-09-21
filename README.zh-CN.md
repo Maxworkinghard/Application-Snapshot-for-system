@@ -30,7 +30,7 @@
 - **录制**需要 `ffmpeg` 且在 `PATH` 中。截图、OCR、润色都不需要。
 - **macOS 权限**：窗口截图与录制需要「屏幕录制」权限；还原已最小化的窗口再截图需要「辅助功能」权限。
 - **Linux 的 OCR** 需要 `tesseract` 及至少一个语言包（`apt install tesseract-ocr tesseract-ocr-chi-sim`）。
-- **macOS 的 OCR** 需要 `PATH` 中有 `snapshot-ocr`。Vision 没有系统自带的命令行入口，主线改为调用一个 Swift 小桥（[src-tauri/snapshot-ocr/](src-tauri/snapshot-ocr/)）：stdin 收 PNG，stdout 每行输出一行识别结果；`--probe` 报告识别语言。构建方式：`cd src-tauri/snapshot-ocr && swift build -c release`，产物拷到 `PATH` 内任意目录（如 `~/.local/bin`）。
+- **macOS 的 OCR** 需要 `snapshot-ocr`。Vision 没有系统自带的命令行入口，主线改为调用一个 Swift 小桥（[src-tauri/snapshot-ocr/](src-tauri/snapshot-ocr/)）：stdin 收 PNG，stdout 每行输出一行识别结果；`--probe` 报告识别语言。`npm run tauri build` 会自动构建并以 Tauri sidecar 形式打进包（`bundle.externalBin`，落在 `Contents/MacOS/` 主程序旁边）；单独构建用 `bash scripts/build-ocr-sidecar.sh`。从源码运行时：`cd src-tauri/snapshot-ocr && swift build -c release`，把产物拷到 `PATH` 内任意目录（如 `~/.local/bin`）——应用优先用与自己同目录的 sidecar，找不到才回退 `PATH`。
 - **Prompt 润色**需要一个 OpenAI 兼容端点，在「模型设置」里填写。API Key 存入系统钥匙串，不写进配置文件。
 
 ## 从源码运行
