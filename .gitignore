@@ -1,4 +1,6 @@
 /macos/.build/
+/src-tauri/snapshot-ocr/.build/
+/.build/
 /dist/
 .DS_Store
 /linux/target/
