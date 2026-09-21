@@ -2,6 +2,9 @@
 /dist/
 .DS_Store
 /linux/target/
+/node_modules/
+/src-tauri/target/
+/src-tauri/gen/
 /windows/**/bin/
 /windows/bin/
 /windows/**/obj/
@@ -10,7 +13,6 @@
 .claude/
 .zcode/
 .workbuddy/
-*-gifs.zip
 /视频图片素材/
 .env
 .env.*
@@ -19,3 +21,42 @@
 *.key
 *.pfx
 *.p12
+
+# ---------------------------------------------------------------------------
+# 桌宠 / 演示素材
+# public/media 有 3.6GB（原片、逐帧中间产物、.mov），远超 Git 承载能力；
+# 素材请走单独分发，不要进版本库。
+# ---------------------------------------------------------------------------
+/public/media/
+/samples/
+*.zip
+.tmp-*/
+clean_run.log
+
+# 交互原型（demo），不随应用一起发布
+/prototype/
+
+# ---------------------------------------------------------------------------
+# 凭证
+# 正常情况下 API Key 存在系统钥匙串、settings.json 在 app_config_dir，
+# 都不在仓库内；这里是防手滑把密钥落到工作区。
+# ---------------------------------------------------------------------------
+*.p8
+*.jks
+*.keystore
+.npmrc
+secrets.json
+credentials.json
+**/settings.local.json
+
+# ---------------------------------------------------------------------------
+# AI 编码助手的工作目录
+# ---------------------------------------------------------------------------
+.cursor/
+.aider*
+.windsurf/
+.continue/
+.codeium/
+.opencode/
+.gemini/
+.roo/
