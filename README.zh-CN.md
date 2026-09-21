@@ -20,16 +20,16 @@
 |---|---|---|---|
 | 窗口截图 | xcap | xcap | xcap |
 | 窗口录制 | ffmpeg `gdigrab` | 待接入 ScreenCaptureKit | ffmpeg `x11grab` |
-| 文字识别 | `Windows.Media.Ocr` | 待接入 Vision（经 `snapshot-ocr` 桥） | `tesseract` |
+| 文字识别 | `Windows.Media.Ocr` | Vision（经 `snapshot-ocr` 桥） | `tesseract` |
 | 快照历史、桌面伴侣、Prompt 润色 | 有 | 有 | 有 |
 
-目前只有 Windows 侧的 adapter 在真机上跑过，macOS 与 Linux 的 adapter 尚未编译、也未运行。
+目前 Windows 侧的 adapter、以及 macOS 的 `snapshot-ocr` 桥接程序已经在真机上跑过并验证识别结果；macOS 其余能力（窗口截图、录制）与 Linux 的 adapter 尚未编译、也未运行。
 
 ## 依赖
 
 - **录制**需要 `ffmpeg` 且在 `PATH` 中。截图、OCR、润色都不需要。
 - **Linux 的 OCR** 需要 `tesseract` 及至少一个语言包（`apt install tesseract-ocr tesseract-ocr-chi-sim`）。
-- **macOS 的 OCR** 需要 `PATH` 中有 `snapshot-ocr`。Vision 没有系统自带的命令行入口，主线改为调用一个 Swift 小桥：stdin 收 PNG，stdout 每行输出一行识别结果；`--probe` 报告识别语言。该程序尚未编写。
+- **macOS 的 OCR** 需要 `PATH` 中有 `snapshot-ocr`。Vision 没有系统自带的命令行入口，主线改为调用一个 Swift 小桥（[src-tauri/snapshot-ocr/](src-tauri/snapshot-ocr/)）：stdin 收 PNG，stdout 每行输出一行识别结果；`--probe` 报告识别语言。构建方式：`cd src-tauri/snapshot-ocr && swift build -c release`，产物拷到 `PATH` 内任意目录（如 `~/.local/bin`）。
 - **Prompt 润色**需要一个 OpenAI 兼容端点，在「模型设置」里填写。API Key 存入系统钥匙串，不写进配置文件。
 
 ## 从源码运行

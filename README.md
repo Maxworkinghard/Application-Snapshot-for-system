@@ -18,16 +18,16 @@ System capabilities sit behind a shared interface with one adapter per platform,
 |---|---|---|---|
 | Window capture | xcap | xcap | xcap |
 | Window recording | ffmpeg `gdigrab` | not wired up yet — ScreenCaptureKit | ffmpeg `x11grab` |
-| Text recognition | `Windows.Media.Ocr` | not wired up yet — Vision via a `snapshot-ocr` helper | `tesseract` |
+| Text recognition | `Windows.Media.Ocr` | Vision via a `snapshot-ocr` helper | `tesseract` |
 | Snapshot history, companion, prompt polishing | yes | yes | yes |
 
-Only the Windows adapters have been exercised on a real machine. The macOS and Linux adapters have not been compiled or run yet.
+The Windows adapters and the macOS `snapshot-ocr` helper have been exercised on a real machine and their recognition output verified. The rest of the macOS adapter (window capture, recording) and the Linux adapter have not been compiled or run yet.
 
 ## Requirements
 
 - **Recording** needs `ffmpeg` on `PATH`. Capture, OCR and polishing do not.
 - **Linux OCR** needs `tesseract` plus at least one language pack (`apt install tesseract-ocr tesseract-ocr-chi-sim`).
-- **macOS OCR** needs a `snapshot-ocr` helper on `PATH`. Vision has no built-in command line entry point, so the mainline shells out to a small Swift bridge: reads a PNG on stdin and writes one line of text per recognised line to stdout; `--probe` reports the recognition language. The helper is not written yet.
+- **macOS OCR** needs a `snapshot-ocr` helper on `PATH`. Vision has no built-in command line entry point, so the mainline shells out to a small Swift bridge ([src-tauri/snapshot-ocr/](src-tauri/snapshot-ocr/)): reads a PNG on stdin and writes one line of text per recognised line to stdout; `--probe` reports the recognition language. Build with `cd src-tauri/snapshot-ocr && swift build -c release`, then copy the binary onto `PATH` (e.g. `~/.local/bin`).
 - **Prompt polishing** needs an OpenAI-compatible endpoint, configured under Settings. The API key goes to the OS keychain, never to a config file.
 
 ## Run from source
