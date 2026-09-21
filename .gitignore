@@ -13,6 +13,7 @@
 .claude/
 .zcode/
 .workbuddy/
+.workbuddy-ai/
 /视频图片素材/
 .env
 .env.*
