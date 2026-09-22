@@ -64,7 +64,6 @@
         "alwaysOnTop": true,
         "skipTaskbar": true,
         "shadow": false,
-        "fullscreen": true,
         "visible": false
       },
       {

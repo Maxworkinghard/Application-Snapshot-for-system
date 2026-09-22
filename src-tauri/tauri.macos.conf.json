@@ -3,6 +3,9 @@
   "bundle": {
     "externalBin": [
       "snapshot-ocr"
-    ]
+    ],
+    "macOS": {
+      "minimumSystemVersion": "14.0"
+    }
   }
 }
