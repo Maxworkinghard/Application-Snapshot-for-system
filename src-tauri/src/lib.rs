@@ -926,6 +926,7 @@ fn list_capturable_windows() -> Result<Vec<CapturableWindow>, String> {
     let mut result = Window::all()
         .map_err(|error| error.to_string())?
         .into_iter()
+        .filter(|window| !is_own_window(window))
         .filter_map(|window| {
             let title = window.title().ok()?;
             if title.trim().is_empty() {
@@ -1666,10 +1667,37 @@ fn now_millis() -> u64 {
     SystemTime::now().duration_since(UNIX_EPOCH).unwrap_or_default().as_millis() as u64
 }
 
+/// 判断某个窗口是不是本应用自己的窗口（桌宠、快捷菜单、主窗口）。
+/// 追踪"上一个应用"和录制目标时都必须跳过它们，否则点击桌宠托盘
+/// 后桌宠自己会被记成"上一个应用"，图标随后变成终端一类的业务应用。
+fn is_own_window(window: &Window) -> bool {
+    if let Ok(pid) = window.pid() {
+        if pid == std::process::id() {
+            return true;
+        }
+    }
+    // WebView2 用独立子进程渲染，pid 不等于主进程，只能靠标题兜底。
+    // 三个窗口标题都在 tauri.conf.json 里：snapshot / 桌宠 / 快速操作。
+    let title = window.title().unwrap_or_default();
+    matches!(title.trim(), "snapshot" | "桌宠" | "快速操作")
+}
+
 fn start_tracker(app: AppHandle, tracker: Arc<Mutex<TrackerState>>) {
     thread::spawn(move || loop {
         if let Ok(windows) = Window::all() {
-            if let Some(focused) = windows.into_iter().find(|window| window.is_focused().unwrap_or(false)) {
+            // 焦点可能落在桌宠/快捷菜单这类自有窗口上，先向前找最近一个
+            // 真正的业务窗口作为焦点候选，避免把"上一个应用"记成自己。
+            let mut focused: Option<Window> = None;
+            for window in windows.into_iter() {
+                if !window.is_focused().unwrap_or(false) {
+                    continue;
+                }
+                if !is_own_window(&window) {
+                    focused = Some(window);
+                    break;
+                }
+            }
+            if let Some(focused) = focused {
                 if let (Ok(id), Ok(pid)) = (focused.id(), focused.pid()) {
                     let next = TrackedWindow {
                         id,
