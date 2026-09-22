@@ -2749,9 +2749,16 @@ fn capture_fullscreen_image(include_cursor: bool) -> Result<(RgbaImage, String),
         // 失败则回退 xcap（无光标）。
     }
     let _ = include_cursor;
-    let image = monitor
+    #[allow(unused_mut)]
+    let mut image = monitor
         .capture_image()
         .map_err(|error| format!("全屏截取失败：{error} / fullscreen capture failed: {error}"))?;
+    #[cfg(target_os = "macos")]
+    if include_cursor {
+        if let (Ok(mx), Ok(my), Ok(mw)) = (monitor.x(), monitor.y(), monitor.width()) {
+            mac_cursor::overlay_into(&mut image, (mx, my), mw);
+        }
+    }
     Ok((image, name))
 }
 
@@ -2781,9 +2788,15 @@ fn capture_region_image(rect: RegionRect, include_cursor: bool) -> Result<(RgbaI
     if width < 2 || height < 2 {
         return Err("选区超出显示器范围".into());
     }
-    let image = monitor
+    #[allow(unused_mut)]
+    let mut image = monitor
         .capture_region(rel_x, rel_y, width, height)
         .map_err(|error| format!("区域截取失败：{error} / region capture failed: {error}"))?;
+    #[cfg(target_os = "macos")]
+    if include_cursor {
+        // 裁出来的图左上角就是选区左上角（绝对坐标 = 显示器原点 + 相对偏移）
+        mac_cursor::overlay_into(&mut image, (mx + rel_x as i32, my + rel_y as i32), width);
+    }
     Ok((image, "区域截图".into()))
 }
 
