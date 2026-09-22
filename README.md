@@ -77,11 +77,13 @@ Nothing is bound by default. Snapshot, region capture, fullscreen capture, scrol
 
 Post-capture behaviour depends on “after capture” and “auto-save local”: copy to clipboard by default, or open the annotate window / save-as dialog. Local history is written only when auto-save is on. Clipboard auto-clear delay is configurable (about 60 seconds by default; skipped if something else was copied meanwhile). Recordings are written as MP4 to the downloads folder (or a custom save directory). Extracted text replaces the clipboard contents.
 
-## Companion asset packs
+## Companion assets
 
-The companion reads a `.zip` chosen on the Companion page. GIF, WebP, APNG and PNG are accepted, as are MP4 and WebM. Video codec allow-lists follow the embedded WebView: Windows (WebView2) accepts H.264 / HEVC / AV1 / VP9; macOS (WKWebView) and Linux (WebKitGTK) conservatively allow H.264 / HEVC only (WebM additionally allows VP8/VP9, not AV1). The codec is checked on import, and a package whose clips cannot be decoded is rejected by name rather than silently showing a blank companion.
+Pick a `.zip` full of GIFs on the Companion page, or just pick a single GIF. **GIF is the only accepted format**; anything else inside the archive is skipped.
 
-One file per action; a file name containing `idle` becomes the default pose. The archive is read in place and never unpacked, so moving it breaks the companion. Limits: 100MB per package, 50MB per file.
+Video (MP4 / WebM) is not supported for now: playback goes through each platform's embedded WebView, and the three engines accept different codecs — the same pack animates on one machine and shows a blank square on another.
+
+One file per action; a file name containing `idle` becomes the default pose. Assets are read on demand and never copied, so moving the original breaks the companion. Limits: 100MB per archive, 50MB per GIF.
 
 ## Release
 
