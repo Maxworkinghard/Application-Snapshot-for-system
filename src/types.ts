@@ -48,7 +48,6 @@ export interface Settings {
   autoSaveLocal: boolean;
   launchOnBoot: boolean;
   includeCursor: boolean;
-  trayDoubleClick: "workbench" | "snapshot" | "dock";
   afterCapture: "clipboard" | "annotate" | "saveas";
   petSoundEnabled: boolean;
   petSoundVolume: number;
@@ -89,4 +88,18 @@ export interface OcrCapability {
   available: boolean;
   language: string | null;
   detail: string;
+}
+
+export interface CapabilityStatus {
+  available: boolean;
+  detail: string;
+}
+
+export interface PlatformCapabilities {
+  os: string;
+  displayServer: string;
+  recording: CapabilityStatus;
+  ocr: CapabilityStatus;
+  autostart: CapabilityStatus;
+  trayNote: string;
 }
