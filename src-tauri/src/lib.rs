@@ -930,6 +930,11 @@ fn save_preferences(
             // 与 Windows「用户勾选才生效」一致：只在显式改动时写 XDG autostart，默认不装。
             linux::apply_launch_on_boot(value)?;
         }
+        #[cfg(target_os = "macos")]
+        {
+            // 同上：勾选才写 LaunchAgent，取消即删除。
+            mac_autostart::apply_launch_on_boot(value)?;
+        }
     }
     if let Some(value) = prefs.include_cursor {
         settings.include_cursor = value;
@@ -1273,9 +1278,12 @@ fn platform_capabilities() -> PlatformCapabilities {
                 available: ocr_report.available,
                 detail: ocr_report.detail,
             },
-            autostart: CapabilityStatus {
-                available: false,
-                detail: "设置项已保存；Launch Agent 挂钩尚未接入".into(),
+            autostart: match mac_autostart::autostart_capability() {
+                Ok(()) => CapabilityStatus {
+                    available: true,
+                    detail: "LaunchAgent：~/Library/LaunchAgents/com.appsnapshot.prompt-pet-shortcut.plist，下次登录生效".into(),
+                },
+                Err(detail) => CapabilityStatus { available: false, detail },
             },
             scrolling: CapabilityStatus {
                 available: false,
@@ -1283,12 +1291,11 @@ fn platform_capabilities() -> PlatformCapabilities {
             },
             include_cursor: CapabilityStatus {
                 available: true,
-                detail: "录制：avfoundation -capture_cursor；静帧截图目前不合成光标".into(),
+                detail: "录制：avfoundation -capture_cursor；静帧截图：截后按热点与 DPI 比例合成当前系统光标".into(),
             },
             tray_note: "NSStatusItem：左键打开主窗口；菜单打开设置/退出。".into(),
             notes: vec![
                 "macOS 还原最小化窗口在标题对不上时，可能还原该进程全部最小化窗口".into(),
-                "开机自启仅保存偏好，尚未挂钩 Launch Agent".into(),
             ],
         };
     }
@@ -1480,9 +1487,18 @@ fn capture_window_image(window: &Window, include_cursor: bool) -> Result<RgbaIma
         }
     }
     let _ = include_cursor;
-    window
+    #[allow(unused_mut)]
+    let mut image = window
         .capture_image()
-        .map_err(|error| format!("截取失败：{error}"))
+        .map_err(|error| format!("截取失败：{error}"))?;
+    #[cfg(target_os = "macos")]
+    if include_cursor {
+        // xcap 截不到光标，截完按窗口原点与 DPI 比例把当前系统光标合成上去
+        if let (Ok(x), Ok(y), Ok(width)) = (window.x(), window.y(), window.width()) {
+            mac_cursor::overlay_into(&mut image, (x, y), width);
+        }
+    }
+    Ok(image)
 }
 
 /// 统一收尾：按偏好决定是否落盘、剪贴板清空时限、截后动作与闪烁/音效提示。
@@ -1597,6 +1613,327 @@ fn restore_minimized_window(id: u32) -> Result<(), String> {
     // Dock 还原动画比 Windows 的 SW_RESTORE 慢，多等一会再截
     thread::sleep(Duration::from_millis(400));
     Ok(())
+}
+
+#[cfg(target_os = "macos")]
+mod mac_cursor {
+    //! 静帧截图合成鼠标光标。
+    //!
+    //! xcap 的窗口位图不含光标，录制那条路有 avfoundation 的 `-capture_cursor`，静帧
+    //! 没有对应开关，只能截完再自己画上去——与 Windows 侧同样的做法。
+
+    use image::RgbaImage;
+    use objc2::AnyThread;
+    use objc2_app_kit::{
+        NSBitmapImageFileType, NSBitmapImageRep, NSCursor, NSDeviceRGBColorSpace,
+        NSGraphicsContext,
+    };
+    use objc2_foundation::{NSDictionary, NSPoint, NSRect, NSSize};
+    use std::ffi::c_void;
+
+    #[repr(C)]
+    #[derive(Clone, Copy)]
+    struct CGPoint {
+        x: f64,
+        y: f64,
+    }
+
+    extern "C" {
+        fn CGEventCreate(source: *const c_void) -> *mut c_void;
+        fn CGEventGetLocation(event: *mut c_void) -> CGPoint;
+        fn CFRelease(cf: *const c_void);
+    }
+
+    /// 光标位置：全局坐标、左上原点、点为单位——正好是 xcap 报窗口位置用的坐标系。
+    ///
+    /// 不用 `NSEvent::mouseLocation`：那个是左下原点，翻 y 要主屏高度，而 `NSScreen`
+    /// 在 objc2 里需要 `MainThreadMarker`，截图不一定跑在主线程上。
+    fn cursor_position() -> Option<(f64, f64)> {
+        unsafe {
+            let event = CGEventCreate(std::ptr::null());
+            if event.is_null() {
+                return None;
+            }
+            let point = CGEventGetLocation(event);
+            CFRelease(event);
+            Some((point.x, point.y))
+        }
+    }
+
+    /// 当前系统光标：按 `scale` 渲染成像素位图，附带热点（点单位，左上原点）。
+    ///
+    /// 走 PNG 中转而不是直接读 `bitmapData`：省掉一段裸指针算术，光标只有几十像素，
+    /// 这点编解码开销可以忽略。
+    // currentSystemCursor 已被苹果标记弃用，推荐改用 ScreenCaptureKit 的
+    // SCStreamConfiguration.showsCursor。这里仍然用它，因为替代品 NSCursor::currentCursor
+    // 只知道**本应用**的光标：截别人的窗口时它返回我们自己的箭头，而不是对方正在显示的
+    // I 形/手形光标，语义是错的。等录制那条路接上 ScreenCaptureKit 时一并迁移。
+    #[allow(deprecated)]
+    fn cursor_bitmap(scale: f64) -> Option<(RgbaImage, f64, f64)> {
+        unsafe {
+            let cursor = NSCursor::currentSystemCursor()?;
+            let hot_spot = cursor.hotSpot();
+            let nsimage = cursor.image();
+            let size = nsimage.size();
+            if size.width < 1.0 || size.height < 1.0 {
+                return None;
+            }
+            let pixel_width = (size.width * scale).round().max(1.0);
+            let pixel_height = (size.height * scale).round().max(1.0);
+            let rep = NSBitmapImageRep::initWithBitmapDataPlanes_pixelsWide_pixelsHigh_bitsPerSample_samplesPerPixel_hasAlpha_isPlanar_colorSpaceName_bytesPerRow_bitsPerPixel(
+                NSBitmapImageRep::alloc(),
+                std::ptr::null_mut(),
+                pixel_width as isize,
+                pixel_height as isize,
+                8,
+                4,
+                true,
+                false,
+                NSDeviceRGBColorSpace,
+                0,
+                0,
+            )?;
+            let context = NSGraphicsContext::graphicsContextWithBitmapImageRep(&rep)?;
+            NSGraphicsContext::saveGraphicsState_class();
+            NSGraphicsContext::setCurrentContext(Some(&context));
+            nsimage.drawInRect(NSRect::new(
+                NSPoint::new(0.0, 0.0),
+                NSSize::new(pixel_width, pixel_height),
+            ));
+            NSGraphicsContext::restoreGraphicsState_class();
+            let png = rep
+                .representationUsingType_properties(NSBitmapImageFileType::PNG, &NSDictionary::new())?;
+            let decoded = image::load_from_memory(&png.to_vec()).ok()?.to_rgba8();
+            Some((decoded, hot_spot.x, hot_spot.y))
+        }
+    }
+
+    /// 光标左上角落在截图里的像素坐标：先减热点，再把「点」按 DPI 比例换成像素。
+    fn overlay_origin_px(
+        cursor: (f64, f64),
+        hot_spot: (f64, f64),
+        window_origin: (i32, i32),
+        scale: f64,
+    ) -> (i64, i64) {
+        let left = (cursor.0 - hot_spot.0 - window_origin.0 as f64) * scale;
+        let top = (cursor.1 - hot_spot.1 - window_origin.1 as f64) * scale;
+        (left.round() as i64, top.round() as i64)
+    }
+
+    /// source-over 合成，超出边界的部分裁掉。
+    fn blend(canvas: &mut RgbaImage, overlay: &RgbaImage, left: i64, top: i64) {
+        for (ox, oy, pixel) in overlay.enumerate_pixels() {
+            let x = left + ox as i64;
+            let y = top + oy as i64;
+            if x < 0 || y < 0 || x >= canvas.width() as i64 || y >= canvas.height() as i64 {
+                continue;
+            }
+            let alpha = pixel.0[3] as f32 / 255.0;
+            if alpha <= 0.0 {
+                continue;
+            }
+            let base = canvas.get_pixel_mut(x as u32, y as u32);
+            for channel in 0..3 {
+                base.0[channel] = (pixel.0[channel] as f32 * alpha
+                    + base.0[channel] as f32 * (1.0 - alpha))
+                    .round()
+                    .clamp(0.0, 255.0) as u8;
+            }
+            base.0[3] = base.0[3].max(pixel.0[3]);
+        }
+    }
+
+    /// 把当前光标合成进刚截下来的位图。
+    ///
+    /// `window_origin` / `logical_width` 是 xcap 报的窗口左上角与逻辑宽度（点），
+    /// 用来换算截图像素与点的比例（Retina 上是 2）。光标不在这张图范围内时什么都不做。
+    pub fn overlay_into(image: &mut RgbaImage, window_origin: (i32, i32), logical_width: u32) {
+        if logical_width == 0 {
+            return;
+        }
+        let scale = image.width() as f64 / logical_width as f64;
+        if !(0.5..=4.0).contains(&scale) {
+            return;
+        }
+        let Some(position) = cursor_position() else {
+            eprintln!("snapshot: 取不到光标位置，本次截图不合成光标");
+            return;
+        };
+        let Some((bitmap, hot_x, hot_y)) = cursor_bitmap(scale) else {
+            eprintln!("snapshot: 取不到当前系统光标位图，本次截图不合成光标");
+            return;
+        };
+        let (left, top) = overlay_origin_px(position, (hot_x, hot_y), window_origin, scale);
+        blend(image, &bitmap, left, top);
+    }
+
+    #[cfg(test)]
+    mod tests {
+        use super::*;
+        use image::Rgba;
+
+        #[test]
+        fn origin_subtracts_hot_spot_and_window_offset() {
+            // 光标在 (120,140)，窗口左上角 (100,100)，热点 (4,4)，1x 屏
+            assert_eq!(
+                overlay_origin_px((120.0, 140.0), (4.0, 4.0), (100, 100), 1.0),
+                (16, 36)
+            );
+        }
+
+        #[test]
+        fn retina_scale_doubles_the_offset() {
+            // 同样的点位，2x 屏上像素偏移要翻倍
+            assert_eq!(
+                overlay_origin_px((120.0, 140.0), (4.0, 4.0), (100, 100), 2.0),
+                (32, 72)
+            );
+        }
+
+        #[test]
+        fn blend_respects_alpha_and_clips_out_of_bounds() {
+            let mut canvas = RgbaImage::from_pixel(4, 4, Rgba([0, 0, 0, 255]));
+            let overlay = RgbaImage::from_pixel(2, 2, Rgba([255, 255, 255, 255]));
+            blend(&mut canvas, &overlay, 3, 3); // 只有左上角那个像素落在画布内
+            assert_eq!(canvas.get_pixel(3, 3).0, [255, 255, 255, 255]);
+            assert_eq!(canvas.get_pixel(0, 0).0, [0, 0, 0, 255]);
+        }
+
+        #[test]
+        fn fully_transparent_overlay_changes_nothing() {
+            let mut canvas = RgbaImage::from_pixel(2, 2, Rgba([10, 20, 30, 255]));
+            let overlay = RgbaImage::from_pixel(2, 2, Rgba([255, 255, 255, 0]));
+            blend(&mut canvas, &overlay, 0, 0);
+            assert_eq!(canvas.get_pixel(0, 0).0, [10, 20, 30, 255]);
+        }
+
+        #[test]
+        fn half_alpha_blends_halfway() {
+            let mut canvas = RgbaImage::from_pixel(1, 1, Rgba([0, 0, 0, 255]));
+            let overlay = RgbaImage::from_pixel(1, 1, Rgba([255, 255, 255, 128]));
+            blend(&mut canvas, &overlay, 0, 0);
+            let value = canvas.get_pixel(0, 0).0[0];
+            assert!((127..=129).contains(&value), "got {value}");
+        }
+    }
+}
+
+#[cfg(target_os = "macos")]
+mod mac_autostart {
+    //! macOS 开机自启（opt-in）：在 `~/Library/LaunchAgents/` 放 / 删一份 LaunchAgent plist。
+    //!
+    //! 与 Linux 的 XDG autostart 同样是「用户勾选后才生效」，且同样只落文件、不主动
+    //! `launchctl bootstrap`——RunAtLoad 的 agent 一旦 bootstrap 会立刻把应用再拉起来一份，
+    //! 勾选设置的当下多出一个实例不是用户要的。写进去的条目在下次登录时生效。
+
+    use std::fs;
+    use std::path::PathBuf;
+
+    const LABEL: &str = "com.appsnapshot.prompt-pet-shortcut";
+
+    fn agents_dir() -> PathBuf {
+        dirs::home_dir()
+            .unwrap_or_else(|| PathBuf::from("."))
+            .join("Library/LaunchAgents")
+    }
+
+    fn plist_path() -> PathBuf {
+        agents_dir().join(format!("{LABEL}.plist"))
+    }
+
+    /// plist 是 XML，可执行文件路径里的 `&`/`<`/`>` 必须转义，否则写出来的是坏文件。
+    fn xml_escape(value: &str) -> String {
+        value
+            .replace('&', "&amp;")
+            .replace('<', "&lt;")
+            .replace('>', "&gt;")
+    }
+
+    fn plist_body(exe: &str) -> String {
+        format!(
+            r#"<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<plist version="1.0">
+<dict>
+    <key>Label</key>
+    <string>{LABEL}</string>
+    <key>ProgramArguments</key>
+    <array>
+        <string>{exe}</string>
+    </array>
+    <key>RunAtLoad</key>
+    <true/>
+    <key>ProcessType</key>
+    <string>Interactive</string>
+</dict>
+</plist>
+"#,
+            exe = xml_escape(exe)
+        )
+    }
+
+    /// 按设置开关写入或删除 LaunchAgent。
+    pub fn apply_launch_on_boot(enabled: bool) -> Result<(), String> {
+        let path = plist_path();
+        if !enabled {
+            if path.exists() {
+                fs::remove_file(&path).map_err(|error| format!("无法关闭开机自启：{error}"))?;
+            }
+            return Ok(());
+        }
+
+        let exe = std::env::current_exe()
+            .map_err(|error| format!("无法定位当前程序：{error}"))?
+            // .app 里启动时 current_exe 可能带 symlink，落进 plist 的要是真实路径
+            .canonicalize()
+            .map_err(|error| format!("无法解析程序路径：{error}"))?;
+        fs::create_dir_all(agents_dir())
+            .map_err(|error| format!("无法创建 ~/Library/LaunchAgents：{error}"))?;
+        fs::write(&path, plist_body(&exe.to_string_lossy()))
+            .map_err(|error| format!("无法写入开机自启项：{error}"))?;
+        Ok(())
+    }
+
+    /// 探测 `~/Library/LaunchAgents` 是否可写（给能力面板用）。
+    pub fn autostart_capability() -> Result<(), String> {
+        let dir = agents_dir();
+        fs::create_dir_all(&dir).map_err(|error| {
+            format!("无法创建 ~/Library/LaunchAgents（{error}）；仍可保存偏好，但系统自启项写不进去")
+        })?;
+        let probe = dir.join(".snapshot-autostart-write-probe");
+        fs::write(&probe, b"ok").map_err(|error| {
+            format!("无法写入 ~/Library/LaunchAgents（{error}）；仍可保存偏好，但系统自启项写不进去")
+        })?;
+        let _ = fs::remove_file(&probe);
+        Ok(())
+    }
+
+    #[cfg(test)]
+    mod tests {
+        use super::*;
+
+        #[test]
+        fn plist_declares_label_and_run_at_load() {
+            let body = plist_body("/Applications/snapshot.app/Contents/MacOS/snapshot");
+            assert!(body.contains("<string>com.appsnapshot.prompt-pet-shortcut</string>"));
+            assert!(body.contains("<key>RunAtLoad</key>"));
+            assert!(body.contains("<string>/Applications/snapshot.app/Contents/MacOS/snapshot</string>"));
+        }
+
+        #[test]
+        fn exe_path_is_xml_escaped() {
+            // 目录名里带 & 的真实场景：用户把 .app 放在「Tools & Toys」之类的目录下
+            let body = plist_body("/Users/me/Tools & Toys/snapshot.app/Contents/MacOS/snapshot");
+            assert!(body.contains("Tools &amp; Toys"));
+            assert!(!body.contains("Tools & Toys"));
+        }
+
+        #[test]
+        fn plist_path_sits_in_launch_agents() {
+            let path = plist_path();
+            assert!(path.ends_with("Library/LaunchAgents/com.appsnapshot.prompt-pet-shortcut.plist"));
+        }
+    }
 }
 
 #[cfg(target_os = "macos")]
@@ -2745,6 +3082,17 @@ pub fn run() {
                 if settings.launch_on_boot {
                     if let Err(error) = linux::apply_launch_on_boot(true) {
                         eprintln!("snapshot: could not sync XDG autostart: {error}");
+                    }
+                }
+            }
+
+            #[cfg(target_os = "macos")]
+            {
+                // 同上：把 LaunchAgent 与设置对齐。应用被移动过位置时，这里会把
+                // plist 里的路径刷成当前的。
+                if settings.launch_on_boot {
+                    if let Err(error) = mac_autostart::apply_launch_on_boot(true) {
+                        eprintln!("snapshot: could not sync LaunchAgent: {error}");
                     }
                 }
             }
