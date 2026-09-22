@@ -285,6 +285,15 @@ fn create_d3d_device() -> Result<(ID3D11Device, ID3D11DeviceContext), String> {
     Err("无法创建 Direct3D 设备".into())
 }
 
+/// 窗口是否处于最小化。
+///
+/// 最小化后 DWM 不再为它合成画面，WGC 一帧也拿不到——实测正常状态 44 帧、
+/// 最小化 0 帧。所以必须在开录前拦下来，否则只会写出一个空文件。
+pub fn is_minimized(hwnd: isize) -> bool {
+    use windows_sys::Win32::UI::WindowsAndMessaging::IsIconic;
+    unsafe { IsIconic(hwnd as usize as *mut core::ffi::c_void) != 0 }
+}
+
 /// 开始录制 `hwnd` 指向的窗口。
 pub fn start(hwnd: isize, include_cursor: bool, output: &Path) -> Result<ActiveRecording, String> {
     if !GraphicsCaptureSession::IsSupported().unwrap_or(false) {
@@ -724,6 +733,70 @@ mod frame_yield_tests {
         if checked == 0 {
             // 桌面上没有可测窗口是环境状态，不是回归——诊断用例不该因此变红
             eprintln!("没有找到可测的窗口，跳过");
+        }
+    }
+}
+
+#[cfg(test)]
+mod minimized_tests {
+    use super::*;
+    use windows_sys::Win32::UI::WindowsAndMessaging::{
+        IsIconic, ShowWindow, SW_MINIMIZE, SW_RESTORE,
+    };
+
+    /// 最小化的窗口到底能不能录？实测：把目标最小化、录一小段、立刻还原。
+    #[test]
+    #[ignore]
+    fn measures_frame_yield_while_minimized() {
+        let windows = xcap::Window::all().expect("枚举窗口失败");
+        let Some(window) = windows.into_iter().find(|w| {
+            let title = w.title().unwrap_or_default();
+            !title.trim().is_empty()
+                && !title.contains("snapshot")
+                && !w.is_minimized().unwrap_or(false)
+                && w.width().unwrap_or(0) >= 320
+                && w.height().unwrap_or(0) >= 240
+        }) else {
+            eprintln!("没有可用窗口，跳过");
+            return;
+        };
+        let id = window.id().expect("取窗口 id 失败");
+        let handle = id as usize as *mut core::ffi::c_void;
+        eprintln!("对象：{}", window.title().unwrap_or_default());
+
+        // 先量一次正常状态做对照
+        let baseline = record_and_count(id as isize, "baseline");
+
+        unsafe { ShowWindow(handle, SW_MINIMIZE) };
+        std::thread::sleep(std::time::Duration::from_millis(500));
+        let minimized_now = unsafe { IsIconic(handle) } != 0;
+        let minimized = record_and_count(id as isize, "minimized");
+        // 不论上面结果如何都要还原，别把用户的窗口留在最小化状态
+        unsafe { ShowWindow(handle, SW_RESTORE) };
+
+        eprintln!("确实处于最小化：{minimized_now}");
+        eprintln!("正常状态 {baseline} 帧 / 最小化 {minimized} 帧");
+        assert!(minimized_now, "没能把窗口最小化，这次测量无效");
+        assert!(baseline > 0, "正常状态都没帧，环境有问题");
+        // 钉住这个事实：最小化就是拿不到帧，所以上层必须先还原再录
+        assert_eq!(minimized, 0, "最小化窗口本不该产出帧，行为若变了要重新审视还原逻辑");
+        assert!(is_minimized(id as isize) == false, "测完应当已还原");
+    }
+
+    fn record_and_count(hwnd: isize, tag: &str) -> u64 {
+        let output = std::env::temp_dir().join(format!("snapshot-min-{tag}.mp4"));
+        let _ = std::fs::remove_file(&output);
+        match start(hwnd, false, &output) {
+            Ok(active) => {
+                std::thread::sleep(std::time::Duration::from_millis(1500));
+                let (path, frames) = active.stop();
+                let _ = std::fs::remove_file(&path);
+                frames
+            }
+            Err(error) => {
+                eprintln!("{tag} 启动失败：{error}");
+                0
+            }
         }
     }
 }

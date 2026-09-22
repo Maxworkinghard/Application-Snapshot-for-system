@@ -36,6 +36,7 @@ Only the parts that do not depend on system capabilities are shared: settings, s
 ## Requirements
 
 - **Recording**: Windows uses the built-in Windows.Graphics.Capture + Media Foundation and does not need ffmpeg; macOS uses a bundled ScreenCaptureKit sidecar and does not need external ffmpeg; Linux needs `ffmpeg` on `PATH`. On Linux, still captures that include the cursor also prefer ffmpeg `x11grab` (falling back without the cursor). OCR and polishing do not need ffmpeg.
+- **Recording a minimized window**: once minimized, the system stops compositing the window and there is nothing to capture. On Windows it is restored first (same as capture); if it cannot be restored the call fails with a clear message instead of leaving an unplayable empty file.
 - **macOS permissions**: window capture and recording need Screen Recording permission; restoring a minimized window before capturing it needs Accessibility permission.
 - **Linux OCR** needs `tesseract` plus at least one language pack (`apt install tesseract-ocr tesseract-ocr-chi-sim`).
 - **macOS sidecars**: Vision OCR is provided by [src-tauri/snapshot-ocr/](src-tauri/snapshot-ocr/); ScreenCaptureKit recording is provided by [src-tauri/snapshot-recorder/](src-tauri/snapshot-recorder/). Both `npm run tauri dev` and `npm run tauri build` prepare them automatically, and packaged builds place them next to the main executable in `Contents/MacOS/`.

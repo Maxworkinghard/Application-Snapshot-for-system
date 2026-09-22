@@ -2320,6 +2320,12 @@ fn toggle_recording(
     {
         // xcap 在 Windows 上的窗口 id 就是 HWND，直接交给 WGC 按句柄采集，
         // 不必像 ffmpeg 那样按标题找窗口
+        // 最小化的窗口 DWM 不再合成，WGC 一帧也拿不到。与截图一致：先还原再录。
+        // 不能无条件 SW_RESTORE——那会把最大化的窗口一并还原掉。
+        if windows_recorder::is_minimized(target.id as isize) {
+            restore_minimized_window(target.id)
+                .map_err(|error| format!("目标窗口已最小化，且无法还原：{error}"))?;
+        }
         let active = windows_recorder::start(
             target.id as isize,
             settings.include_cursor,
