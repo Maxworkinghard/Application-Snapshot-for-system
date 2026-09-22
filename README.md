@@ -8,6 +8,16 @@ Captures the current application window to the clipboard, keeps a local snapshot
 
 The **Tauri 2 app at the repository root is the whole application**. It is one codebase for all three platforms: React front end in [src/](src/), native side in [src-tauri/](src-tauri/). The earlier per-platform implementations (Swift, C#, Rust) were removed once the mainline covered them; they are still in the git history.
 
+## Choosing an implementation
+
+**When the platform's own facility is clearly better, implement it separately for that platform rather than bending it to a shared path.** The test is the actual result, not tidy code. Recording went this way: all three platforms once shared ffmpeg, and `gdigrab` recorded hardware-accelerated windows as black frames — a lowest common denominator that was not good enough anywhere. Windows now uses WGC, macOS ScreenCaptureKit, Linux portal/x11grab, and each is better than before.
+
+Conversely, when only the API names differ and the result does not, use a mature cross-platform library or a shared implementation. Window capture uses xcap on all three — which is itself three native implementations, maintained by someone else. Writing our own three would gain almost nothing.
+
+Before adding a capability, ask: **does the OS own this?** If yes, write it per platform. If not (computation, files, network, UI), share it.
+
+The cost is not only the code. Three implementations mean three places a bug can hide, each reproducible only on its own machine, and behaviour drifts (`restore_minimized_window` already means three different things). **Verification, not implementation, is the real bottleneck** — a native path never tried on real hardware is not automatically more reliable than a portable one that has been.
+
 ## Platform capabilities
 
 Each platform has its own native implementation behind a shared set of commands. **Capabilities and behaviour differ per platform** — the same button may go through entirely different system APIs, with different edge cases. See the table below, and the "local capabilities" panel in Settings, which each adapter reports at runtime rather than being hard-coded copy.
