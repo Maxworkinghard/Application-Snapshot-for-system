@@ -21,7 +21,7 @@
 | 文字识别 | `Windows.Media.Ocr` | Vision（经 `snapshot-ocr` 桥） | `tesseract` |
 | 快照历史、桌面伴侣、Prompt 润色 | 有 | 有 | 有 |
 
-目前 Windows 侧的 adapter、macOS 的 `snapshot-ocr` 桥接程序、以及 macOS 的窗口能力（截图、`NSRunningApplication` 取上一个应用图标、Accessibility API 还原最小化窗口）已经在真机上跑过；macOS 录制已接入 ffmpeg `avfoundation` 并通过编译与单测，但尚未端到端实测。Linux adapter 已可在本仓库编译，覆盖 X11 录制、纯 Wayland 的 portal ScreenCast 录制、tesseract OCR、XDG 开机自启（需用户勾选；systemd 用户单元仅作可选文档）以及尽力而为的应用图标，其中部分功能已在真实桌面上实测，纯 Wayland 路径仍需端到端验证。
+目前 Windows 侧的 adapter、macOS 的 `snapshot-ocr` 桥接程序、以及 macOS 的窗口能力（截图、`NSRunningApplication` 取上一个应用图标、Accessibility API 还原最小化窗口）已经在真机上跑过；macOS 录制已接入 ffmpeg `avfoundation` 并通过编译与单测，但尚未端到端实测。Linux adapter 已在真实 X11 会话上实测：xcap 窗口截图、ffmpeg `x11grab` 录制（含非 `:0` 的 DISPLAY）、tesseract OCR（`chi_sim+eng`）、`xdotool` 还原最小化窗口、XDG 开机自启的写入与删除，以及缺 `ffmpeg`、缺 `xdotool`、缺语言包时的报错路径。尚未验证：面对真实 Wayland 合成器的 portal ScreenCast 路径（目前只走到过它的「不可用」分支）、托盘、全局快捷键、桌宠窗口拖动、重新登录后的自启、走钥匙串的 Prompt 润色，以及 `.deb` / `.AppImage` 安装包。
 
 ## 依赖
 
@@ -64,6 +64,8 @@ bash scripts/linux/build.sh  # 正式二进制；bundler 成功时还有 deb / A
 | `tesseract` + 语言包 | OCR |
 | `xdotool` | 截图前还原已最小化的目标窗口 |
 | StatusNotifierHost | 系统托盘（KDE 原生；GNOME 需 AppIndicator 扩展） |
+
+录制后端按环境变量选：只有在**完全没有** `$DISPLAY` 时才走 portal ScreenCast。跑着 XWayland 的 Wayland 会话是有 `$DISPLAY` 的，因此那里仍然走 `x11grab`——抓到的是 X server 的画面，不含原生 Wayland 窗口。
 
 **开机自启**需在「设置 → 开机静默自启动」中勾选，才会写入 `~/.config/autostart/…desktop`（这是受支持的主路径）。可选的 systemd `--user` 单元示例见 `scripts/linux/com.appsnapshot.prompt-pet-shortcut.service.example`（高级；应用不会替你 enable）。
 
