@@ -519,18 +519,25 @@ fn add_pet_asset(
 ) -> Result<Settings, String> {
     let canonical = fs::canonicalize(path.trim()).map_err(|_| "无法读取桌宠文件".to_string())?;
     if !canonical.is_file() {
-        return Err("请选择一个桌宠压缩包".into());
+        return Err("请选择一个 ZIP 压缩包或 GIF 图片".into());
     }
     let extension = canonical.extension().and_then(|value| value.to_str()).unwrap_or_default().to_lowercase();
-    if extension != "zip" {
-        return Err("请选择 ZIP 格式的桌宠压缩包".into());
+    let single_gif = extension == "gif";
+    if extension != "zip" && !single_gif {
+        return Err("桌宠形象只支持 ZIP 压缩包或单个 GIF".into());
     }
     let metadata = fs::metadata(&canonical).map_err(|error| error.to_string())?;
-    if metadata.len() > 100 * 1024 * 1024 {
-        return Err("桌宠压缩包不能超过 100MB".into());
+    // 单个 GIF 按单动画的上限算，压缩包按整包算
+    let limit = if single_gif { 50 } else { 100 } * 1024 * 1024;
+    if metadata.len() > limit {
+        return Err(if single_gif {
+            "桌宠 GIF 不能超过 50MB".to_string()
+        } else {
+            "桌宠压缩包不能超过 100MB".to_string()
+        });
     }
     let animations = find_pet_animation_entries(&canonical)?;
-    let preview_entry = animations.first().cloned().ok_or_else(|| "压缩包内没有可用动画".to_string())?;
+    let preview_entry = animations.first().cloned().ok_or_else(|| "这份素材里没有可用动画".to_string())?;
     let path = canonical.to_string_lossy().to_string();
     let mut settings = state.settings.lock();
     if let Some(existing) = settings.pet_assets.iter_mut().find(|asset| asset.path == path) {
@@ -602,7 +609,17 @@ fn get_pet_asset_data_url(
     } else {
         asset.entry
     };
-    let mime = pet_image_mime(&entry_name).ok_or_else(|| "压缩包内没有可预览的形象".to_string())?;
+    if !is_pet_gif(&entry_name) {
+        return Err("这个动作不是 GIF，无法预览".into());
+    }
+    // 直接导入的 GIF 本身就是素材，没有压缩包可拆
+    if is_pet_gif(&asset.path) {
+        let bytes = fs::read(&archive_path).map_err(|_| "桌宠 GIF 已被移动或删除".to_string())?;
+        if bytes.len() > 50 * 1024 * 1024 {
+            return Err("桌宠动画不能超过 50MB".into());
+        }
+        return Ok(format!("data:image/gif;base64,{}", BASE64.encode(bytes)));
+    }
     let file = fs::File::open(&archive_path).map_err(|_| "桌宠压缩包已被移动或删除".to_string())?;
     let mut archive = zip::ZipArchive::new(file).map_err(|_| "桌宠压缩包已损坏".to_string())?;
     let mut entry = archive.by_name(&entry_name).map_err(|_| "压缩包内的预览动画已丢失".to_string())?;
@@ -611,261 +628,63 @@ fn get_pet_asset_data_url(
     }
     let mut bytes = Vec::with_capacity(entry.size() as usize);
     entry.read_to_end(&mut bytes).map_err(|_| "读取桌宠动画失败".to_string())?;
-    Ok(format!("data:{mime};base64,{}", BASE64.encode(bytes)))
+    Ok(format!("data:image/gif;base64,{}", BASE64.encode(bytes)))
 }
 
+/// 收集一份桌宠素材里可用的动作。
+///
+/// 传进来的可能是压缩包，也可能是直接导入的单个 GIF——后者本身就是唯一的动作。
 fn find_pet_animation_entries(path: &PathBuf) -> Result<Vec<String>, String> {
+    if is_pet_gif(&path.to_string_lossy()) {
+        let name = path
+            .file_name()
+            .and_then(|value| value.to_str())
+            .ok_or_else(|| "无法读取这个 GIF 的文件名".to_string())?;
+        return Ok(vec![name.to_string()]);
+    }
+
     let file = fs::File::open(path).map_err(|_| "无法读取桌宠压缩包".to_string())?;
     let mut archive = zip::ZipArchive::new(file).map_err(|_| "桌宠压缩包已损坏".to_string())?;
-    let mut animated = Vec::new();
-    let mut static_images = Vec::new();
-    let mut rejected_codecs: Vec<String> = Vec::new();
+    let mut found = Vec::new();
     for index in 0..archive.len() {
-        let mut entry = archive.by_index(index).map_err(|_| "无法读取桌宠压缩包目录".to_string())?;
+        let entry = archive.by_index(index).map_err(|_| "无法读取桌宠压缩包目录".to_string())?;
         if entry.is_dir() || entry.size() > 50 * 1024 * 1024 {
             continue;
         }
         let name = entry.name().to_string();
         let lower = name.to_lowercase();
-        let Some((mime, is_motion)) = pet_asset_media(&lower) else { continue };
-        // MP4/MOV 只看扩展名不够：mp4v 这类编码能通过扩展名但内置 WebView 解不出来，导入后是一片空白。
-        // WebM 同理，VP8/VP9/AV1 能否解随内核不同，得解析 CodecID 再判断。
-        if mime == "video/mp4" || mime == "video/webm" {
-            let mut bytes = Vec::with_capacity(entry.size() as usize);
-            if entry.read_to_end(&mut bytes).is_ok() {
-                let verdict = if mime == "video/mp4" { mp4_playable(&bytes) } else { webm_playable(&bytes) };
-                if let Err(codecs) = verdict {
-                    for code in codecs {
-                        if !rejected_codecs.contains(&code) {
-                            rejected_codecs.push(code);
-                        }
-                    }
-                    continue;
-                }
-            }
+        if !is_pet_gif(&lower) {
+            continue;
         }
-        // 包根目录下的 idle.mp4 没有前导分隔符，单独按文件名判一次，否则会被当成普通动作
+        // 包根目录下的 idle.gif 没有前导分隔符，单独按文件名判一次，
+        // 否则会被当成普通动作排到后面去
         let file_name = lower.rsplit('/').next().unwrap_or(lower.as_str());
         let is_idle = file_name.starts_with("idle")
             || lower.contains("/idle")
             || lower.contains("_idle")
             || lower.contains("-idle");
-        let priority = if is_idle { 0 } else { 1 };
-        if is_motion {
-            animated.push((priority, lower, name));
-        } else {
-            static_images.push((priority, lower, name));
-        }
+        found.push((if is_idle { 0 } else { 1 }, lower, name));
     }
-    animated.sort_by(|left, right| left.0.cmp(&right.0).then(left.1.cmp(&right.1)));
-    if !animated.is_empty() {
-        return Ok(animated.into_iter().map(|item| item.2).collect());
+    found.sort_by(|left, right| left.0.cmp(&right.0).then(left.1.cmp(&right.1)));
+    if found.is_empty() {
+        return Err("压缩包内没有 GIF 形象资源".into());
     }
-    // 视频全部因编码被剔掉时，直接报编码问题——退回静态图只会让人以为素材做错了
-    if !rejected_codecs.is_empty() {
-        return Err(format!(
-            "压缩包内的视频用的是 {} 编码，应用内置的 {WEBVIEW_NAME} 无法解码；请转成 H.264 (avc1) 的 MP4 再导入",
-            rejected_codecs.join("、")
-        ));
-    }
-    static_images.sort_by(|left, right| left.0.cmp(&right.0).then(left.1.cmp(&right.1)));
-    static_images.into_iter().next().map(|item| vec![item.2])
-        .ok_or_else(|| "压缩包内没有 GIF、WebP、APNG、PNG 或 MP4/WebM 形象资源".to_string())
+    Ok(found.into_iter().map(|item| item.2).collect())
 }
 
-/// 内置 WebView 能解码的视频 sample entry 4CC。
-/// Windows WebView2（Chromium）：H.264 / HEVC / AV1 / VP9。
-#[cfg(target_os = "windows")]
-const SUPPORTED_VIDEO_CODECS: [&str; 6] = ["avc1", "avc3", "hev1", "hvc1", "av01", "vp09"];
-/// Linux WebKitGTK：保守白名单，仅 H.264 / HEVC（AV1/VP9 在 WebKitGTK 上因发行版/编解码器插件差异大，不算作可用）。
-#[cfg(target_os = "linux")]
-const SUPPORTED_VIDEO_CODECS: [&str; 4] = ["avc1", "avc3", "hev1", "hvc1"];
-/// macOS WKWebView：稳定支持 H.264 与 HEVC；AV1/VP9 是否可解取决于系统版本与硬件，保守起见不算作可用。
-#[cfg(target_os = "macos")]
-const SUPPORTED_VIDEO_CODECS: [&str; 4] = ["avc1", "avc3", "hev1", "hvc1"];
 
-/// 报错文案里的 WebView 内核名
-#[cfg(target_os = "windows")]
-const WEBVIEW_NAME: &str = "WebView2";
-#[cfg(target_os = "linux")]
-const WEBVIEW_NAME: &str = "WebKitGTK";
-#[cfg(target_os = "macos")]
-const WEBVIEW_NAME: &str = "WKWebView";
-
-/// WebM (Matroska) 里能被解码的视频轨 CodecID。
-/// Windows WebView2（Chromium）：VP8/VP9/AV1；容器规范之外的东西（如 Matroska 装 H.264）按不支持处理，走 MP4 路径。
-#[cfg(target_os = "windows")]
-const SUPPORTED_WEBM_CODECS: [&str; 3] = ["V_VP8", "V_VP9", "V_AV1"];
-/// Linux WebKitGTK / macOS WKWebView：稳定支持 VP8/VP9；AV1 不保证，保守不含。
-#[cfg(any(target_os = "linux", target_os = "macos"))]
-const SUPPORTED_WEBM_CODECS: [&str; 2] = ["V_VP8", "V_VP9"];
-
-/// 从 ISO-BMFF (MP4 / MOV) 字节里收集所有 sample entry 的 4CC。
-/// 解析不出来就返回空表，调用方按"无法确认"处理，不阻断导入。
-fn mp4_sample_formats(bytes: &[u8]) -> Vec<String> {
-    fn walk(buf: &[u8], depth: u8, found: &mut Vec<String>) {
-        if depth > 6 {
-            return;
-        }
-        let mut offset = 0usize;
-        while offset + 8 <= buf.len() {
-            let Ok(raw) = <[u8; 4]>::try_from(&buf[offset..offset + 4]) else { return };
-            let declared = u32::from_be_bytes(raw) as usize;
-            let kind: [u8; 4] = match buf[offset + 4..offset + 8].try_into() {
-                Ok(value) => value,
-                Err(_) => return,
-            };
-            let (header, size) = if declared == 1 {
-                if offset + 16 > buf.len() {
-                    return;
-                }
-                let Ok(raw) = <[u8; 8]>::try_from(&buf[offset + 8..offset + 16]) else { return };
-                (16usize, u64::from_be_bytes(raw) as usize)
-            } else if declared == 0 {
-                (8usize, buf.len() - offset)
-            } else {
-                (8usize, declared)
-            };
-            if size < header || offset + size > buf.len() {
-                return;
-            }
-            let body = &buf[offset + header..offset + size];
-            match &kind {
-                b"moov" | b"trak" | b"mdia" | b"minf" | b"stbl" => walk(body, depth + 1, found),
-                // stsd: 4 字节 version/flags + 4 字节 entry_count + 4 字节条目长度，之后才是 4CC
-                b"stsd" if body.len() >= 16 => {
-                    if let Ok(code) = std::str::from_utf8(&body[12..16]) {
-                        found.push(code.to_string());
-                    }
-                }
-                _ => {}
-            }
-            offset += size;
-        }
-    }
-    let mut found = Vec::new();
-    walk(bytes, 0, &mut found);
-    found
+/// 桌宠素材只收 GIF。
+///
+/// 视频要交给各端内置的 WebView 解码，而三端内核（WebView2 / WKWebView /
+/// WebKitGTK）认的编码各不相同——同一个包在这台能动、在那台是一片空白，
+/// 只能靠解析容器逐个编码做白名单去兜。先砍掉，留一种到处都动得起来的。
+fn is_pet_gif(path: &str) -> bool {
+    path.rsplit('.')
+        .next()
+        .map(|extension| extension.eq_ignore_ascii_case("gif"))
+        .unwrap_or(false)
 }
 
-/// 判断一段 MP4/MOV 字节能否被内置 WebView 播放。返回 Err 时带上实际读到的编码名。
-fn mp4_playable(bytes: &[u8]) -> Result<(), Vec<String>> {
-    let formats = mp4_sample_formats(bytes);
-    if formats.is_empty() {
-        // 解析失败：不替用户做判断，放行
-        return Ok(());
-    }
-    if formats.iter().any(|code| SUPPORTED_VIDEO_CODECS.contains(&code.as_str())) {
-        return Ok(());
-    }
-    // 只回报视频轨道的编码，音频的 mp4a 之类不是拒绝原因
-    let mut offenders: Vec<String> = formats
-        .into_iter()
-        .filter(|code| !matches!(code.as_str(), "mp4a" | "ec-3" | "ac-3" | "Opus" | "fLaC" | "sowt" | "twos"))
-        .collect();
-    offenders.dedup();
-    if offenders.is_empty() {
-        return Ok(());
-    }
-    Err(offenders)
-}
-
-/// 从 WebM (Matroska/EBML) 字节里收集所有轨道的 CodecID。
-/// 解析不出来就返回空表，调用方按"无法确认"处理，不阻断导入。
-fn webm_sample_codecs(bytes: &[u8]) -> Vec<String> {
-    /// EBML 变长整数：keep_marker 决定读元素 ID（保留标志位）还是读尺寸（去掉标志位）。
-    /// 首字节为 0 是非法编码，返回 None 按解析失败处理。
-    fn read_vint(buf: &[u8], keep_marker: bool) -> Option<(u64, usize)> {
-        let first = *buf.first()?;
-        if first == 0 {
-            return None;
-        }
-        let len = 1 + first.leading_zeros() as usize;
-        if buf.len() < len {
-            return None;
-        }
-        // 8 字节的 vint 首字节只有标志位、没有数值位，mask 会算成 0，得用 u16 防溢出
-        let value_mask: u8 = ((1u16 << (8 - len)) - 1) as u8;
-        let mut value = if keep_marker { first as u64 } else { (first & value_mask) as u64 };
-        for byte in &buf[1..len] {
-            value = (value << 8) | *byte as u64;
-        }
-        Some((value, len))
-    }
-
-    fn walk(buf: &[u8], depth: u8, found: &mut Vec<String>) {
-        if depth > 4 {
-            return;
-        }
-        let mut offset = 0usize;
-        while offset < buf.len() {
-            let Some((id, id_len)) = read_vint(&buf[offset..], true) else { return };
-            let Some((size, size_len)) = read_vint(&buf[offset + id_len..], false) else { return };
-            let header = id_len + size_len;
-            let body = match buf.get(offset + header..) {
-                // 全 1 的尺寸是"未知长度"（流式封装常见），只能吞掉剩余全部
-                Some(rest) if size == (1u64 << (7 * size_len)) - 1 => rest,
-                Some(rest) if (size as usize) <= rest.len() => &rest[..size as usize],
-                _ => return,
-            };
-            match id {
-                // Segment(0x18538067) → Tracks(0x1654AE6B) → TrackEntry(0xAE)
-                0x18538067 | 0x1654AE6B | 0xAE => walk(body, depth + 1, found),
-                // CodecID(0x86)，如 V_VP8 / V_VP9 / V_AV1
-                0x86 => {
-                    if let Ok(code) = std::str::from_utf8(body) {
-                        found.push(code.to_string());
-                    }
-                }
-                _ => {}
-            }
-            offset += header + body.len();
-        }
-    }
-    let mut found = Vec::new();
-    walk(bytes, 0, &mut found);
-    found
-}
-
-/// 判断一段 WebM 字节能否被内置 WebView 播放。返回 Err 时带上实际读到的 CodecID。
-fn webm_playable(bytes: &[u8]) -> Result<(), Vec<String>> {
-    let formats = webm_sample_codecs(bytes);
-    if formats.is_empty() {
-        // 解析失败：不替用户做判断，放行
-        return Ok(());
-    }
-    if formats.iter().any(|code| SUPPORTED_WEBM_CODECS.contains(&code.as_str())) {
-        return Ok(());
-    }
-    // A_ 前缀的是音频轨（A_OPUS/A_VORBIS 之类），不是拒绝原因
-    let mut offenders: Vec<String> = formats.into_iter().filter(|code| !code.starts_with("A_")).collect();
-    offenders.dedup();
-    if offenders.is_empty() {
-        return Ok(());
-    }
-    Err(offenders)
-}
-
-/// 返回 (MIME, 是否为动态素材)。动态素材包含 GIF/WebP/APNG 与视频，
-/// 静态图只在压缩包里一张动态素材都没有时才作为兜底。
-fn pet_asset_media(path: &str) -> Option<(&'static str, bool)> {
-    let extension = path.rsplit('.').next()?.to_lowercase();
-    match extension.as_str() {
-        "gif" => Some(("image/gif", true)),
-        "webp" => Some(("image/webp", true)),
-        "apng" => Some(("image/png", true)),
-        "png" => Some(("image/png", false)),
-        "jpg" | "jpeg" => Some(("image/jpeg", false)),
-        // WebView2 按容器内容解复用，H.264 编码的 .mov 按 video/mp4 交给它即可正常播放
-        "mp4" | "m4v" | "mov" => Some(("video/mp4", true)),
-        "webm" => Some(("video/webm", true)),
-        _ => None,
-    }
-}
-
-fn pet_image_mime(path: &str) -> Option<&'static str> {
-    pet_asset_media(path).map(|(mime, _)| mime)
-}
 
 #[tauri::command]
 fn save_shortcuts(
@@ -3807,78 +3626,6 @@ mod mac_icon_tests {
 }
 
 #[cfg(test)]
-mod webm_codec_tests {
-    use super::*;
-
-    /// 拼一个只含轨道声明的最小 WebM；payload 须在 127 字节以内
-    fn elem(id: &[u8], payload: &[u8]) -> Vec<u8> {
-        assert!(payload.len() < 128);
-        let mut out = id.to_vec();
-        out.push(0x80 | payload.len() as u8);
-        out.extend_from_slice(payload);
-        out
-    }
-
-    fn webm_with_codec(codec: &str) -> Vec<u8> {
-        let codec_id = elem(&[0x86], codec.as_bytes());
-        let track_entry = elem(&[0xAE], &codec_id);
-        let tracks = elem(&[0x16, 0x54, 0xAE, 0x6B], &track_entry);
-        let segment = elem(&[0x18, 0x53, 0x80, 0x67], &tracks);
-        let header = elem(&[0x1A, 0x45, 0xDF, 0xA3], &[]);
-        [header, segment].concat()
-    }
-
-    #[test]
-    fn collects_codec_id_from_tracks() {
-        let bytes = webm_with_codec("V_VP9");
-        assert_eq!(webm_sample_codecs(&bytes), vec!["V_VP9".to_string()]);
-        assert!(webm_playable(&bytes).is_ok(), "VP9 在两个平台的白名单里");
-    }
-
-    #[test]
-    fn av1_rejected_only_where_unsupported() {
-        let bytes = webm_with_codec("V_AV1");
-        let playable = webm_playable(&bytes).is_ok();
-        assert_eq!(playable, SUPPORTED_WEBM_CODECS.contains(&"V_AV1"), "AV1 的去留应与白名单一致");
-    }
-
-    #[test]
-    fn audio_tracks_are_not_rejection_reasons() {
-        let bytes = webm_with_codec("A_OPUS");
-        assert_eq!(webm_sample_codecs(&bytes), vec!["A_OPUS".to_string()]);
-        assert!(webm_playable(&bytes).is_ok(), "纯音频轨不该被当成视频编码问题");
-    }
-
-    #[test]
-    fn unparseable_bytes_are_allowed() {
-        assert!(webm_sample_codecs(b"not a webm at all").is_empty());
-        assert!(webm_playable(b"not a webm at all").is_ok(), "解析失败按无法确认放行");
-    }
-
-    #[test]
-    fn truncated_elements_do_not_panic() {
-        // 损坏的压缩包是真实场景：任意位置截断都不能 panic
-        let full = webm_with_codec("V_VP9");
-        for cut in 0..full.len() {
-            let _ = webm_sample_codecs(&full[..cut]);
-        }
-        assert_eq!(webm_sample_codecs(&full), vec!["V_VP9".to_string()]);
-    }
-
-    #[test]
-    fn unknown_length_segment_is_consumed() {
-        // 流式封装的 Segment 常写"未知长度"（全 1 尺寸），得能吞掉剩余全部
-        let codec_id = elem(&[0x86], b"V_VP8");
-        let track_entry = elem(&[0xAE], &codec_id);
-        let tracks = elem(&[0x16, 0x54, 0xAE, 0x6B], &track_entry);
-        let mut bytes = elem(&[0x1A, 0x45, 0xDF, 0xA3], &[]);
-        bytes.extend_from_slice(&[0x18, 0x53, 0x80, 0x67, 0x01, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF]);
-        bytes.extend_from_slice(&tracks);
-        assert_eq!(webm_sample_codecs(&bytes), vec!["V_VP8".to_string()]);
-    }
-}
-
-#[cfg(test)]
 mod pet_asset_tests {
     use super::*;
 
@@ -3939,115 +3686,48 @@ mod pet_asset_tests {
     }
 
     #[test]
-    fn video_and_gif_are_both_motion_assets() {
-        assert_eq!(pet_asset_media("a.mp4"), Some(("video/mp4", true)));
-        assert_eq!(pet_asset_media("a.MOV"), Some(("video/mp4", true)));
-        assert_eq!(pet_asset_media("a.webm"), Some(("video/webm", true)));
-        assert_eq!(pet_asset_media("a.gif"), Some(("image/gif", true)));
-        assert_eq!(pet_asset_media("a.webp"), Some(("image/webp", true)));
-        assert_eq!(pet_asset_media("a.png"), Some(("image/png", false)));
-        assert_eq!(pet_asset_media("a.txt"), None);
+    fn only_gif_counts_as_a_pet_asset() {
+        assert!(is_pet_gif("a.gif"));
+        assert!(is_pet_gif("a.GIF"));
+        assert!(!is_pet_gif("a.mp4"));
+        assert!(!is_pet_gif("a.webp"));
+        assert!(!is_pet_gif("a.png"));
+        assert!(!is_pet_gif("noext"));
     }
 
     #[test]
-    fn motion_entries_win_and_idle_comes_first() {
-        let path = make_zip("mixed", &["cover.png", "pose/walk.mp4", "pose/idle.gif"]);
-        let found = find_pet_animation_entries(&path).expect("应当找到动态素材");
-        assert_eq!(found, vec!["pose/idle.gif".to_string(), "pose/walk.mp4".to_string()]);
+    fn non_gif_entries_are_skipped_and_idle_comes_first() {
+        let path = make_zip("mixed", &["cover.png", "pose/walk.mp4", "pose/walk.gif", "pose/idle.gif"]);
+        let found = find_pet_animation_entries(&path).expect("应当找到 GIF");
+        assert_eq!(found, vec!["pose/idle.gif".to_string(), "pose/walk.gif".to_string()]);
+        let _ = fs::remove_file(&path);
     }
 
-    /// 拼一个最小可解析的 ISO-BMFF：ftyp + moov>trak>mdia>minf>stbl>stsd(<4cc>)
-    fn fake_mp4(sample_format: &[u8; 4]) -> Vec<u8> {
-        fn boxed(kind: &[u8; 4], body: &[u8]) -> Vec<u8> {
-            let mut out = ((body.len() + 8) as u32).to_be_bytes().to_vec();
-            out.extend_from_slice(kind);
-            out.extend_from_slice(body);
-            out
-        }
-        let mut stsd_body = vec![0u8; 8]; // version/flags + entry_count
-        stsd_body.extend_from_slice(&16u32.to_be_bytes()); // 条目长度
-        stsd_body.extend_from_slice(sample_format);
-        let stsd = boxed(b"stsd", &stsd_body);
-        let stbl = boxed(b"stbl", &stsd);
-        let minf = boxed(b"minf", &stbl);
-        let mdia = boxed(b"mdia", &minf);
-        let trak = boxed(b"trak", &mdia);
-        let moov = boxed(b"moov", &trak);
-        let mut out = boxed(b"ftyp", b"isomisomisom");
-        out.extend_from_slice(&moov);
-        out
-    }
-
-    fn make_zip_with_bytes(name: &str, entries: &[(&str, Vec<u8>)]) -> PathBuf {
-        let path = std::env::temp_dir().join(format!("snapshot-pet-test-{name}.zip"));
-        let file = fs::File::create(&path).expect("建测试包失败");
-        let mut writer = zip::ZipWriter::new(file);
-        let options = zip::write::SimpleFileOptions::default();
-        for (entry, bytes) in entries {
-            writer.start_file(*entry, options).expect("写入条目失败");
-            writer.write_all(bytes).expect("写入内容失败");
-        }
-        writer.finish().expect("收尾失败");
-        path
-    }
-
-    #[test]
-    fn h264_passes_and_mp4v_is_reported() {
-        assert!(mp4_playable(&fake_mp4(b"avc1")).is_ok());
-        assert!(mp4_playable(&fake_mp4(b"hvc1")).is_ok());
-        // AV1 仅 Windows WebView2 白名单收录；Linux WebKitGTK / macOS WKWebView 保守不含
-        #[cfg(target_os = "windows")]
-        assert!(mp4_playable(&fake_mp4(b"av01")).is_ok());
-        #[cfg(not(target_os = "windows"))]
-        assert!(mp4_playable(&fake_mp4(b"av01")).is_err());
-        assert_eq!(mp4_playable(&fake_mp4(b"mp4v")).unwrap_err(), vec!["mp4v".to_string()]);
-        // 解析不出盒子结构时放行，不替用户做判断
-        assert!(mp4_playable(b"not an mp4 at all").is_ok());
-    }
-
-    #[test]
-    fn undecodable_video_is_rejected_with_its_codec_name() {
-        let path = make_zip_with_bytes(
-            "bad-codec",
-            &[("cat/idle.mp4", fake_mp4(b"mp4v")), ("cat/poster.png", b"fake".to_vec())],
-        );
-        let error = find_pet_animation_entries(&path).expect_err("mp4v 应当被拒绝");
-        assert!(error.contains("mp4v"), "错误信息里要点名编码：{error}");
-    }
-
-    #[test]
-    fn playable_video_survives_the_codec_check() {
-        let path = make_zip_with_bytes(
-            "good-codec",
-            &[("cat/walk.mp4", fake_mp4(b"avc1")), ("cat/idle.mp4", fake_mp4(b"avc1"))],
-        );
-        let found = find_pet_animation_entries(&path).expect("avc1 应当通过");
-        assert_eq!(found, vec!["cat/idle.mp4".to_string(), "cat/walk.mp4".to_string()]);
-    }
-
-    #[test]
-    fn a_broken_clip_does_not_sink_the_whole_package() {
-        let path = make_zip_with_bytes(
-            "mixed-codec",
-            &[("cat/idle.gif", b"fake".to_vec()), ("cat/walk.mp4", fake_mp4(b"mp4v"))],
-        );
-        let found = find_pet_animation_entries(&path).expect("还有 GIF 可用就不该整包失败");
-        assert_eq!(found, vec!["cat/idle.gif".to_string()]);
-    }
 
     #[test]
     fn idle_at_package_root_is_still_the_default_pose() {
-        let path = make_zip("root-idle", &["walk.mp4", "idle.mp4"]);
-        let found = find_pet_animation_entries(&path).expect("应当找到动态素材");
-        assert_eq!(found, vec!["idle.mp4".to_string(), "walk.mp4".to_string()]);
+        let path = make_zip("root-idle", &["walk.gif", "idle.gif"]);
+        let found = find_pet_animation_entries(&path).expect("应当找到 GIF");
+        assert_eq!(found, vec!["idle.gif".to_string(), "walk.gif".to_string()]);
+        let _ = fs::remove_file(&path);
     }
 
     #[test]
-    fn static_image_is_only_a_fallback() {
-        let path = make_zip("static-only", &["cover.png", "notes.txt"]);
-        let found = find_pet_animation_entries(&path).expect("应当回退到静态图");
-        assert_eq!(found, vec!["cover.png".to_string()]);
+    fn a_package_with_only_video_is_rejected() {
+        let path = make_zip("video-only", &["cat/idle.mp4", "cat/walk.webm"]);
+        assert!(find_pet_animation_entries(&path).is_err(), "只剩视频的包应当被拒绝");
+        let _ = fs::remove_file(&path);
     }
+
+    #[test]
+    fn a_single_gif_file_is_its_own_animation() {
+        let path = std::env::temp_dir().join("snapshot-pet-test-single.gif");
+        fs::write(&path, b"fake-gif").expect("写测试 GIF 失败");
+        let found = find_pet_animation_entries(&path).expect("直接导入的 GIF 应当可用");
+        assert_eq!(found, vec!["snapshot-pet-test-single.gif".to_string()]);
+        let _ = fs::remove_file(&path);
+    }
+
 
 
     #[test]

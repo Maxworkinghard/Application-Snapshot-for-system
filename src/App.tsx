@@ -885,7 +885,7 @@ function PetPage({
     const selected = await open({
       multiple: false,
       directory: false,
-      filters: [{ name: "桌宠压缩包", extensions: ["zip"] }],
+      filters: [{ name: "桌宠形象", extensions: ["zip", "gif"] }],
     });
     if (typeof selected !== "string") return;
     setImporting(true);
@@ -1129,15 +1129,15 @@ function PetPage({
         <div className="companion-behavior-settings">
           <div className="behavior-header">
             <SlidersHorizontal size={14} />
-            <span>素材包要求</span>
+            <span>形象素材要求</span>
+          </div>
+          <div className="behavior-row no-desc">
+            <span className="b-title">导入方式</span>
+            <span className="history-sub">装着多个 GIF 的 ZIP 压缩包，或直接选一个 GIF</span>
           </div>
           <div className="behavior-row no-desc">
             <span className="b-title">支持格式</span>
-            <span className="history-sub">GIF / WebP / APNG / PNG，MP4 / WebM</span>
-          </div>
-          <div className="behavior-row no-desc">
-            <span className="b-title">视频编码</span>
-            <span className="history-sub">须为 H.264 / HEVC / AV1 / VP9，mp4v 会被拒绝</span>
+            <span className="history-sub">仅 GIF，包内其它格式会被跳过</span>
           </div>
           <div className="behavior-row no-desc">
             <span className="b-title">默认动作</span>
@@ -1145,11 +1145,11 @@ function PetPage({
           </div>
           <div className="behavior-row no-desc">
             <span className="b-title">体积上限</span>
-            <span className="history-sub">整包 100MB，单个文件 50MB</span>
+            <span className="history-sub">整包 100MB，单个 GIF 50MB</span>
           </div>
           <div className="behavior-row no-desc">
             <span className="b-title">注意</span>
-            <span className="history-sub">压缩包不会解压，移走原文件形象会失效</span>
+            <span className="history-sub">素材按需读取、不会复制，移走原文件形象会失效</span>
           </div>
         </div>
       </section>

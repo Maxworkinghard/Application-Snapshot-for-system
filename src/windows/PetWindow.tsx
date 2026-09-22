@@ -11,11 +11,8 @@ import {
 } from "../lib/backend";
 import type { PreviousApp, Settings } from "../types";
 
-/** 桌宠素材既可能是图片 (GIF/WebP/APNG/PNG)，也可能是视频 (MP4/WebM)——按 data URL 的 MIME 分流。 */
+/** 桌宠素材只有 GIF，直接当图片渲染即可。 */
 export function renderPetMedia(dataUrl: string, className: string) {
-  if (dataUrl.startsWith("data:video/")) {
-    return <video key={dataUrl} className={className} src={dataUrl} autoPlay loop muted playsInline />;
-  }
   return <img key={dataUrl} className={className} src={dataUrl} alt="" draggable={false} />;
 }
 
