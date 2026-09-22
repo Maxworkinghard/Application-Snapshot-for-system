@@ -10,11 +10,11 @@ mod scrolling;
 mod still;
 mod window;
 
-pub use autostart::apply_launch_on_boot;
+pub use autostart::{apply_launch_on_boot, autostart_capability};
 pub use icon::icon_for_process;
 pub use recording::{
-    display_server_label, recording_available, recording_capability_detail, start_recording,
-    ActiveRecording,
+    display_server_label, is_wayland_session, recording_available, recording_capability_detail,
+    start_recording, ActiveRecording,
 };
 pub use scrolling::capture_scrolling_window;
 pub use still::{capture_primary_with_cursor, capture_region_with_cursor};

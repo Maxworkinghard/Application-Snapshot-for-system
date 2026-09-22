@@ -101,6 +101,9 @@ export interface PlatformCapabilities {
   recording: CapabilityStatus;
   ocr: CapabilityStatus;
   autostart: CapabilityStatus;
+  scrolling: CapabilityStatus;
+  includeCursor: CapabilityStatus;
   trayNote: string;
+  notes: string[];
 }
 

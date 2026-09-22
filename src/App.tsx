@@ -54,6 +54,7 @@ import {
   getSnapshotDataUrl,
   listSnapshots,
   ocrCapability,
+  platformCapabilities,
   ocrClipboard,
   ocrSnapshot,
   openSnapshotsDir,
@@ -70,6 +71,7 @@ import { applyTheme, persistTheme, readTheme, type ThemeMode } from "./lib/theme
 import type {
   NavPage,
   OcrCapability,
+  PlatformCapabilities,
   SnapshotRecord,
   PromptTemplate,
   Settings,
@@ -1178,15 +1180,29 @@ function PetPage({
 }
 
 /** 偏好设置共用的开关控件，样式来自 prototype-port 的 toggle-switch-btn */
-function PrefToggle({ value, onChange, label }: { value: boolean; onChange: (next: boolean) => void; label: string }) {
+function PrefToggle({
+  value,
+  onChange,
+  label,
+  disabled = false,
+}: {
+  value: boolean;
+  onChange: (next: boolean) => void;
+  label: string;
+  disabled?: boolean;
+}) {
   return (
     <button
       type="button"
       role="switch"
       aria-checked={value}
       aria-label={label}
+      disabled={disabled}
       className={`toggle-switch-btn ${value ? "on" : ""}`}
-      onClick={() => onChange(!value)}
+      style={disabled ? { opacity: 0.45, cursor: "not-allowed" } : undefined}
+      onClick={() => {
+        if (!disabled) onChange(!value);
+      }}
     >
       <span className="toggle-thumb" />
     </button>
@@ -1312,6 +1328,12 @@ function ShortcutsPage({
   }
 
   const [showMorePrefs, setShowMorePrefs] = useState(true);
+  const [caps, setCaps] = useState<PlatformCapabilities | null>(null);
+  useEffect(() => {
+    void platformCapabilities()
+      .then(setCaps)
+      .catch(() => setCaps(null));
+  }, []);
 
   async function updatePrefs(patch: Partial<Settings>, message?: string) {
     try {
@@ -1331,14 +1353,6 @@ function ShortcutsPage({
     }
   }
 
-  async function importTheme() {
-    try {
-      const selected = await open({ multiple: false, filters: [{ name: "主题文件", extensions: ["json", "css"] }] });
-      if (typeof selected === "string") await updatePrefs({ customTheme: selected }, "主题已导入");
-    } catch {
-      notify("当前环境不支持选择文件");
-    }
-  }
 
   async function importShutterSound() {
     try {
@@ -1385,6 +1399,12 @@ function ShortcutsPage({
           <span className="action-name">{actionLabels[binding.action].name}</span>
           {actionLabels[binding.action].tag && (
             <span className="action-tag">{actionLabels[binding.action].tag}</span>
+          )}
+          {binding.action === "scrolling" && caps && !caps.scrolling.available && (
+            <span className="action-tag" title={caps.scrolling.detail}>仅 Linux/X11</span>
+          )}
+          {binding.action === "record" && caps && !caps.recording.available && (
+            <span className="action-tag" title={caps.recording.detail}>录制不可用</span>
           )}
         </div>
 
@@ -1501,23 +1521,13 @@ function ShortcutsPage({
               </div>
               <div className="pref-item-row folder-row">
                 <span className="pref-title">界面主题</span>
-                <div className="folder-picker-box">
-                  <span className="folder-path-text" title={settings.customTheme ?? undefined}>
-                    {settings.customTheme ? fileNameOf(settings.customTheme) : "默认主题"}
-                  </span>
-                  <button type="button" className="folder-action-btn" onClick={() => void importTheme()}>
+                <div className="folder-picker-box" style={{ flexDirection: "column", alignItems: "flex-start", gap: 6 }}>
+                  <span className="folder-path-text">浅色 / 深色（右上角切换）</span>
+                  <span className="history-sub">自定义主题导入尚未接入，目前仅支持内置浅色/深色</span>
+                  <button type="button" className="folder-action-btn" disabled style={{ opacity: 0.45, cursor: "not-allowed" }} title="尚未接入">
                     <Palette size={12} />
-                    导入主题
+                    导入主题（尚未接入）
                   </button>
-                  {settings.customTheme && (
-                    <button
-                      type="button"
-                      className="folder-action-btn"
-                      onClick={() => void updatePrefs({ customTheme: null }, "已恢复默认主题")}
-                    >
-                      恢复默认
-                    </button>
-                  )}
                 </div>
               </div>
             </div>
@@ -1614,21 +1624,38 @@ function ShortcutsPage({
                     onChange={(value) => void updatePrefs({ autoSaveLocal: value })}
                   />
                 </div>
-                <div className="pref-item-row">
-                  <span className="pref-title">开机静默自启动</span>
-                  <PrefToggle
-                    label="开机静默自启动"
-                    value={settings.launchOnBoot}
-                    onChange={(value) => void updatePrefs({ launchOnBoot: value })}
-                  />
+                <div className="pref-item-row" style={{ flexDirection: "column", alignItems: "stretch", gap: 6 }}>
+                  <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", gap: 12 }}>
+                    <span className="pref-title">开机静默自启动</span>
+                    <PrefToggle
+                      label="开机静默自启动"
+                      value={settings.launchOnBoot}
+                      disabled={caps ? !caps.autostart.available : false}
+                      onChange={(value) => void updatePrefs({ launchOnBoot: value })}
+                    />
+                  </div>
+                  {caps && !caps.autostart.available && (
+                    <span className="history-sub">
+                      {caps.autostart.detail || "仅保存偏好，尚未挂钩系统自启"}
+                    </span>
+                  )}
+                  {caps?.autostart.available && caps.autostart.detail && (
+                    <span className="history-sub">{caps.autostart.detail}</span>
+                  )}
                 </div>
-                <div className="pref-item-row">
-                  <span className="pref-title">截屏包含鼠标光标</span>
-                  <PrefToggle
-                    label="截屏包含鼠标光标"
-                    value={settings.includeCursor}
-                    onChange={(value) => void updatePrefs({ includeCursor: value })}
-                  />
+                <div className="pref-item-row" style={{ flexDirection: "column", alignItems: "stretch", gap: 6 }}>
+                  <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", gap: 12 }}>
+                    <span className="pref-title">截屏包含鼠标光标</span>
+                    <PrefToggle
+                      label="截屏包含鼠标光标"
+                      value={settings.includeCursor}
+                      disabled={caps ? !caps.includeCursor.available : false}
+                      onChange={(value) => void updatePrefs({ includeCursor: value })}
+                    />
+                  </div>
+                  {caps?.includeCursor.detail && (
+                    <span className="history-sub">{caps.includeCursor.detail}</span>
+                  )}
                 </div>
                 <div className="pref-item-row">
                   <span className="pref-title">截图完成后动作</span>
@@ -1646,6 +1673,28 @@ function ShortcutsPage({
               </div>
             )}
           </section>
+
+          {caps && (
+            <section className="hub-section-block">
+              <div className="section-label-bar">
+                <span className="section-name">本机能力</span>
+              </div>
+              <div className="preferences-group-card">
+                <div className="pref-item-row" style={{ flexDirection: "column", alignItems: "stretch", gap: 4 }}>
+                  <span className="pref-title">
+                    {caps.os} · {caps.displayServer}
+                  </span>
+                  <span className="history-sub">录制：{caps.recording.available ? "可用" : "不可用"} — {caps.recording.detail}</span>
+                  <span className="history-sub">OCR：{caps.ocr.available ? "可用" : "不可用"} — {caps.ocr.detail}</span>
+                  <span className="history-sub">滚动长截图：{caps.scrolling.available ? "可用" : "不可用"} — {caps.scrolling.detail}</span>
+                  {caps.trayNote ? <span className="history-sub">托盘：{caps.trayNote}</span> : null}
+                  {caps.notes.map((note) => (
+                    <span key={note} className="history-sub">· {note}</span>
+                  ))}
+                </div>
+              </div>
+            </section>
+          )}
         </div>
       </div>
 

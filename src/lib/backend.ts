@@ -240,7 +240,10 @@ export async function platformCapabilities(): Promise<PlatformCapabilities> {
       recording: { available: false, detail: "预览模式" },
       ocr: { available: false, detail: "预览模式" },
       autostart: { available: false, detail: "预览模式" },
+      scrolling: { available: false, detail: "预览模式" },
+      includeCursor: { available: false, detail: "预览模式" },
       trayNote: "",
+      notes: [],
     };
   }
   return invoke<PlatformCapabilities>("platform_capabilities");
