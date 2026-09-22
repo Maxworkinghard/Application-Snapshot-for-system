@@ -22,6 +22,7 @@ import {
   ScanText,
   Sparkles,
   SlidersHorizontal,
+  Minus,
   Moon,
   Sun,
   Wand2,
@@ -183,11 +184,6 @@ export function App() {
     broadcastTheme(mode);
   }
 
-  // 顶栏那个按钮是快捷切换：点一下就落到明确的浅色或深色，不再跟随系统
-  function toggleTheme() {
-    changeTheme(theme === "dark" ? "light" : "dark");
-  }
-
   // 跟随系统时，系统外观变了要当场跟上，否则得重开窗口才生效
   useEffect(() => {
     if (themePreference !== "system") return;
@@ -289,25 +285,38 @@ export function App() {
         onDoubleClick={() => void appWindow?.toggleMaximize()}
       >
         <div className="titlebar-left">
-          <div className="window-traffic-lights">
-            <button className="traffic-dot" onClick={() => void appWindow?.close()} title="关闭" />
-            <button className="traffic-dot" onClick={() => void appWindow?.minimize()} title="最小化" />
-            <button className="traffic-dot" onClick={() => void appWindow?.toggleMaximize()} title="最大化 / 还原" />
-          </div>
           <div className="window-title-chip">
             <span className="title-name">应用快照</span>
           </div>
         </div>
 
         <div className="titlebar-right">
-          <button
-            className="theme-switch-btn"
-            onClick={toggleTheme}
-            title={themePreference === "system" ? "当前跟随系统，点击固定为浅色/深色" : "切换主题"}
-          >
-            {theme === "dark" ? <Sun size={13} /> : <Moon size={13} />}
-            <span>{themePreference === "system" ? "跟随系统" : theme === "dark" ? "深色" : "浅色"}</span>
-          </button>
+          <div className="window-controls">
+            <button
+              className="window-control-btn"
+              onClick={() => void appWindow?.minimize()}
+              title="最小化"
+              aria-label="最小化"
+            >
+              <Minus size={14} />
+            </button>
+            <button
+              className="window-control-btn"
+              onClick={() => void appWindow?.toggleMaximize()}
+              title="最大化 / 还原"
+              aria-label="最大化或还原"
+            >
+              <Maximize2 size={12} />
+            </button>
+            <button
+              className="window-control-btn is-close"
+              onClick={() => void appWindow?.close()}
+              title="关闭"
+              aria-label="关闭"
+            >
+              <X size={14} />
+            </button>
+          </div>
         </div>
       </div>
 
@@ -1280,6 +1289,38 @@ function SegGroup<T extends string>({
 }
 
 /** 试听提示音：有自定义文件就播文件，否则用 WebAudio 合成一声短促提示 */
+/**
+ * 一记机械快门的「咔」。
+ *
+ * 机械声是宽频瞬态、没有音高，所以用白噪声过带通再配极快的衰减包络；
+ * 用振荡器无论怎么调，出来的都是电子提示音而不是快门声。
+ */
+function shutterClick(ctx: AudioContext, at: number, level: number, bright: boolean) {
+  const duration = 0.05;
+  const buffer = ctx.createBuffer(1, Math.max(1, Math.ceil(ctx.sampleRate * duration)), ctx.sampleRate);
+  const data = buffer.getChannelData(0);
+  for (let i = 0; i < data.length; i += 1) {
+    data[i] = Math.random() * 2 - 1;
+  }
+
+  const source = ctx.createBufferSource();
+  source.buffer = buffer;
+
+  const filter = ctx.createBiquadFilter();
+  filter.type = "bandpass";
+  // 高一点像金属脆响，低一点像闷响，两声一高一低才有先后层次
+  filter.frequency.value = bright ? 3200 : 1700;
+  filter.Q.value = 0.9;
+
+  const amp = ctx.createGain();
+  amp.gain.setValueAtTime(Math.max(0.0001, level), at);
+  amp.gain.exponentialRampToValueAtTime(0.0001, at + duration);
+
+  source.connect(filter).connect(amp).connect(ctx.destination);
+  source.start(at);
+  source.stop(at + duration);
+}
+
 function previewHintSound(kind: "crisp" | "soft" | "pet", customPath: string | null, volume: number) {
   const gain = Math.min(1, Math.max(0, volume / 100));
   try {
@@ -1295,14 +1336,25 @@ function previewHintSound(kind: "crisp" | "soft" | "pet", customPath: string | n
       (window as unknown as { webkitAudioContext?: typeof AudioContext }).webkitAudioContext;
     if (!AudioContextCtor) return;
     const ctx = new AudioContextCtor();
+    const now = ctx.currentTime;
+
+    // 截屏音效走快门声：一声「咔」（反光板抬起）接一声稍闷的「嚓」（快门闭合）。
+    // 两声间隔 70ms——再近会糊成一声，再远就听成两次独立的响动。
+    if (kind !== "pet") {
+      const level = gain * (kind === "soft" ? 0.2 : 0.38);
+      shutterClick(ctx, now, level, kind === "crisp");
+      shutterClick(ctx, now + 0.07, level * 0.7, false);
+      return;
+    }
+
+    // 桌宠交互是提示音不是快门，保持一声短促的音调
     const osc = ctx.createOscillator();
     const amp = ctx.createGain();
-    const now = ctx.currentTime;
-    osc.frequency.value = kind === "soft" ? 520 : kind === "pet" ? 660 : 880;
-    osc.type = kind === "soft" ? "sine" : "triangle";
+    osc.frequency.value = 660;
+    osc.type = "triangle";
     amp.gain.setValueAtTime(0.0001, now);
     amp.gain.exponentialRampToValueAtTime(Math.max(0.0001, gain * 0.35), now + 0.015);
-    amp.gain.exponentialRampToValueAtTime(0.0001, now + (kind === "soft" ? 0.35 : 0.18));
+    amp.gain.exponentialRampToValueAtTime(0.0001, now + 0.18);
     osc.connect(amp).connect(ctx.destination);
     osc.start(now);
     osc.stop(now + 0.4);
@@ -1727,7 +1779,6 @@ function ShortcutsPage({
       </div>
 
       <div className="hub-bottom-status-strip">
-        <span className="history-sub">修改后需要保存才会写入系统</span>
         <button className="primary-button" onClick={save} disabled={saving}>
           <Save size={16} /> {saving ? "保存中…" : "保存快捷键"}
         </button>
