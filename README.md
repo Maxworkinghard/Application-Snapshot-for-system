@@ -17,11 +17,11 @@ System capabilities sit behind a shared interface with one adapter per platform,
 | | Windows | macOS | Linux |
 |---|---|---|---|
 | Window capture | xcap | xcap | xcap |
-| Window recording | ffmpeg `gdigrab` | not wired up yet — ScreenCaptureKit | ffmpeg `x11grab` |
+| Window recording | ffmpeg `gdigrab` | not wired up yet — ScreenCaptureKit | ffmpeg `x11grab` (X11); portal ScreenCast + PipeWire → ffmpeg (pure Wayland) |
 | Text recognition | `Windows.Media.Ocr` | not wired up yet — Vision via a `snapshot-ocr` helper | `tesseract` |
 | Snapshot history, companion, prompt polishing | yes | yes | yes |
 
-Only the Windows adapters have been exercised on a real machine. The macOS and Linux adapters have not been compiled or run yet.
+Only the Windows adapters have been exercised extensively on a real machine. Linux adapters compile on this codebase and cover X11 recording, portal ScreenCast recording for pure Wayland (needs a real graphical session to E2E), tesseract OCR, XDG autostart (opt-in; optional systemd user unit is documented only), and best-effort app icons. macOS recording/OCR helpers are not finished yet.
 
 ## Requirements
 
@@ -51,6 +51,32 @@ The reference implementations build on their own:
 powershell.exe -NoProfile -ExecutionPolicy Bypass -File .\windows\scripts\build.ps1
 cd linux && ./scripts/build-linux.sh
 ```
+
+
+## Linux (Tauri mainline)
+
+The product path on Linux is this Tauri app, not `linux/windowsnap` (that directory is the older reference client still used by the current Release workflow tarball).
+
+```bash
+# Debian / Ubuntu — build + optional runtime deps
+sudo bash scripts/linux/install-deps.sh
+bash scripts/linux/check-env.sh
+
+npm install
+npm run tauri dev          # development
+bash scripts/linux/build.sh  # release binary + deb/AppImage when bundlers succeed
+```
+
+| Optional tool | Feature |
+|---|---|
+| `ffmpeg` | Window recording (`x11grab` when `$DISPLAY` is set; portal path encodes via ffmpeg `rawvideo`) |
+| `tesseract` + language packs | OCR |
+| `xdotool` | Restore a minimized target window before capture |
+| StatusNotifierHost | System tray (KDE native; GNOME needs an AppIndicator extension) |
+
+**Autostart** is opt-in via Settings → 开机静默自启动. It writes `~/.config/autostart/com.appsnapshot.prompt-pet-shortcut.desktop`. An **optional** systemd `--user` unit example lives at `scripts/linux/com.appsnapshot.prompt-pet-shortcut.service.example` (advanced; never enabled by the app).
+
+More detail: [scripts/linux/README.md](scripts/linux/README.md).
 
 ## Shortcuts
 

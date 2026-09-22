@@ -19,11 +19,11 @@
 | | Windows | macOS | Linux |
 |---|---|---|---|
 | 窗口截图 | xcap | xcap | xcap |
-| 窗口录制 | ffmpeg `gdigrab` | 待接入 ScreenCaptureKit | ffmpeg `x11grab` |
+| 窗口录制 | ffmpeg `gdigrab` | 待接入 ScreenCaptureKit | ffmpeg `x11grab`（X11）；纯 Wayland 走 portal ScreenCast + PipeWire → ffmpeg |
 | 文字识别 | `Windows.Media.Ocr` | 待接入 Vision（经 `snapshot-ocr` 桥） | `tesseract` |
 | 快照历史、桌面伴侣、Prompt 润色 | 有 | 有 | 有 |
 
-目前只有 Windows 侧的 adapter 在真机上跑过，macOS 与 Linux 的 adapter 尚未编译、也未运行。
+目前 Windows 侧 adapter 在真机上验证最充分。Linux adapter 已可在本仓库编译，覆盖 X11 录制、纯 Wayland 的 portal ScreenCast 录制（端到端需真实图形会话）、tesseract OCR、XDG 开机自启（需用户勾选；systemd 用户单元仅作可选文档）以及尽力而为的应用图标。macOS 的录制 / OCR 桥尚未完成。
 
 ## 依赖
 
@@ -53,6 +53,32 @@ npm run tauri build    # 安装包
 powershell.exe -NoProfile -ExecutionPolicy Bypass -File .\windows\scripts\build.ps1
 cd linux && ./scripts/build-linux.sh
 ```
+
+
+## Linux（Tauri 主线）
+
+Linux 上的产品路径是仓库根目录这套 Tauri 应用，不是 `linux/windowsnap`（该目录是更早的参考实现，当前 Release 仍在打它的 tar.gz）。
+
+```bash
+# Debian / Ubuntu — 编译与可选运行时依赖
+sudo bash scripts/linux/install-deps.sh
+bash scripts/linux/check-env.sh
+
+npm install
+npm run tauri dev            # 开发
+bash scripts/linux/build.sh  # 正式二进制；bundler 成功时还有 deb / AppImage
+```
+
+| 可选工具 | 能力 |
+|---|---|
+| `ffmpeg` | 窗口录制（有 `$DISPLAY` 时用 `x11grab`；portal 路径用 ffmpeg `rawvideo` 编码） |
+| `tesseract` + 语言包 | OCR |
+| `xdotool` | 截图前还原已最小化的目标窗口 |
+| StatusNotifierHost | 系统托盘（KDE 原生；GNOME 需 AppIndicator 扩展） |
+
+**开机自启**需在「设置 → 开机静默自启动」中勾选，才会写入 `~/.config/autostart/…desktop`（这是受支持的主路径）。可选的 systemd `--user` 单元示例见 `scripts/linux/com.appsnapshot.prompt-pet-shortcut.service.example`（高级；应用不会替你 enable）。
+
+细节见 [scripts/linux/README.md](scripts/linux/README.md)。
 
 ## 快捷键
 
