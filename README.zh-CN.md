@@ -17,7 +17,7 @@
 | | Windows | macOS | Linux |
 |---|---|---|---|
 | 窗口截图 | xcap | xcap | xcap |
-| 窗口录制 | ffmpeg `gdigrab` | ffmpeg `avfoundation`（采主屏整屏后按窗口裁剪） | Wayland 走 portal ScreenCast + PipeWire → ffmpeg；X11 走 ffmpeg `x11grab` |
+| 窗口录制 | Windows.Graphics.Capture + Media Foundation | ffmpeg `avfoundation`（采主屏整屏后按窗口裁剪） | Wayland 走 portal ScreenCast + PipeWire → ffmpeg；X11 走 ffmpeg `x11grab` |
 | 文字识别 | `Windows.Media.Ocr` | Vision（经 `snapshot-ocr` 桥） | `tesseract` |
 | 快照历史、桌面伴侣、Prompt 润色 | 有 | 有 | 有 |
 
@@ -25,7 +25,7 @@
 
 ## 依赖
 
-- **录制**需要 `ffmpeg` 且在 `PATH` 中。Linux 上「截屏包含鼠标光标」的静帧也会优先走 ffmpeg `x11grab`（失败则回退为无光标截图）；OCR、润色不需要 ffmpeg。
+- **录制**在 Windows 上走系统自带的 Windows.Graphics.Capture 与 Media Foundation，不需要 ffmpeg；macOS 与 Linux 的录制仍需要 `ffmpeg` 在 `PATH` 中。Linux 上「截屏包含鼠标光标」的静帧也会优先走 ffmpeg `x11grab`（失败则回退为无光标截图）；OCR、润色不需要 ffmpeg。
 - **macOS 权限**：窗口截图与录制需要「屏幕录制」权限；还原已最小化的窗口再截图需要「辅助功能」权限。
 - **Linux 的 OCR** 需要 `tesseract` 及至少一个语言包（`apt install tesseract-ocr tesseract-ocr-chi-sim`）。
 - **macOS 的 OCR** 需要 `snapshot-ocr`。Vision 没有系统自带的命令行入口，主线改为调用一个 Swift 小桥（[src-tauri/snapshot-ocr/](src-tauri/snapshot-ocr/)）：stdin 收 PNG，stdout 每行输出一行识别结果；`--probe` 报告识别语言。`npm run tauri build` 会自动构建并以 Tauri sidecar 形式打进包（`bundle.externalBin` 写在 [src-tauri/tauri.macos.conf.json](src-tauri/tauri.macos.conf.json) 里，免得 Windows / Linux 构建去找一个只有 macOS 才有的二进制；产物落在 `Contents/MacOS/` 主程序旁边）；单独构建用 `bash scripts/build-ocr-sidecar.sh`。从源码运行时：`cd src-tauri/snapshot-ocr && swift build -c release`，把产物拷到 `PATH` 内任意目录（如 `~/.local/bin`）——应用优先用与自己同目录的 sidecar，找不到才回退 `PATH`。

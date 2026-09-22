@@ -2,6 +2,8 @@ mod ocr;
 
 #[cfg(target_os = "linux")]
 mod linux;
+#[cfg(target_os = "windows")]
+mod windows_recorder;
 
 use arboard::{Clipboard, ImageData};
 use base64::{engine::general_purpose::STANDARD as BASE64, Engine as _};
@@ -25,6 +27,8 @@ use std::{
     time::{Duration, SystemTime, UNIX_EPOCH},
 };
 #[cfg(not(target_os = "linux"))]
+// 只有仍旧 spawn ffmpeg 的平台需要它
+#[cfg(not(any(target_os = "linux", target_os = "windows")))]
 use std::process::Stdio;
 use tauri::{
     menu::{Menu, MenuItem},
@@ -283,12 +287,17 @@ struct Recorder {
     /// Linux：portal 路径的停止句柄（x11grab 时为 None）。
     #[cfg(target_os = "linux")]
     linux_active: Option<linux::ActiveRecording>,
+    /// Windows：WGC 采集会话的停止句柄，录制不再经由子进程。
+    #[cfg(target_os = "windows")]
+    windows_active: Option<windows_recorder::ActiveRecording>,
 }
 
 impl Default for Recorder {
     fn default() -> Self {
         Self {
             child: None,
+            #[cfg(target_os = "windows")]
+            windows_active: None,
             target: None,
             started_at: None,
             output_path: None,
@@ -951,7 +960,7 @@ struct CapabilityStatus {
 }
 
 
-#[cfg(any(target_os = "windows", target_os = "macos"))]
+#[cfg(target_os = "macos")]
 fn ffmpeg_on_path() -> bool {
     Command::new("ffmpeg").arg("-version").output().is_ok()
 }
@@ -1022,16 +1031,10 @@ fn platform_capabilities() -> PlatformCapabilities {
     #[cfg(target_os = "windows")]
     {
         let ocr_report = ocr::report();
-        let recording = if ffmpeg_on_path() {
-            CapabilityStatus {
-                available: true,
-                detail: "ffmpeg gdigrab（光标由 -draw_mouse 跟随 include_cursor）".into(),
-            }
-        } else {
-            CapabilityStatus {
-                available: false,
-                detail: "未找到 ffmpeg，请安装后加入 PATH".into(),
-            }
+        let recording = CapabilityStatus {
+            available: true,
+            detail: "Windows.Graphics.Capture + Media Foundation（按窗口句柄采集，不依赖 ffmpeg）"
+                .into(),
         };
         return PlatformCapabilities {
             os: "windows".into(),
@@ -2083,7 +2086,9 @@ fn recording_status_with_message(recorder: &Recorder, message: Option<String>) -
     let active = recorder.child.is_some() || {
         #[cfg(target_os = "linux")]
         { recorder.linux_active.is_some() }
-        #[cfg(not(target_os = "linux"))]
+        #[cfg(target_os = "windows")]
+        { recorder.windows_active.is_some() }
+        #[cfg(not(any(target_os = "linux", target_os = "windows")))]
         { false }
     };
     RecordingStatus {
@@ -2100,7 +2105,9 @@ fn toggle_recording(state: State<'_, AppState>) -> Result<RecordingStatus, Strin
     if recorder.child.is_some() || {
         #[cfg(target_os = "linux")]
         { recorder.linux_active.is_some() }
-        #[cfg(not(target_os = "linux"))]
+        #[cfg(target_os = "windows")]
+        { recorder.windows_active.is_some() }
+        #[cfg(not(any(target_os = "linux", target_os = "windows")))]
         { false }
     } {
         stop_active_recording(&mut recorder);
@@ -2137,7 +2144,23 @@ fn toggle_recording(state: State<'_, AppState>) -> Result<RecordingStatus, Strin
         return Ok(recording_status_with_message(&recorder, start_message));
     }
 
-    #[cfg(not(target_os = "linux"))]
+    #[cfg(target_os = "windows")]
+    {
+        // xcap 在 Windows 上的窗口 id 就是 HWND，直接交给 WGC 按句柄采集，
+        // 不必像 ffmpeg 那样按标题找窗口
+        let active = windows_recorder::start(
+            target.id as isize,
+            settings.include_cursor,
+            &output,
+        )?;
+        recorder.windows_active = Some(active);
+        recorder.target = Some(target.app_name);
+        recorder.started_at = Some(now_millis());
+        recorder.output_path = Some(output);
+        return Ok(recording_status(&recorder));
+    }
+
+    #[cfg(not(any(target_os = "linux", target_os = "windows")))]
     {
         let mut command = build_ffmpeg_command(&target, &output, settings.include_cursor)?;
         command.stdin(Stdio::piped()).stdout(Stdio::null()).stderr(Stdio::null());
@@ -2151,6 +2174,17 @@ fn toggle_recording(state: State<'_, AppState>) -> Result<RecordingStatus, Strin
 }
 
 fn stop_active_recording(recorder: &mut Recorder) {
+    #[cfg(target_os = "windows")]
+    {
+        if let Some(active) = recorder.windows_active.take() {
+            // stop 内部会 Finalize，MP4 的 moov 在这一步才写进去
+            active.stop();
+            recorder.target = None;
+            recorder.started_at = None;
+            recorder.output_path = None;
+            return;
+        }
+    }
     #[cfg(target_os = "linux")]
     {
         if let Some(active) = recorder.linux_active.take() {
@@ -2173,7 +2207,7 @@ fn stop_active_recording(recorder: &mut Recorder) {
     recorder.output_path = None;
 }
 
-#[cfg(not(target_os = "linux"))]
+#[cfg(not(any(target_os = "linux", target_os = "windows")))]
 fn build_ffmpeg_command(
     target: &TrackedWindow,
     output: &PathBuf,
@@ -2181,21 +2215,6 @@ fn build_ffmpeg_command(
 ) -> Result<Command, String> {
     let mut command = Command::new("ffmpeg");
     command.arg("-y");
-    #[cfg(target_os = "windows")]
-    {
-        // gdigrab 支持 -draw_mouse 0/1，与 Linux x11grab 对齐
-        let draw_mouse = if include_cursor { "1" } else { "0" };
-        command.args([
-            "-f",
-            "gdigrab",
-            "-framerate",
-            "30",
-            "-draw_mouse",
-            draw_mouse,
-            "-i",
-            &format!("title={}", target.title),
-        ]);
-    }
     #[cfg(target_os = "macos")]
     {
         // avfoundation 没有"按窗口采集"，只能采主屏整屏，再按窗口边界 crop。
