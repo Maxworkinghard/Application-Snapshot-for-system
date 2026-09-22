@@ -137,12 +137,6 @@ struct Settings {
     include_cursor: bool,
     #[serde(default = "default_after_capture")]
     after_capture: String,
-    #[serde(default = "default_true")]
-    pet_sound_enabled: bool,
-    #[serde(default = "default_pet_sound_volume")]
-    pet_sound_volume: u32,
-    #[serde(default)]
-    pet_custom_sound_path: Option<String>,
 }
 
 fn is_false(value: &bool) -> bool {
@@ -167,10 +161,6 @@ fn default_shutter_sound() -> String {
 
 fn default_after_capture() -> String {
     "clipboard".into()
-}
-
-fn default_pet_sound_volume() -> u32 {
-    65
 }
 
 impl Default for Settings {
@@ -202,9 +192,6 @@ impl Default for Settings {
             launch_on_boot: false,
             include_cursor: false,
             after_capture: default_after_capture(),
-            pet_sound_enabled: true,
-            pet_sound_volume: default_pet_sound_volume(),
-            pet_custom_sound_path: None,
         }
     }
 }
@@ -243,9 +230,6 @@ struct PreferencesPatch {
     launch_on_boot: Option<bool>,
     include_cursor: Option<bool>,
     after_capture: Option<String>,
-    pet_sound_enabled: Option<bool>,
-    pet_sound_volume: Option<u32>,
-    pet_custom_sound_path: Option<serde_json::Value>,
 }
 
 #[derive(Clone, Debug, Serialize)]
@@ -958,15 +942,6 @@ fn save_preferences(
     }
     if let Some(value) = prefs.after_capture {
         settings.after_capture = value;
-    }
-    if let Some(value) = prefs.pet_sound_enabled {
-        settings.pet_sound_enabled = value;
-    }
-    if let Some(value) = prefs.pet_sound_volume {
-        settings.pet_sound_volume = value.min(100);
-    }
-    if let Some(value) = prefs.pet_custom_sound_path {
-        settings.pet_custom_sound_path = value.as_str().map(str::to_string);
     }
     persist_settings(&state.settings_path, &settings)?;
     let result = settings.clone();

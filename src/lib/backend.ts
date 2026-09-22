@@ -50,9 +50,6 @@ const demoSettings: Settings = {
   launchOnBoot: false,
   includeCursor: false,
   afterCapture: "clipboard",
-  petSoundEnabled: true,
-  petSoundVolume: 65,
-  petCustomSoundPath: null,
 };
 
 export async function loadSettings(): Promise<Settings> {

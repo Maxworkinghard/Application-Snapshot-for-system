@@ -41,7 +41,6 @@ import {
   FolderOpen,
   Palette,
   Play,
-  Volume2,
 } from "lucide-react";
 import {
   addPetAsset,
@@ -155,9 +154,6 @@ const initialSettings: Settings = {
   launchOnBoot: false,
   includeCursor: false,
   afterCapture: "clipboard",
-  petSoundEnabled: true,
-  petSoundVolume: 65,
-  petCustomSoundPath: null,
 };
 
 /** 旧页面淡出的时长，必须和 styles 里 page-leave 的 animation-duration 对齐 */
@@ -886,32 +882,12 @@ function PetPage({
     }
   }
 
-  // 音量拖动过程中只动本地 state，松手/失焦时才写盘，避免一次拖动刷几十次设置文件
-  const [petVolume, setPetVolume] = useState(settings.petSoundVolume);
-  useEffect(() => setPetVolume(settings.petSoundVolume), [settings.petSoundVolume]);
-
   async function updatePrefs(patch: Partial<Settings>, message?: string) {
     try {
       onSaved(await savePreferences(patch));
       if (message) notify(message);
     } catch (error) {
       notify(error instanceof Error ? error.message : String(error));
-    }
-  }
-
-  function commitPetVolume(value: number) {
-    setPetVolume(value);
-    void updatePrefs({ petSoundVolume: value });
-  }
-
-  async function importPetSound() {
-    try {
-      const selected = await open({ multiple: false, filters: [{ name: "音效文件", extensions: ["mp3", "wav", "ogg", "m4a"] }] });
-      if (typeof selected === "string") {
-        await updatePrefs({ petCustomSoundPath: selected }, "交互提示音已导入");
-      }
-    } catch {
-      notify("当前环境不支持选择文件");
     }
   }
 
@@ -1126,79 +1102,6 @@ function PetPage({
 
         <div className="companion-behavior-settings">
           <div className="behavior-header">
-            <Volume2 size={14} />
-            <span>桌面行为特性</span>
-          </div>
-          <div className="behavior-row no-desc">
-            <span className="b-title">交互提示音</span>
-            <PrefToggle
-              label="交互提示音"
-              value={settings.petSoundEnabled}
-              onChange={(value) => void updatePrefs({ petSoundEnabled: value })}
-            />
-          </div>
-          {settings.petSoundEnabled && (
-            <div className="volume-slider-subrow">
-              <span className="volume-label">提示音量</span>
-              <input
-                type="range"
-                className="pet-volume-slider"
-                min={0}
-                max={100}
-                step={1}
-                value={petVolume}
-                aria-label="提示音量"
-                onChange={(event) => setPetVolume(Number(event.target.value))}
-                onPointerUp={() => commitPetVolume(petVolume)}
-                onKeyUp={() => commitPetVolume(petVolume)}
-                onBlur={() => commitPetVolume(petVolume)}
-              />
-              <span className="volume-label tabular-nums">{petVolume}%</span>
-            </div>
-          )}
-          <div className="behavior-row no-desc">
-            <span className="b-title">提示音效</span>
-            <SegGroup
-              ariaLabel="提示音效"
-              value={settings.petCustomSoundPath ? "custom" : "default"}
-              onChange={(value) => {
-                if (value === "custom") {
-                  void importPetSound();
-                } else {
-                  void updatePrefs({ petCustomSoundPath: null }, "已恢复默认提示音");
-                }
-              }}
-              options={[
-                { value: "default", label: "默认" },
-                { value: "custom", label: "自定义" },
-              ]}
-            />
-          </div>
-          {settings.petCustomSoundPath && (
-            <div className="behavior-row no-desc">
-              <span className="history-sub" title={settings.petCustomSoundPath}>
-                {fileNameOf(settings.petCustomSoundPath)}
-              </span>
-              <div className="folder-picker-box">
-                <button
-                  type="button"
-                  className="folder-action-btn"
-                  onClick={() => previewHintSound("pet", settings.petCustomSoundPath, petVolume)}
-                >
-                  <Play size={12} />
-                  试听
-                </button>
-                <button type="button" className="folder-action-btn" onClick={() => void importPetSound()}>
-                  <Upload size={12} />
-                  重新导入
-                </button>
-              </div>
-            </div>
-          )}
-        </div>
-
-        <div className="companion-behavior-settings">
-          <div className="behavior-header">
             <SlidersHorizontal size={14} />
             <span>素材包要求</span>
           </div>
@@ -1321,7 +1224,7 @@ function shutterClick(ctx: AudioContext, at: number, level: number, bright: bool
   source.stop(at + duration);
 }
 
-function previewHintSound(kind: "crisp" | "soft" | "pet", customPath: string | null, volume: number) {
+function previewHintSound(kind: "crisp" | "soft", customPath: string | null, volume: number) {
   const gain = Math.min(1, Math.max(0, volume / 100));
   try {
     if (customPath) {
@@ -1338,26 +1241,11 @@ function previewHintSound(kind: "crisp" | "soft" | "pet", customPath: string | n
     const ctx = new AudioContextCtor();
     const now = ctx.currentTime;
 
-    // 截屏音效走快门声：一声「咔」（反光板抬起）接一声稍闷的「嚓」（快门闭合）。
+    // 快门声：一声「咔」（反光板抬起）接一声稍闷的「嚓」（快门闭合）。
     // 两声间隔 70ms——再近会糊成一声，再远就听成两次独立的响动。
-    if (kind !== "pet") {
-      const level = gain * (kind === "soft" ? 0.2 : 0.38);
-      shutterClick(ctx, now, level, kind === "crisp");
-      shutterClick(ctx, now + 0.07, level * 0.7, false);
-      return;
-    }
-
-    // 桌宠交互是提示音不是快门，保持一声短促的音调
-    const osc = ctx.createOscillator();
-    const amp = ctx.createGain();
-    osc.frequency.value = 660;
-    osc.type = "triangle";
-    amp.gain.setValueAtTime(0.0001, now);
-    amp.gain.exponentialRampToValueAtTime(Math.max(0.0001, gain * 0.35), now + 0.015);
-    amp.gain.exponentialRampToValueAtTime(0.0001, now + 0.18);
-    osc.connect(amp).connect(ctx.destination);
-    osc.start(now);
-    osc.stop(now + 0.4);
+    const level = gain * (kind === "soft" ? 0.2 : 0.38);
+    shutterClick(ctx, now, level, kind === "crisp");
+    shutterClick(ctx, now + 0.07, level * 0.7, false);
   } catch {
     // 试听失败不打断设置流程
   }
