@@ -289,12 +289,21 @@ export function App() {
 
   const appWindow = "__TAURI_INTERNALS__" in window ? getCurrentWindow() : null;
 
+  // 窗口操作要 capability 里显式放行，缺权限时 promise 会被拒。
+  // 原先一律 void 掉，表现就是「点了没反应」且不留痕迹——必须让它说话。
+  function runWindowAction(action: (() => Promise<unknown>) | undefined, label: string) {
+    if (!action) return;
+    void action().catch((error) => {
+      notify(`${label}失败：${error instanceof Error ? error.message : String(error)}`);
+    });
+  }
+
   return (
     <div className="settings-window-frame">
       <div
         className="window-titlebar"
         data-tauri-drag-region
-        onDoubleClick={() => void appWindow?.toggleMaximize()}
+        onDoubleClick={() => runWindowAction(appWindow?.toggleMaximize.bind(appWindow), "最大化")}
       >
         <div className="titlebar-left">
           <div className="window-title-chip">
@@ -306,7 +315,7 @@ export function App() {
           <div className="window-controls">
             <button
               className="window-control-btn"
-              onClick={() => void appWindow?.minimize()}
+              onClick={() => runWindowAction(appWindow?.minimize.bind(appWindow), "最小化")}
               title="最小化"
               aria-label="最小化"
             >
@@ -314,7 +323,7 @@ export function App() {
             </button>
             <button
               className="window-control-btn"
-              onClick={() => void appWindow?.toggleMaximize()}
+              onClick={() => runWindowAction(appWindow?.toggleMaximize.bind(appWindow), "最大化")}
               title="最大化 / 还原"
               aria-label="最大化或还原"
             >
@@ -322,7 +331,7 @@ export function App() {
             </button>
             <button
               className="window-control-btn is-close"
-              onClick={() => void appWindow?.close()}
+              onClick={() => runWindowAction(appWindow?.close.bind(appWindow), "关闭")}
               title="关闭"
               aria-label="关闭"
             >
