@@ -69,6 +69,8 @@ Recording picks its backend from the session, not from `$DISPLAY`: a Wayland ses
 
 More detail: [scripts/linux/README.md](scripts/linux/README.md).
 
+Every push and pull request runs [`.github/workflows/check.yml`](.github/workflows/check.yml): frontend `npm run build`, plus `cargo check` / `cargo test` on Linux (via `scripts/linux/install-deps.sh`), Windows, and macOS.
+
 ## Shortcuts
 
 Nothing is bound by default. Snapshot, region capture, fullscreen capture, scrolling capture (Linux/X11 only for now), recording, prompt polishing and text extraction can each be given a global shortcut on the Shortcuts page; they fire while the window is minimised.

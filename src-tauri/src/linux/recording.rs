@@ -237,15 +237,26 @@ impl ActiveRecording {
 ///
 /// `target_id` / `include_cursor` 在 x11grab 路径生效。portal 路径由桌面选择器挑源；
 /// `include_cursor` 目前随门户/合成器默认（xcap ScreenCast 未暴露 cursor_mode）。
+///
+/// 第二个返回值是启动时给 UI 的提示（portal 需用户重新选窗/屏）；x11grab 为 `None`。
 pub fn start_recording(
     target_id: u32,
     include_cursor: bool,
     output: &Path,
-) -> Result<ActiveRecording, String> {
+) -> Result<(ActiveRecording, Option<String>), String> {
     ensure_ffmpeg()?;
     match pick_recording_backend()? {
-        RecordingBackend::Portal => start_portal_recording(include_cursor, output),
-        RecordingBackend::X11Grab { .. } => start_x11_recording(target_id, include_cursor, output),
+        RecordingBackend::Portal => {
+            let active = start_portal_recording(include_cursor, output)?;
+            // xdg portal 无法沿用应用内选中的 target_id；光标亦由合成器决定。
+            let warn = "录制已开始：门户将请你重新选择窗口/屏幕；光标由合成器决定（include_cursor 无效）"
+                .to_string();
+            Ok((active, Some(warn)))
+        }
+        RecordingBackend::X11Grab { .. } => {
+            let active = start_x11_recording(target_id, include_cursor, output)?;
+            Ok((active, None))
+        }
     }
 }
 
