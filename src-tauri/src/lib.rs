@@ -19,7 +19,7 @@ use std::{
     process::{Child, Command},
     sync::{
         atomic::{AtomicU64, Ordering},
-        mpsc, Arc,
+        Arc,
     },
     thread,
     time::{Duration, SystemTime, UNIX_EPOCH},
@@ -203,7 +203,6 @@ fn default_shortcut_bindings() -> Vec<ShortcutBinding> {
     #[cfg_attr(not(target_os = "linux"), allow(unused_mut))]
     let mut bindings = vec![
         ShortcutBinding { action: "snapshot".into(), accelerator: None },
-        ShortcutBinding { action: "region".into(), accelerator: None },
         ShortcutBinding { action: "fullscreen".into(), accelerator: None },
         ShortcutBinding { action: "record".into(), accelerator: None },
         ShortcutBinding { action: "polish".into(), accelerator: None },
@@ -310,14 +309,6 @@ struct RecordingStatus {
     message: Option<String>,
 }
 
-#[derive(Clone, Copy, Debug)]
-struct RegionRect {
-    x: i32,
-    y: i32,
-    width: u32,
-    height: u32,
-}
-
 struct AppState {
     settings_path: PathBuf,
     snapshots_dir: PathBuf,
@@ -326,8 +317,6 @@ struct AppState {
     recorder: Mutex<Recorder>,
     pet_position_revision: AtomicU64,
     quick_menu_anchor: Mutex<Option<(f64, f64)>>,
-    /// 区域框选结果回传（None = 取消）
-    region_tx: Mutex<Option<mpsc::Sender<Option<RegionRect>>>>,
     /// 标注窗口待编辑 PNG（RGBA 编码前的原始 PNG 字节）
     annotate_png: Mutex<Option<Vec<u8>>>,
     annotate_title: Mutex<String>,
@@ -2640,162 +2629,6 @@ fn capture_fullscreen_image(
     Ok((image, name, note))
 }
 
-/// 把屏幕绝对坐标矩形裁成相对某块显示器的区域，再交给 xcap（或 Linux 带光标 x11grab）。
-fn capture_region_image(
-    rect: RegionRect,
-    include_cursor: bool,
-) -> Result<(RgbaImage, String, Option<String>), String> {
-    if rect.width < 2 || rect.height < 2 {
-        return Err("选区太小".into());
-    }
-    #[cfg(target_os = "linux")]
-    let mut cursor_degraded: Option<String> = None;
-    #[cfg(target_os = "linux")]
-    if include_cursor {
-        match linux::capture_region_with_cursor(rect.x, rect.y, rect.width, rect.height) {
-            Ok(image) => return Ok((image, "区域截图".into(), None)),
-            Err(error) => {
-                cursor_degraded = Some(cursor_degrade_note(&error));
-            }
-        }
-    }
-    let _ = include_cursor;
-    let monitor = Monitor::from_point(rect.x, rect.y)
-        .or_else(|_| primary_monitor())
-        .map_err(|error| format!("无法定位选区所在显示器：{error}"))?;
-    let mx = monitor.x().unwrap_or(0);
-    let my = monitor.y().unwrap_or(0);
-    let mw = monitor.width().unwrap_or(0);
-    let mh = monitor.height().unwrap_or(0);
-    let rel_x = (rect.x - mx).max(0) as u32;
-    let rel_y = (rect.y - my).max(0) as u32;
-    let width = rect.width.min(mw.saturating_sub(rel_x));
-    let height = rect.height.min(mh.saturating_sub(rel_y));
-    if width < 2 || height < 2 {
-        return Err("选区超出显示器范围".into());
-    }
-    #[allow(unused_mut)]
-    let mut image = monitor
-        .capture_region(rel_x, rel_y, width, height)
-        .map_err(|error| format!("区域截取失败：{error} / region capture failed: {error}"))?;
-    #[cfg(target_os = "linux")]
-    {
-        return Ok((image, "区域截图".into(), cursor_degraded));
-    }
-    #[allow(unreachable_code)]
-    {
-        #[allow(unused_mut)]
-        let mut note = None;
-        #[cfg(target_os = "macos")]
-        if include_cursor {
-            // 裁出来的图左上角就是选区左上角（绝对坐标 = 显示器原点 + 相对偏移）
-            note = mac_cursor::overlay_into(&mut image, (mx + rel_x as i32, my + rel_y as i32), width)
-                .err()
-                .map(|error| cursor_degrade_note(&error));
-        }
-        #[cfg(target_os = "windows")]
-        if include_cursor {
-            note = windows_cursor::overlay_into(
-                &mut image,
-                (mx + rel_x as i32, my + rel_y as i32),
-                width,
-            )
-            .err()
-            .map(|error| cursor_degrade_note(&error));
-        }
-        Ok((image, "区域截图".into(), note))
-    }
-}
-
-/// 可选：系统装了 slop 时直接框选，免开自绘层。
-fn try_slop_region() -> Option<RegionRect> {
-    let output = Command::new("slop")
-        .args(["-f", "%x %y %w %h"])
-        .output()
-        .ok()?;
-    if !output.status.success() {
-        return None;
-    }
-    let text = String::from_utf8_lossy(&output.stdout);
-    let parts: Vec<&str> = text.split_whitespace().collect();
-    if parts.len() != 4 {
-        return None;
-    }
-    let x = parts[0].parse().ok()?;
-    let y = parts[1].parse().ok()?;
-    let width = parts[2].parse().ok()?;
-    let height = parts[3].parse().ok()?;
-    Some(RegionRect { x, y, width, height })
-}
-
-fn show_region_picker(app: &AppHandle) -> Result<(), String> {
-    let window = app
-        .get_webview_window("region-picker")
-        .ok_or_else(|| "区域选择窗口不存在".to_string())?;
-    let _ = window.set_fullscreen(true);
-    window.show().map_err(|error| error.to_string())?;
-    window.set_focus().map_err(|error| error.to_string())
-}
-
-fn hide_region_picker(app: &AppHandle) {
-    if let Some(window) = app.get_webview_window("region-picker") {
-        let _ = window.hide();
-        let _ = window.set_fullscreen(false);
-    }
-}
-
-#[tauri::command]
-fn complete_region_capture(
-    app: AppHandle,
-    state: State<'_, AppState>,
-    x: i32,
-    y: i32,
-    width: u32,
-    height: u32,
-) {
-    hide_region_picker(&app);
-    if let Some(tx) = state.region_tx.lock().take() {
-        let _ = tx.send(Some(RegionRect { x, y, width, height }));
-    }
-}
-
-#[tauri::command]
-fn cancel_region_capture(app: AppHandle, state: State<'_, AppState>) {
-    hide_region_picker(&app);
-    if let Some(tx) = state.region_tx.lock().take() {
-        let _ = tx.send(None);
-    }
-}
-
-fn capture_region_interactive(
-    app: &AppHandle,
-    state: &AppState,
-) -> Result<(RgbaImage, String, Option<String>), String> {
-    let include_cursor = state.settings.lock().include_cursor;
-    if let Some(rect) = try_slop_region() {
-        // 等 slop 叠加层消失再抓，避免把框选 UI 拍进去
-        thread::sleep(Duration::from_millis(80));
-        return capture_region_image(rect, include_cursor);
-    }
-
-    let (tx, rx) = mpsc::channel();
-    *state.region_tx.lock() = Some(tx);
-    if let Err(error) = show_region_picker(app) {
-        let _ = state.region_tx.lock().take();
-        return Err(error);
-    }
-    let selected = rx
-        .recv_timeout(Duration::from_secs(120))
-        .map_err(|_| "区域选择超时 / region selection timed out".to_string())?;
-    hide_region_picker(app);
-    // 等自绘层隐藏后再截，避免框选蒙版入镜
-    thread::sleep(Duration::from_millis(120));
-    match selected {
-        Some(rect) => capture_region_image(rect, include_cursor),
-        None => Err("已取消区域截图 / region capture cancelled".into()),
-    }
-}
-
 #[tauri::command]
 async fn perform_action(action: String, app: AppHandle, state: State<'_, AppState>) -> Result<String, String> {
     match action.as_str() {
@@ -2819,29 +2652,6 @@ async fn perform_action(action: String, app: AppHandle, state: State<'_, AppStat
             })
                 .await
                 .map_err(|error| error.to_string())??;
-            finalize_capture(&app2, &state, image, &name, cursor_degraded)
-        }
-        "region" => {
-            let app2 = app.clone();
-            let (image, name, cursor_degraded) = {
-                let (tx, rx) = mpsc::channel::<Result<(RgbaImage, String, Option<String>), String>>();
-                let app_thread = app.clone();
-                thread::spawn(move || {
-                    let Some(app_state) = app_thread.try_state::<AppState>() else {
-                        let _ = tx.send(Err("应用状态不可用".into()));
-                        return;
-                    };
-                    let result = capture_region_interactive(&app_thread, app_state.inner());
-                    let _ = tx.send(result);
-                });
-                // 阻塞等待选区，同时主线程继续派发 region-picker 的鼠标事件
-                tauri::async_runtime::spawn_blocking(move || {
-                    rx.recv_timeout(Duration::from_secs(130))
-                        .map_err(|_| "区域选择超时 / region selection timed out".to_string())?
-                })
-                .await
-                .map_err(|error| error.to_string())??
-            };
             finalize_capture(&app2, &state, image, &name, cursor_degraded)
         }
         #[cfg(target_os = "linux")]
@@ -3431,7 +3241,6 @@ pub fn run() {
             recorder: Mutex::new(Recorder::default()),
             pet_position_revision: AtomicU64::new(0),
             quick_menu_anchor: Mutex::new(None),
-            region_tx: Mutex::new(None),
             annotate_png: Mutex::new(None),
             annotate_title: Mutex::new(String::new()),
         })
@@ -3591,8 +3400,6 @@ pub fn run() {
             hide_quick_menu,
             show_main_window,
             perform_action,
-            complete_region_capture,
-            cancel_region_capture,
             get_annotate_image,
             annotate_get_title,
             annotate_copy,
@@ -3667,12 +3474,12 @@ mod pet_asset_tests {
         #[cfg(target_os = "linux")]
         assert_eq!(
             actions,
-            vec!["snapshot", "record", "polish", "region", "fullscreen", "scrolling", "ocr"]
+            vec!["snapshot", "record", "polish", "fullscreen", "scrolling", "ocr"]
         );
         #[cfg(not(target_os = "linux"))]
         assert_eq!(
             actions,
-            vec!["snapshot", "record", "polish", "region", "fullscreen", "ocr"]
+            vec!["snapshot", "record", "polish", "fullscreen", "ocr"]
         );
 
         // 已绑定的键不能在迁移中丢失

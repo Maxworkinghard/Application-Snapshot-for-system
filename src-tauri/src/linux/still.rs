@@ -73,7 +73,7 @@ pub fn capture_primary_with_cursor() -> Result<RgbaImage, String> {
     capture_rect_with_cursor(x, y, width, height)
 }
 
-/// 任意屏幕矩形静帧（含鼠标光标）。窗口/区域截图复用；失败由调用方回退。
+/// 任意屏幕矩形静帧（含鼠标光标）。窗口截图按窗口矩形调用；失败由调用方回退。
 pub fn capture_region_with_cursor(x: i32, y: i32, width: u32, height: u32) -> Result<RgbaImage, String> {
     capture_rect_with_cursor(x, y, width, height)
 }

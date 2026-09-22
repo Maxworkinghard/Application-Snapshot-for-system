@@ -115,7 +115,6 @@ const navGroups: Array<{ title: string; items: NavEntry[] }> = [
 
 const actionLabels: Record<ShortcutAction, { name: string; tag?: string }> = {
   snapshot: { name: "窗口快照", tag: "前台窗口" },
-  region: { name: "区域截图", tag: "矩形框选" },
   fullscreen: { name: "全屏快照", tag: "主显示器" },
   scrolling: { name: "滚动长截图", tag: "窗口连拍" },
   record: { name: "窗口录制", tag: "MP4" },
@@ -137,7 +136,6 @@ const initialSettings: Settings = {
   petAssets: [],
   shortcuts: [
     { action: "snapshot", accelerator: "Alt+Shift+2" },
-    { action: "region", accelerator: "Alt+Shift+A" },
     { action: "fullscreen", accelerator: "Alt+Shift+F" },
     ...(SCROLLING_SUPPORTED ? [{ action: "scrolling" as const, accelerator: null }] : []),
     { action: "record", accelerator: null },
@@ -1396,7 +1394,6 @@ function ShortcutsPage({
         <div className="action-identity-col">
           <span className="action-leading-icon">
             {binding.action === "snapshot" ? <MonitorSmartphone size={15} />
-              : binding.action === "region" ? <Maximize2 size={15} />
               : binding.action === "fullscreen" ? <Camera size={15} />
               : binding.action === "scrolling" ? <Layers size={15} />
               : binding.action === "record" ? <span className="record-symbol" />

@@ -73,7 +73,7 @@ Every push and pull request runs [`.github/workflows/check.yml`](.github/workflo
 
 ## Shortcuts
 
-Nothing is bound by default. Snapshot, region capture, fullscreen capture, scrolling capture (Linux/X11 only for now), recording, prompt polishing and text extraction can each be given a global shortcut on the Shortcuts page; they fire while the window is minimised.
+Nothing is bound by default. Snapshot, fullscreen capture, scrolling capture (Linux/X11 only for now), recording, prompt polishing and text extraction can each be given a global shortcut on the Shortcuts page; they fire while the window is minimised.
 
 Post-capture behaviour depends on “after capture” and “auto-save local”: copy to clipboard by default, or open the annotate window / save-as dialog. Local history is written only when auto-save is on. Clipboard auto-clear delay is configurable (about 60 seconds by default; skipped if something else was copied meanwhile). Recordings are written as MP4 to the downloads folder (or a custom save directory). Extracted text replaces the clipboard contents.
 
