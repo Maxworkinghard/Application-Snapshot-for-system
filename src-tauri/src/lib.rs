@@ -189,15 +189,7 @@ impl Default for Settings {
             selected_appearance_id: default_appearance_id(),
             pet_assets: Vec::new(),
             pet_position: None,
-            shortcuts: vec![
-                ShortcutBinding { action: "snapshot".into(), accelerator: None },
-                ShortcutBinding { action: "region".into(), accelerator: None },
-                ShortcutBinding { action: "fullscreen".into(), accelerator: None },
-                ShortcutBinding { action: "scrolling".into(), accelerator: None },
-                ShortcutBinding { action: "record".into(), accelerator: None },
-                ShortcutBinding { action: "polish".into(), accelerator: None },
-                ShortcutBinding { action: "ocr".into(), accelerator: None },
-            ],
+            shortcuts: default_shortcut_bindings(),
             clipboard_auto_clear: default_clipboard_auto_clear(),
             snapshot_format: default_snapshot_format(),
             save_dir: String::new(),
@@ -215,6 +207,24 @@ impl Default for Settings {
             pet_custom_sound_path: None,
         }
     }
+}
+
+/// 平台支持的全局快捷键动作。滚动长截图仅 Linux/X11 实现，
+/// Windows / macOS 不展示、不注册、不迁移。
+fn default_shortcut_bindings() -> Vec<ShortcutBinding> {
+    // 非 Linux 上滚动长截图的那条 insert 被 cfg 掉了，mut 就用不上
+    #[cfg_attr(not(target_os = "linux"), allow(unused_mut))]
+    let mut bindings = vec![
+        ShortcutBinding { action: "snapshot".into(), accelerator: None },
+        ShortcutBinding { action: "region".into(), accelerator: None },
+        ShortcutBinding { action: "fullscreen".into(), accelerator: None },
+        ShortcutBinding { action: "record".into(), accelerator: None },
+        ShortcutBinding { action: "polish".into(), accelerator: None },
+        ShortcutBinding { action: "ocr".into(), accelerator: None },
+    ];
+    #[cfg(target_os = "linux")]
+    bindings.insert(3, ShortcutBinding { action: "scrolling".into(), accelerator: None });
+    bindings
 }
 
 /// 偏好设置的增量补丁：None 表示未发送，可空字段用 Value 区分"没传"和"显式置空"
@@ -371,8 +381,8 @@ fn read_settings(path: &PathBuf) -> Settings {
         settings.active_template_id = "builtin-default".into();
     }
     // 老配置里没有后来新增的动作（如 ocr）。只补不删：已有绑定原样保留，
-    // 缺的追加到末尾，否则升级后新功能在界面上根本没有入口。
-    for fallback in Settings::default().shortcuts {
+    // 缺的追加到末尾；平台不支持的动作（如 Win/mac 的 scrolling）不补。
+    for fallback in default_shortcut_bindings() {
         if !settings.shortcuts.iter().any(|item| item.action == fallback.action) {
             settings.shortcuts.push(fallback);
         }
@@ -1141,6 +1151,8 @@ struct PlatformCapabilities {
     recording: CapabilityStatus,
     ocr: CapabilityStatus,
     autostart: CapabilityStatus,
+    /// 滚动长截图只有 Linux/X11 实现，其余平台不暴露这一项
+    #[cfg(target_os = "linux")]
     scrolling: CapabilityStatus,
     include_cursor: CapabilityStatus,
     tray_note: String,
@@ -1250,10 +1262,6 @@ fn platform_capabilities() -> PlatformCapabilities {
                 available: true,
                 detail: "写入 HKCU\\...\\CurrentVersion\\Run（当前用户，opt-in）".into(),
             },
-            scrolling: CapabilityStatus {
-                available: false,
-                detail: "滚动长截图目前仅在 Linux/X11 实现".into(),
-            },
             include_cursor: CapabilityStatus {
                 available: true,
                 detail: "录制：gdigrab -draw_mouse；静帧：按热点合成系统光标".into(),
@@ -1293,10 +1301,6 @@ fn platform_capabilities() -> PlatformCapabilities {
                 },
                 Err(detail) => CapabilityStatus { available: false, detail },
             },
-            scrolling: CapabilityStatus {
-                available: false,
-                detail: "滚动长截图目前仅在 Linux/X11 实现".into(),
-            },
             include_cursor: CapabilityStatus {
                 available: true,
                 detail: "录制：avfoundation -capture_cursor；静帧截图：截后按热点与 DPI 比例合成当前系统光标".into(),
@@ -1315,7 +1319,6 @@ fn platform_capabilities() -> PlatformCapabilities {
             recording: CapabilityStatus { available: false, detail: "未支持".into() },
             ocr: CapabilityStatus { available: false, detail: "未支持".into() },
             autostart: CapabilityStatus { available: false, detail: "未支持".into() },
-            scrolling: CapabilityStatus { available: false, detail: "未支持".into() },
             include_cursor: CapabilityStatus { available: false, detail: "未支持".into() },
             tray_note: String::new(),
             notes: vec![],
@@ -2761,17 +2764,10 @@ fn hide_annotate_window(app: &AppHandle, state: &AppState) {
     }
 }
 
+#[cfg(target_os = "linux")]
 fn capture_scrolling_image(target_id: u32) -> Result<(RgbaImage, String), String> {
-    #[cfg(target_os = "linux")]
-    {
-        let image = linux::capture_scrolling_window(target_id)?;
-        return Ok((image, "滚动长截图".into()));
-    }
-    #[cfg(not(target_os = "linux"))]
-    {
-        let _ = target_id;
-        Err("滚动长截图目前仅在 Linux/X11 实现 / scrolling capture is Linux/X11-only for now".into())
-    }
+    let image = linux::capture_scrolling_window(target_id)?;
+    Ok((image, "滚动长截图".into()))
 }
 
 #[tauri::command]
@@ -3054,6 +3050,7 @@ async fn perform_action(action: String, app: AppHandle, state: State<'_, AppStat
             };
             finalize_capture(&app2, &state, image, &name, cursor_degraded)
         }
+        #[cfg(target_os = "linux")]
         "scrolling" => {
             let app2 = app.clone();
             let target_id = state
@@ -3944,9 +3941,16 @@ mod pet_asset_tests {
 
         let settings = read_settings(&path);
         let actions: Vec<&str> = settings.shortcuts.iter().map(|item| item.action.as_str()).collect();
+        // 平台不支持的动作（如 Win/mac 的 scrolling）不应被迁移补回
+        #[cfg(target_os = "linux")]
         assert_eq!(
             actions,
             vec!["snapshot", "record", "polish", "region", "fullscreen", "scrolling", "ocr"]
+        );
+        #[cfg(not(target_os = "linux"))]
+        assert_eq!(
+            actions,
+            vec!["snapshot", "record", "polish", "region", "fullscreen", "ocr"]
         );
 
         // 已绑定的键不能在迁移中丢失
@@ -4106,4 +4110,3 @@ mod pet_asset_tests {
         assert!(find_pet_animation_entries(&path).is_err());
     }
 }
-
