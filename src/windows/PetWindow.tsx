@@ -1,5 +1,4 @@
 import { useEffect, useRef, useState } from "react";
-import { convertFileSrc } from "@tauri-apps/api/core";
 import { getCurrentWindow, LogicalSize } from "@tauri-apps/api/window";
 import { AppWindow, PawPrint } from "lucide-react";
 import {
@@ -11,39 +10,6 @@ import {
   showQuickMenu,
 } from "../lib/backend";
 import type { PreviousApp, Settings } from "../types";
-
-/** 桌宠点击/拖动起始时的提示音（与设置页试听同一套逻辑） */
-function playPetClickSound(enabled: boolean, volume: number, customPath: string | null) {
-  if (!enabled) return;
-  try {
-    const gain = Math.max(0, Math.min(1, volume / 100));
-    if (customPath) {
-      const inTauri = "__TAURI_INTERNALS__" in window;
-      const audio = new Audio(inTauri ? convertFileSrc(customPath) : customPath);
-      audio.volume = gain;
-      void audio.play();
-      return;
-    }
-    const AudioContextCtor =
-      window.AudioContext ??
-      (window as unknown as { webkitAudioContext?: typeof AudioContext }).webkitAudioContext;
-    if (!AudioContextCtor) return;
-    const ctx = new AudioContextCtor();
-    const osc = ctx.createOscillator();
-    const amp = ctx.createGain();
-    const now = ctx.currentTime;
-    osc.frequency.value = 660;
-    osc.type = "triangle";
-    amp.gain.setValueAtTime(0.0001, now);
-    amp.gain.exponentialRampToValueAtTime(Math.max(0.0001, gain * 0.35), now + 0.015);
-    amp.gain.exponentialRampToValueAtTime(0.0001, now + 0.18);
-    osc.connect(amp).connect(ctx.destination);
-    osc.start(now);
-    osc.stop(now + 0.4);
-  } catch {
-    // 提示音失败不影响拖动/点击
-  }
-}
 
 /** 桌宠素材既可能是图片 (GIF/WebP/APNG/PNG)，也可能是视频 (MP4/WebM)——按 data URL 的 MIME 分流。 */
 export function renderPetMedia(dataUrl: string, className: string) {
@@ -60,9 +26,6 @@ export function PetWindow() {
   const [animationIndex, setAnimationIndex] = useState(0);
   const [assetDataUrl, setAssetDataUrl] = useState<string | null>(null);
   const [petSize, setPetSize] = useState(60);
-  const [soundEnabled, setSoundEnabled] = useState(true);
-  const [soundVolume, setSoundVolume] = useState(65);
-  const [soundPath, setSoundPath] = useState<string | null>(null);
   const dragged = useRef(false);
 
   useEffect(() => {
@@ -74,9 +37,6 @@ export function PetWindow() {
       setAppearanceId(id);
       setAnimations(entries);
       setAnimationIndex(initialIndex);
-      setSoundEnabled(settings.petSoundEnabled);
-      setSoundVolume(settings.petSoundVolume);
-      setSoundPath(settings.petCustomSoundPath);
     };
     void getPreviousApp().then(setApp);
     void loadSettings().then(applyAppearance);
@@ -133,7 +93,6 @@ export function PetWindow() {
   function onPointerDown(event: React.PointerEvent) {
     if (event.button !== 0) return;
     dragged.current = false;
-    playPetClickSound(soundEnabled, soundVolume, soundPath);
     const startX = event.clientX;
     const startY = event.clientY;
     const finishClick = () => {

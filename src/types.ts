@@ -49,9 +49,6 @@ export interface Settings {
   launchOnBoot: boolean;
   includeCursor: boolean;
   afterCapture: "clipboard" | "annotate" | "saveas";
-  petSoundEnabled: boolean;
-  petSoundVolume: number;
-  petCustomSoundPath: string | null;
 }
 
 export interface PreviousApp {
