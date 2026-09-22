@@ -81,6 +81,8 @@ struct Encoder {
     height: u32,
     /// 第一帧的 SystemRelativeTime，后续帧减它得到相对时间轴
     base_time: Option<i64>,
+    /// 实际写进去多少帧。一帧没有的话收尾会得到一个播放器打不开的空 MP4
+    frames: u64,
 }
 
 impl Encoder {
@@ -143,13 +145,15 @@ impl Encoder {
             writer.BeginWriting().map_err(|e| err("开始录制失败", e))?;
         }
 
-        Ok(Self { writer, stream, width, height, base_time: None })
+        Ok(Self { writer, stream, width, height, base_time: None, frames: 0 })
     }
 
-    /// `pixels` 是映射出来的 BGRA 数据，`stride` 是它的行距（字节）。
-    fn write(&mut self, pixels: &[u8], stride: usize, timestamp: i64) -> Result<(), String> {
-        let row_bytes = self.width as usize * 4;
-        let total = row_bytes * self.height as usize;
+    /// `frame` 已按 MF 的行序排好（见 pack_frame），直接整块拷进样本。
+    fn write(&mut self, frame: &[u8], timestamp: i64) -> Result<(), String> {
+        let total = self.width as usize * 4 * self.height as usize;
+        if frame.len() < total {
+            return Err("帧数据不完整".into());
+        }
 
         let buffer = unsafe {
             MFCreateMemoryBuffer(total as u32).map_err(|e| err("分配帧缓冲失败", e))?
@@ -159,20 +163,7 @@ impl Encoder {
             buffer
                 .Lock(&mut target, None, None)
                 .map_err(|e| err("锁定帧缓冲失败", e))?;
-            // RGB32 在 MF 里按正 stride 解释是自底向上的，而 D3D 纹理是自顶向下，
-            // 所以逐行倒着拷——不这样录出来整个画面是上下颠倒的。
-            for row in 0..self.height as usize {
-                let src_offset = (self.height as usize - 1 - row) * stride;
-                let dst_offset = row * row_bytes;
-                if src_offset + row_bytes > pixels.len() {
-                    break;
-                }
-                std::ptr::copy_nonoverlapping(
-                    pixels.as_ptr().add(src_offset),
-                    target.add(dst_offset),
-                    row_bytes,
-                );
-            }
+            std::ptr::copy_nonoverlapping(frame.as_ptr(), target, total);
             buffer.SetCurrentLength(total as u32).ok();
             buffer.Unlock().ok();
         }
@@ -187,6 +178,7 @@ impl Encoder {
                 .WriteSample(self.stream, &sample)
                 .map_err(|e| err("写入帧失败", e))?;
         }
+        self.frames += 1;
         Ok(())
     }
 
@@ -201,10 +193,32 @@ impl Encoder {
 /// 编译器认定它们不是 Send。事实上 D3D11 设备本身是线程安全的（没开
 /// SINGLETHREADED），设备上下文与 SinkWriter 不是——所以把三者锁进同一个
 /// Mutex，保证任何时刻只有一个线程在用，这个 Send 才是成立的。
+/// 把映射出来的 BGRA 逐行倒序排成 MF 要的样子。
+///
+/// MF 对 RGB32 按正 stride 的解释是自底向上，而 D3D 纹理自顶向下，
+/// 不倒过来录出的画面是上下颠倒的。顺带把 stride 的补齐去掉，
+/// 排成紧凑的一整块，定时器补帧时可以直接重发。
+fn pack_frame(pixels: &[u8], stride: usize, width: u32, height: u32) -> Vec<u8> {
+    let row_bytes = width as usize * 4;
+    let mut packed = vec![0u8; row_bytes * height as usize];
+    for row in 0..height as usize {
+        let src = (height as usize - 1 - row) * stride;
+        let dst = row * row_bytes;
+        if src + row_bytes > pixels.len() {
+            break;
+        }
+        packed[dst..dst + row_bytes].copy_from_slice(&pixels[src..src + row_bytes]);
+    }
+    packed
+}
+
 struct FrameSink {
     device: ID3D11Device,
     context: ID3D11DeviceContext,
     encoder: Encoder,
+    /// 最近一帧。窗口静止不重绘时 FrameArrived 根本不触发，
+    /// 定时器就靠它补帧，保证时间轴连续、文件可播。
+    latest: Option<Vec<u8>>,
 }
 
 unsafe impl Send for FrameSink {}
@@ -215,20 +229,32 @@ pub struct ActiveRecording {
     frame_pool: Direct3D11CaptureFramePool,
     sink: Arc<Mutex<Option<FrameSink>>>,
     stopped: Arc<AtomicBool>,
+    /// 按固定帧率补帧的线程，停止时要先收掉它再 Finalize
+    pacer: Option<std::thread::JoinHandle<()>>,
     output: PathBuf,
 }
 
 impl ActiveRecording {
-    pub fn stop(self) -> PathBuf {
+    /// 返回 (产物路径, 写入帧数)
+    pub fn stop(mut self) -> (PathBuf, u64) {
         self.stopped.store(true, Ordering::SeqCst);
         let _ = self.session.Close();
         let _ = self.frame_pool.Close();
-        if let Some(sink) = self.sink.lock().take() {
-            sink.encoder.finish();
+        // 先等定时器退出，否则它可能在 Finalize 之后还往 writer 里塞帧
+        if let Some(pacer) = self.pacer.take() {
+            let _ = pacer.join();
         }
+        let frames = match self.sink.lock().take() {
+            Some(sink) => {
+                let frames = sink.encoder.frames;
+                sink.encoder.finish();
+                frames
+            }
+            None => 0,
+        };
         // 这里不调 MFShutdown：它是进程级的，会把整个进程的 Media Foundation 关掉，
         // 之后任何 MF 操作都报「已调用 Shutdown」。初始化只做一次、不再收回。
-        self.output
+        (self.output, frames)
     }
 }
 
@@ -315,7 +341,12 @@ pub fn start(hwnd: isize, include_cursor: bool, output: &Path) -> Result<ActiveR
     let _ = session.SetIsBorderRequired(false);
 
     let encoder = Encoder::new(output, width, height)?;
-    let sink = Arc::new(Mutex::new(Some(FrameSink { device, context, encoder })));
+    let sink = Arc::new(Mutex::new(Some(FrameSink {
+        device,
+        context,
+        encoder,
+        latest: None,
+    })));
     let stopped = Arc::new(AtomicBool::new(false));
 
     let handler_sink = Arc::clone(&sink);
@@ -328,7 +359,6 @@ pub fn start(hwnd: isize, include_cursor: bool, output: &Path) -> Result<ActiveR
                 }
                 let Some(pool) = pool.as_ref() else { return Ok(()) };
                 let Ok(frame) = pool.TryGetNextFrame() else { return Ok(()) };
-                let Ok(timestamp) = frame.SystemRelativeTime() else { return Ok(()) };
                 let Ok(surface) = frame.Surface() else { return Ok(()) };
                 let Ok(access) = surface.cast::<IDirect3DDxgiInterfaceAccess>() else {
                     return Ok(());
@@ -372,7 +402,10 @@ pub fn start(hwnd: isize, include_cursor: bool, output: &Path) -> Result<ActiveR
                         stride * desc.Height as usize,
                     )
                 };
-                let _ = sink.encoder.write(pixels, stride, timestamp.Duration);
+                // 只更新「最近一帧」，写入交给定时器——采集是事件驱动的，
+                // 直接在这里写会让输出帧率随窗口重绘频率漂移
+                let (width, height) = (sink.encoder.width, sink.encoder.height);
+                sink.latest = Some(pack_frame(pixels, stride, width, height));
                 unsafe { sink.context.Unmap(&staging, 0) };
                 Ok(())
             },
@@ -381,11 +414,42 @@ pub fn start(hwnd: isize, include_cursor: bool, output: &Path) -> Result<ActiveR
 
     session.StartCapture().map_err(|e| err("启动录制失败", e))?;
 
+    // 按固定节奏往编码器里灌帧。窗口不重绘时 FrameArrived 不触发，
+    // 没有这个定时器就会写出一个零帧、播放器打不开的空 MP4——
+    // 这正是「把别的应用压在上面再录」会坏掉的原因。
+    let pacer_sink = Arc::clone(&sink);
+    let pacer_stopped = Arc::clone(&stopped);
+    let pacer = std::thread::spawn(move || {
+        let start = std::time::Instant::now();
+        let interval = std::time::Duration::from_nanos(1_000_000_000 / u64::from(FPS));
+        let mut tick = 0u64;
+        while !pacer_stopped.load(Ordering::SeqCst) {
+            tick += 1;
+            let due = interval * tick as u32;
+            let now = start.elapsed();
+            if due > now {
+                std::thread::sleep(due - now);
+            }
+            if pacer_stopped.load(Ordering::SeqCst) {
+                break;
+            }
+            let mut guard = pacer_sink.lock();
+            let Some(sink) = guard.as_mut() else { break };
+            // 分开借用：latest 只读，encoder 要可变
+            let FrameSink { encoder, latest, .. } = sink;
+            if let Some(frame) = latest.as_deref() {
+                let timestamp = (due.as_nanos() / 100) as i64;
+                let _ = encoder.write(frame, timestamp);
+            }
+        }
+    });
+
     Ok(ActiveRecording {
         session,
         frame_pool,
         sink,
         stopped,
+        pacer: Some(pacer),
         output: output.to_path_buf(),
     })
 }
@@ -426,10 +490,10 @@ mod tests {
         eprintln!("录制目标：{title}");
         let active = start(hwnd, true, &output).expect("启动录制失败");
         std::thread::sleep(std::time::Duration::from_secs(3));
-        let path = active.stop();
+        let (path, frames) = active.stop();
 
         let bytes = std::fs::metadata(&path).expect("产物不存在").len();
-        eprintln!("产物：{} 字节 → {}", bytes, path.display());
+        eprintln!("产物：{} 字节，{} 帧 → {}", bytes, frames, path.display());
         assert!(bytes > 20_000, "文件太小，多半没写进帧：{bytes} 字节");
 
         // MP4 的 moov 要在 Finalize 时补上，没有它播放器读不了
@@ -529,8 +593,32 @@ fn decode_first_frame(path: &Path) -> Result<(u32, u32, Vec<u8>), String> {
 mod decode_tests {
     use super::*;
 
-    /// 端到端验证方向：解出来的第一帧应当与 xcap 的实拍同向。
-    /// 若上下颠倒，说明写帧时的行序与 MF 对 RGB32 的 stride 约定对不上。
+    /// 把一张图压成 N 段的逐行亮度曲线。比两个粗糙的平均值稳得多：
+    /// 窗口内容在垂直方向偏均匀时，两段平均值的差落在噪声里，判不出方向。
+    fn row_profile(height: u32, width: u32, buckets: usize, get: &dyn Fn(u32, u32) -> f64) -> Vec<f64> {
+        let mut profile = vec![0.0; buckets];
+        for bucket in 0..buckets {
+            let from = height as usize * bucket / buckets;
+            let to = (height as usize * (bucket + 1) / buckets).max(from + 1);
+            let mut sum = 0.0;
+            let mut count = 0.0;
+            for y in (from..to.min(height as usize)).step_by(3) {
+                for x in (0..width).step_by(16) {
+                    sum += get(x, y as u32);
+                    count += 1.0;
+                }
+            }
+            profile[bucket] = if count == 0.0 { 0.0 } else { sum / count };
+        }
+        profile
+    }
+
+    fn distance(a: &[f64], b: &[f64]) -> f64 {
+        a.iter().zip(b).map(|(x, y)| (x - y).abs()).sum()
+    }
+
+    /// 端到端验证方向：解出的首帧与实拍的逐行亮度曲线应当同向。
+    /// 若上下颠倒，曲线会与实拍的倒序更接近。
     #[test]
     #[ignore]
     fn recorded_frame_is_not_upside_down() {
@@ -551,49 +639,91 @@ mod decode_tests {
         let output = std::env::temp_dir().join("snapshot-wgc-orient.mp4");
         let _ = std::fs::remove_file(&output);
         let active = start(hwnd, false, &output).expect("启动录制失败");
-        std::thread::sleep(std::time::Duration::from_millis(1200));
-        // 录制过程中抓一张实拍做基准
+        // 解出来的是首帧，实拍也要尽早抓，否则期间内容变了会污染比对
+        std::thread::sleep(std::time::Duration::from_millis(250));
         let truth = window.capture_image().expect("实拍失败");
-        let path = active.stop();
+        std::thread::sleep(std::time::Duration::from_millis(400));
+        let (path, frames) = active.stop();
+        eprintln!("写入 {frames} 帧");
 
         let (width, height, pixels) = decode_first_frame(&path).expect("解码失败");
         eprintln!("解出 {width}x{height}，实拍 {}x{}", truth.width(), truth.height());
 
-        // 比较上半区与下半区的平均亮度：方向错了两者会对调
-        let brightness = |rows: std::ops::Range<u32>, get: &dyn Fn(u32, u32) -> [u8; 3]| -> f64 {
-            let mut sum = 0f64;
-            let mut count = 0f64;
-            for y in rows.clone().step_by(8) {
-                for x in (0..width.min(truth.width())).step_by(16) {
-                    let p = get(x, y);
-                    sum += (p[0] as f64 + p[1] as f64 + p[2] as f64) / 3.0;
-                    count += 1.0;
-                }
-            }
-            if count == 0.0 { 0.0 } else { sum / count }
-        };
-        let usable = height.min(truth.height());
-        let decoded_px = |x: u32, y: u32| -> [u8; 3] {
+        const BUCKETS: usize = 48;
+        let usable_w = width.min(truth.width());
+        let decoded = row_profile(height, usable_w, BUCKETS, &|x, y| {
             let i = (y as usize * width as usize + x as usize) * 4;
-            if i + 2 < pixels.len() { [pixels[i + 2], pixels[i + 1], pixels[i]] } else { [0, 0, 0] }
-        };
-        let truth_px = |x: u32, y: u32| -> [u8; 3] {
-            let p = truth.get_pixel(x, y);
-            [p[0], p[1], p[2]]
-        };
+            if i + 2 < pixels.len() {
+                (pixels[i] as f64 + pixels[i + 1] as f64 + pixels[i + 2] as f64) / 3.0
+            } else {
+                0.0
+            }
+        });
+        let actual = row_profile(truth.height().min(height), usable_w, BUCKETS, &|x, y| {
+            let p = truth.get_pixel(x.min(truth.width() - 1), y.min(truth.height() - 1));
+            (p[0] as f64 + p[1] as f64 + p[2] as f64) / 3.0
+        });
 
-        let d_top = brightness(0..usable / 3, &decoded_px);
-        let d_bottom = brightness(usable * 2 / 3..usable, &decoded_px);
-        let t_top = brightness(0..usable / 3, &truth_px);
-        let t_bottom = brightness(usable * 2 / 3..usable, &truth_px);
-        eprintln!("解码 上{d_top:.1} 下{d_bottom:.1} / 实拍 上{t_top:.1} 下{t_bottom:.1}");
-
-        let same_orientation = (d_top - t_top).abs() + (d_bottom - t_bottom).abs();
-        let flipped = (d_top - t_bottom).abs() + (d_bottom - t_top).abs();
-        eprintln!("同向差 {same_orientation:.1} / 翻转差 {flipped:.1}");
+        let mut reversed = actual.clone();
+        reversed.reverse();
+        let aligned = distance(&decoded, &actual);
+        let flipped = distance(&decoded, &reversed);
+        eprintln!("逐行曲线距离：同向 {aligned:.1} / 翻转 {flipped:.1}");
         assert!(
-            same_orientation <= flipped,
-            "录出来的画面上下颠倒了：同向差 {same_orientation:.1} > 翻转差 {flipped:.1}"
+            aligned < flipped,
+            "录出来的画面上下颠倒了：同向 {aligned:.1} 应当小于翻转 {flipped:.1}"
         );
+    }
+}
+
+#[cfg(test)]
+mod frame_yield_tests {
+    use super::*;
+
+    /// 诊断用：对若干后台窗口各录一小段，看各自产出多少帧。
+    /// 假设是 FrameArrived 只在窗口重绘时触发，静止/被遮挡的窗口会是 0 帧。
+    #[test]
+    #[ignore]
+    fn reports_frame_yield_per_window() {
+        let windows = xcap::Window::all().expect("枚举窗口失败");
+        let mut checked = 0;
+        for window in windows {
+            let title = window.title().unwrap_or_default();
+            if title.trim().is_empty() || title.contains("snapshot") {
+                continue;
+            }
+            if window.width().unwrap_or(0) < 320 || window.height().unwrap_or(0) < 240 {
+                continue;
+            }
+            let Ok(id) = window.id() else { continue };
+            let minimized = window.is_minimized().unwrap_or(false);
+
+            let output = std::env::temp_dir().join(format!("snapshot-yield-{id}.mp4"));
+            let _ = std::fs::remove_file(&output);
+            match start(id as isize, false, &output) {
+                Ok(active) => {
+                    std::thread::sleep(std::time::Duration::from_millis(1500));
+                    let (path, frames) = active.stop();
+                    let bytes = std::fs::metadata(&path).map(|m| m.len()).unwrap_or(0);
+                    eprintln!(
+                        "{:>4} 帧  {:>9} 字节  最小化={:<5}  {}",
+                        frames,
+                        bytes,
+                        minimized,
+                        title.chars().take(46).collect::<String>()
+                    );
+                    let _ = std::fs::remove_file(&path);
+                }
+                Err(error) => eprintln!("   -  启动失败：{error}  {title}"),
+            }
+            checked += 1;
+            if checked >= 6 {
+                break;
+            }
+        }
+        if checked == 0 {
+            // 桌面上没有可测窗口是环境状态，不是回归——诊断用例不该因此变红
+            eprintln!("没有找到可测的窗口，跳过");
+        }
     }
 }

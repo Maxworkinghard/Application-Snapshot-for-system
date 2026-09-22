@@ -2231,7 +2231,12 @@ fn stop_active_recording(recorder: &mut Recorder) {
     {
         if let Some(active) = recorder.windows_active.take() {
             // stop 内部会 Finalize，MP4 的 moov 在这一步才写进去
-            active.stop();
+            let (path, frames) = active.stop();
+            // 一帧都没有时产物是个播放器打不开的空壳，留着只会让人以为录成功了
+            if frames == 0 {
+                let _ = fs::remove_file(&path);
+                eprintln!("snapshot: recording produced no frames, removed {}", path.display());
+            }
             recorder.target = None;
             recorder.started_at = None;
             recorder.output_path = None;
