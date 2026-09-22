@@ -94,11 +94,12 @@ export function QuickMenuWindow() {
     }
   }
 
-  async function record() {
+  async function record(targetId?: number) {
     const wasActive = recording.active;
     showStatus(wasActive ? { kind: "busy", text: "正在停止并保存录制…" } : { kind: "busy", text: "正在启动录制…" });
     try {
-      const next = await toggleRecording();
+      // 停止时不传目标；开始时传了就录指定窗口
+      const next = await toggleRecording(wasActive ? undefined : targetId);
       setRecording(next);
       if (next.active) {
         // 录制进行中菜单不自动收起，方便随时回来点“停止”
@@ -166,10 +167,20 @@ export function QuickMenuWindow() {
           {loading && <p className="quick-empty">正在读取窗口…</p>}
           {!loading && windows.length === 0 && <p className="quick-empty">没有找到可截取的窗口</p>}
           {windows.map((item) => (
-            <button key={item.id} onClick={() => void capture(item.id)}>
-              <span className="window-icon">{item.iconDataUrl ? <img src={item.iconDataUrl} alt="" /> : <Camera size={17} />}</span>
-              <span><strong>{item.appName}</strong><small>{item.title}</small></span>
-            </button>
+            <div className="window-picker-row" key={item.id}>
+              <button className="window-pick-main" onClick={() => void capture(item.id)} title="截取这个窗口">
+                <span className="window-icon">{item.iconDataUrl ? <img src={item.iconDataUrl} alt="" /> : <Camera size={17} />}</span>
+                <span><strong>{item.appName}</strong><small>{item.title}</small></span>
+              </button>
+              <button
+                className="window-pick-record"
+                onClick={() => void record(item.id)}
+                disabled={recording.active}
+                title={recording.active ? "正在录制，先停止当前录制" : "录制这个窗口"}
+              >
+                <Video size={15} />
+              </button>
+            </div>
           ))}
         </div>
       )}

@@ -17,7 +17,7 @@ use std::{
     borrow::Cow,
     fs,
     io::{Cursor, Read, Write},
-    path::PathBuf,
+    path::{Path, PathBuf},
     process::{Child, Command},
     sync::{
         atomic::{AtomicU64, Ordering},
@@ -26,7 +26,6 @@ use std::{
     thread,
     time::{Duration, SystemTime, UNIX_EPOCH},
 };
-#[cfg(not(target_os = "linux"))]
 // 只有仍旧 spawn ffmpeg 的平台需要它
 #[cfg(not(any(target_os = "linux", target_os = "windows")))]
 use std::process::Stdio;
@@ -123,6 +122,9 @@ struct Settings {
     snapshot_format: String,
     #[serde(default)]
     save_dir: String,
+    /// 录制产物目录。留空则沿用 save_dir，再空则落到「下载」。
+    #[serde(default)]
+    recording_dir: String,
     #[serde(default)]
     custom_theme: Option<String>,
     #[serde(default = "default_shutter_sound")]
@@ -187,6 +189,7 @@ impl Default for Settings {
             clipboard_auto_clear: default_clipboard_auto_clear(),
             snapshot_format: default_snapshot_format(),
             save_dir: String::new(),
+            recording_dir: String::new(),
             custom_theme: None,
             shutter_sound: default_shutter_sound(),
             custom_sound_path: None,
@@ -209,11 +212,12 @@ fn default_shortcut_bindings() -> Vec<ShortcutBinding> {
         ShortcutBinding { action: "snapshot".into(), accelerator: None },
         ShortcutBinding { action: "fullscreen".into(), accelerator: None },
         ShortcutBinding { action: "record".into(), accelerator: None },
+        ShortcutBinding { action: "recordings".into(), accelerator: None },
         ShortcutBinding { action: "polish".into(), accelerator: None },
         ShortcutBinding { action: "ocr".into(), accelerator: None },
     ];
     #[cfg(target_os = "linux")]
-    bindings.insert(3, ShortcutBinding { action: "scrolling".into(), accelerator: None });
+    bindings.insert(2, ShortcutBinding { action: "scrolling".into(), accelerator: None });
     bindings
 }
 
@@ -224,6 +228,7 @@ struct PreferencesPatch {
     clipboard_auto_clear: Option<String>,
     snapshot_format: Option<String>,
     save_dir: Option<String>,
+    recording_dir: Option<String>,
     custom_theme: Option<serde_json::Value>,
     shutter_sound: Option<String>,
     custom_sound_path: Option<serde_json::Value>,
@@ -719,6 +724,9 @@ fn save_preferences(
     if let Some(value) = prefs.save_dir {
         settings.save_dir = value;
     }
+    if let Some(value) = prefs.recording_dir {
+        settings.recording_dir = value;
+    }
     if let Some(value) = prefs.custom_theme {
         settings.custom_theme = value.as_str().map(str::to_string);
     }
@@ -1120,30 +1128,35 @@ fn open_snapshots_dir(state: State<'_, AppState>) -> Result<String, String> {
     fs::create_dir_all(&path)
         .map_err(|error| format!("无法创建快照目录：{error}"))?;
 
+    open_in_file_manager(&path)?;
+    Ok(path.to_string_lossy().to_string())
+}
+
+/// 在系统文件管理器里打开一个目录。快照目录与录制目录共用。
+fn open_in_file_manager(path: &Path) -> Result<(), String> {
     #[cfg(target_os = "windows")]
     {
         // explorer.exe 即使成功也常返回非 0，所以只看能不能启动，不看退出码
         Command::new("explorer")
-            .arg(&path)
+            .arg(path)
             .spawn()
             .map_err(|error| format!("无法打开文件管理器：{error}"))?;
     }
     #[cfg(target_os = "macos")]
     {
         Command::new("open")
-            .arg(&path)
+            .arg(path)
             .spawn()
             .map_err(|error| format!("无法打开访达：{error}"))?;
     }
     #[cfg(all(unix, not(target_os = "macos")))]
     {
         Command::new("xdg-open")
-            .arg(&path)
+            .arg(path)
             .spawn()
             .map_err(|error| format!("无法打开文件管理器：{error}"))?;
     }
-
-    Ok(path.to_string_lossy().to_string())
+    Ok(())
 }
 
 #[tauri::command]
@@ -2099,8 +2112,49 @@ fn recording_status_with_message(recorder: &Recorder, message: Option<String>) -
     }
 }
 
+/// 按窗口 id 取一份录制目标。窗口在点选之后、开录之前被关掉是常事，
+/// 所以这里要报「已关闭」而不是沉默地退回「上一个应用」。
+fn list_tracked_window(id: u32) -> Result<TrackedWindow, String> {
+    let window = Window::all()
+        .map_err(|error| error.to_string())?
+        .into_iter()
+        .find(|window| window.id().ok() == Some(id))
+        .ok_or_else(|| "目标窗口已关闭".to_string())?;
+    Ok(TrackedWindow {
+        id,
+        pid: window.pid().unwrap_or_default(),
+        app_name: window.app_name().unwrap_or_else(|_| "应用".into()),
+        title: window.title().unwrap_or_default(),
+    })
+}
+
+/// 录制产物目录：优先 recording_dir，其次沿用截图的 save_dir，都没填就落到「下载」。
+/// 保留 save_dir 这一层回退，是为了不改变升级前只设过 save_dir 的用户的去向。
+fn resolve_recording_dir(settings: &Settings) -> Result<PathBuf, String> {
+    for candidate in [settings.recording_dir.trim(), settings.save_dir.trim()] {
+        if !candidate.is_empty() {
+            return Ok(PathBuf::from(expand_user_path(candidate)));
+        }
+    }
+    dirs::download_dir()
+        .or_else(dirs::document_dir)
+        .ok_or_else(|| "无法确定录制保存目录".to_string())
+}
+
+/// 在系统文件管理器里打开录制目录。目录可能还没建过，先建出来再打开。
 #[tauri::command]
-fn toggle_recording(state: State<'_, AppState>) -> Result<RecordingStatus, String> {
+fn open_recordings_dir(state: State<'_, AppState>) -> Result<String, String> {
+    let path = resolve_recording_dir(&state.settings.lock())?;
+    fs::create_dir_all(&path).map_err(|error| format!("无法创建录制目录：{error}"))?;
+    open_in_file_manager(&path)?;
+    Ok(path.to_string_lossy().to_string())
+}
+
+#[tauri::command]
+fn toggle_recording(
+    state: State<'_, AppState>,
+    target_id: Option<u32>,
+) -> Result<RecordingStatus, String> {
     let mut recorder = state.recorder.lock();
     if recorder.child.is_some() || {
         #[cfg(target_os = "linux")]
@@ -2114,19 +2168,18 @@ fn toggle_recording(state: State<'_, AppState>) -> Result<RecordingStatus, Strin
         return Ok(recording_status(&recorder));
     }
 
-    let target = state.tracker.lock().previous.clone().ok_or_else(|| "还没有上一个应用可录制".to_string())?;
-    let settings = state.settings.lock().clone();
-    let output_dir = {
-        let configured = settings.save_dir.trim();
-        if !configured.is_empty() {
-            let expanded = expand_user_path(configured);
-            PathBuf::from(expanded)
-        } else {
-            dirs::download_dir()
-                .or_else(dirs::document_dir)
-                .ok_or_else(|| "无法确定录制保存目录".to_string())?
-        }
+    // 指定了窗口就录它；没指定才回到「上一个应用」，与窗口快照的口径一致
+    let target = match target_id {
+        Some(id) => list_tracked_window(id)?,
+        None => state
+            .tracker
+            .lock()
+            .previous
+            .clone()
+            .ok_or_else(|| "还没有上一个应用可录制".to_string())?,
     };
+    let settings = state.settings.lock().clone();
+    let output_dir = resolve_recording_dir(&settings)?;
     fs::create_dir_all(&output_dir).map_err(|error| error.to_string())?;
     let output = output_dir.join(format!("应用快照-{}.mp4", Local::now().format("%Y-%m-%d_%H-%M-%S")));
 
@@ -2652,7 +2705,7 @@ fn capture_fullscreen_image(
 async fn perform_action(action: String, app: AppHandle, state: State<'_, AppState>) -> Result<String, String> {
     match action.as_str() {
         "snapshot" => capture_window(app, state, None),
-        "record" => toggle_recording(state).map(|status| {
+        "record" => toggle_recording(state, None).map(|status| {
             if status.active {
                 status
                     .message
@@ -2661,6 +2714,7 @@ async fn perform_action(action: String, app: AppHandle, state: State<'_, AppStat
                 "录制已保存".into()
             }
         }),
+        "recordings" => open_recordings_dir(state).map(|path| format!("已打开录制目录：{path}")),
         "polish" => polish_clipboard(state).await,
         "ocr" => ocr_clipboard_into_clipboard().await,
         "fullscreen" => {
@@ -3407,6 +3461,7 @@ pub fn run() {
             polish_text,
             list_snapshots,
             open_snapshots_dir,
+            open_recordings_dir,
             get_snapshot_data_url,
             delete_snapshot,
             clear_snapshots,
@@ -3493,12 +3548,12 @@ mod pet_asset_tests {
         #[cfg(target_os = "linux")]
         assert_eq!(
             actions,
-            vec!["snapshot", "record", "polish", "fullscreen", "scrolling", "ocr"]
+            vec!["snapshot", "record", "polish", "fullscreen", "scrolling", "recordings", "ocr"]
         );
         #[cfg(not(target_os = "linux"))]
         assert_eq!(
             actions,
-            vec!["snapshot", "record", "polish", "fullscreen", "ocr"]
+            vec!["snapshot", "record", "polish", "fullscreen", "recordings", "ocr"]
         );
 
         // 已绑定的键不能在迁移中丢失
