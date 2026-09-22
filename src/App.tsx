@@ -1,1 +1,1 @@
-@file:///tmp/APP_PUSH.json
+x
