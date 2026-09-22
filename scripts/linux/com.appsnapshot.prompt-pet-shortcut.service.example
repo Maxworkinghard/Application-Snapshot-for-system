@@ -1,0 +1,40 @@
+# OPTIONAL / ADVANCED — systemd --user unit for Application Snapshot (Tauri).
+#
+# Settings → 开机静默自启动 (XDG ~/.config/autostart/) remains the supported
+# opt-in. Do NOT enable this unit by default; only use it if you deliberately
+# prefer a user service (e.g. headless session bring-up experiments).
+#
+# 1. Copy and edit ExecStart to your real binary path, e.g.
+#      ~/.local/bin/snapshot
+#      /usr/bin/snapshot
+#      /path/to/repo/src-tauri/target/release/snapshot
+# 2. Install + enable (still opt-in; nothing in the app does this for you):
+#      mkdir -p ~/.config/systemd/user
+#      cp scripts/linux/com.appsnapshot.prompt-pet-shortcut.service.example \
+#         ~/.config/systemd/user/com.appsnapshot.prompt-pet-shortcut.service
+#      # edit ExecStart= …
+#      systemctl --user daemon-reload
+#      systemctl --user enable --now com.appsnapshot.prompt-pet-shortcut.service
+# 3. Disable later:
+#      systemctl --user disable --now com.appsnapshot.prompt-pet-shortcut.service
+#
+# If you already use Settings XDG autostart, leave this unit disabled to avoid
+# starting the app twice.
+
+[Unit]
+Description=Application Snapshot (optional user service)
+Documentation=https://github.com/
+After=graphical-session.target
+PartOf=graphical-session.target
+
+[Service]
+Type=simple
+# IMPORTANT: replace with the absolute path of the Tauri binary on this machine.
+ExecStart=%h/.local/bin/snapshot
+Restart=on-failure
+RestartSec=3
+# Inherit the graphical session environment when started from a desktop login.
+Environment=RUST_LOG=warn
+
+[Install]
+WantedBy=default.target
