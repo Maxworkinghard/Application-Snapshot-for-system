@@ -19,7 +19,7 @@ System capabilities sit behind a shared interface with one adapter per platform,
 | Text recognition | `Windows.Media.Ocr` | Vision via a `snapshot-ocr` helper | `tesseract` |
 | Snapshot history, companion, prompt polishing | yes | yes | yes |
 
-The Windows adapters, the macOS `snapshot-ocr` helper, and the macOS window adapters (capture, previous-app icon via `NSRunningApplication`, minimized-window restore via the Accessibility API) have been exercised on a real machine. macOS recording is wired via ffmpeg `avfoundation` and compile-tested, but has not been live-tested end to end. The Linux adapters compile and cover X11 recording, portal ScreenCast recording for pure Wayland, `tesseract` OCR, XDG autostart (opt-in) and best-effort app icons; parts have been exercised on a real desktop, and the pure Wayland path still needs an end-to-end pass.
+The Windows adapters, the macOS `snapshot-ocr` helper, and the macOS window adapters (capture, previous-app icon via `NSRunningApplication`, minimized-window restore via the Accessibility API) have been exercised on a real machine. macOS recording is wired via ffmpeg `avfoundation` and compile-tested, but has not been live-tested end to end. The Linux adapters have been exercised on a real X11 session: `xcap` window capture, ffmpeg `x11grab` recording (including a non-`:0` display), `tesseract` OCR with `chi_sim+eng`, minimized-window restore through `xdotool`, XDG autostart write and removal, and the error paths for a missing `ffmpeg`, a missing `xdotool` and missing language packs. Not yet verified on Linux: the portal ScreenCast path against a real Wayland compositor (only its "unavailable" branch has been reached), the tray, global shortcuts, dragging the companion window, autostart after a re-login, keychain-backed prompt polishing, and the `.deb` / `.AppImage` bundles.
 
 ## Requirements
 
@@ -62,6 +62,8 @@ bash scripts/linux/build.sh  # release binary + deb/AppImage when bundlers succe
 | `tesseract` + language packs | OCR |
 | `xdotool` | Restore a minimized target window before capture |
 | StatusNotifierHost | System tray (KDE native; GNOME needs an AppIndicator extension) |
+
+Recording picks its backend from the environment: the portal ScreenCast path is only used when there is no `$DISPLAY` at all. A Wayland session that also runs XWayland does have `$DISPLAY`, so recording stays on `x11grab` there — which captures the X server's view, not native Wayland windows.
 
 **Autostart** is opt-in via Settings → 开机静默自启动. It writes `~/.config/autostart/com.appsnapshot.prompt-pet-shortcut.desktop`. An **optional** systemd `--user` unit example lives at `scripts/linux/com.appsnapshot.prompt-pet-shortcut.service.example` (advanced; never enabled by the app).
 
