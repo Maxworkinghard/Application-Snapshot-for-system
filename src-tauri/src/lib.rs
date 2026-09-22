@@ -677,28 +677,30 @@ fn find_pet_animation_entries(path: &PathBuf) -> Result<Vec<String>, String> {
 }
 
 /// 内置 WebView 能解码的视频 sample entry 4CC。
-/// Windows 的 WebView2 是 Chromium，AV1/VP9 都在支持范围内。
-#[cfg(not(target_os = "macos"))]
+/// Windows WebView2（Chromium）：H.264 / HEVC / AV1 / VP9。
+#[cfg(target_os = "windows")]
 const SUPPORTED_VIDEO_CODECS: [&str; 6] = ["avc1", "avc3", "hev1", "hvc1", "av01", "vp09"];
-/// macOS 的 WKWebView 稳定支持 H.264 与 HEVC；
-/// AV1/VP9 是否可解取决于系统版本与硬件，保守起见不算作可用。
+/// Linux WebKitGTK：保守白名单，仅 H.264 / HEVC（AV1/VP9 在 WebKitGTK 上因发行版/编解码器插件差异大，不算作可用）。
+#[cfg(target_os = "linux")]
+const SUPPORTED_VIDEO_CODECS: [&str; 4] = ["avc1", "avc3", "hev1", "hvc1"];
+/// macOS WKWebView：稳定支持 H.264 与 HEVC；AV1/VP9 是否可解取决于系统版本与硬件，保守起见不算作可用。
 #[cfg(target_os = "macos")]
 const SUPPORTED_VIDEO_CODECS: [&str; 4] = ["avc1", "avc3", "hev1", "hvc1"];
 
 /// 报错文案里的 WebView 内核名
-#[cfg(not(target_os = "macos"))]
+#[cfg(target_os = "windows")]
 const WEBVIEW_NAME: &str = "WebView2";
+#[cfg(target_os = "linux")]
+const WEBVIEW_NAME: &str = "WebKitGTK";
 #[cfg(target_os = "macos")]
 const WEBVIEW_NAME: &str = "WKWebView";
 
 /// WebM (Matroska) 里能被解码的视频轨 CodecID。
-/// Windows 的 WebView2 是 Chromium，VP8/VP9/AV1 都在支持范围内；
-/// 容器规范之外的东西（如 Matroska 装 H.264）按不支持处理，走 MP4 路径。
-#[cfg(not(target_os = "macos"))]
+/// Windows WebView2（Chromium）：VP8/VP9/AV1；容器规范之外的东西（如 Matroska 装 H.264）按不支持处理，走 MP4 路径。
+#[cfg(target_os = "windows")]
 const SUPPORTED_WEBM_CODECS: [&str; 3] = ["V_VP8", "V_VP9", "V_AV1"];
-/// macOS 的 WKWebView 从 Safari 14.1 起稳定支持 VP8/VP9 的 WebM；
-/// AV1 是否可解取决于系统版本与硬件，保守起见不算作可用。
-#[cfg(target_os = "macos")]
+/// Linux WebKitGTK / macOS WKWebView：稳定支持 VP8/VP9；AV1 不保证，保守不含。
+#[cfg(any(target_os = "linux", target_os = "macos"))]
 const SUPPORTED_WEBM_CODECS: [&str; 2] = ["V_VP8", "V_VP9"];
 
 /// 从 ISO-BMFF (MP4 / MOV) 字节里收集所有 sample entry 的 4CC。
@@ -1127,7 +1129,11 @@ struct PlatformCapabilities {
     recording: CapabilityStatus,
     ocr: CapabilityStatus,
     autostart: CapabilityStatus,
+    scrolling: CapabilityStatus,
+    include_cursor: CapabilityStatus,
     tray_note: String,
+    /// 设置页展示的额外说明（门户忽略项、焦点抢占等）
+    notes: Vec<String>,
 }
 
 #[derive(Clone, Debug, Serialize)]
@@ -1135,6 +1141,12 @@ struct PlatformCapabilities {
 struct CapabilityStatus {
     available: bool,
     detail: String,
+}
+
+
+#[cfg(any(target_os = "windows", target_os = "macos"))]
+fn ffmpeg_on_path() -> bool {
+    Command::new("ffmpeg").arg("-version").output().is_ok()
 }
 
 #[tauri::command]
@@ -1156,9 +1168,32 @@ fn platform_capabilities() -> PlatformCapabilities {
             available: ocr_report.available,
             detail: ocr_report.detail,
         };
-        let autostart = CapabilityStatus {
+        let autostart = match linux::autostart_capability() {
+            Ok(()) => CapabilityStatus {
+                available: true,
+                detail: "写入 XDG autostart（~/.config/autostart，opt-in）".into(),
+            },
+            Err(detail) => CapabilityStatus {
+                available: false,
+                detail,
+            },
+        };
+        let scrolling = if linux::is_wayland_session()
+            || std::env::var_os("DISPLAY").is_none()
+        {
+            CapabilityStatus {
+                available: false,
+                detail: "滚动长截图需要 X11/`$DISPLAY`（xdotool）；纯 Wayland 不支持".into(),
+            }
+        } else {
+            CapabilityStatus {
+                available: true,
+                detail: "X11 下 xcap 连拍 + xdotool 翻页拼接（需 xdotool）".into(),
+            }
+        };
+        let include_cursor = CapabilityStatus {
             available: true,
-            detail: "XDG autostart（~/.config/autostart，opt-in）".into(),
+            detail: "静帧：ffmpeg x11grab 带光标（失败则回退无光标）；录制：x11grab 尊重开关，portal 路径忽略".into(),
         };
         return PlatformCapabilities {
             os: "linux".into(),
@@ -1166,19 +1201,34 @@ fn platform_capabilities() -> PlatformCapabilities {
             recording,
             ocr,
             autostart,
+            scrolling,
+            include_cursor,
             tray_note: "托盘菜单（打开设置 / 退出）在有 StatusNotifierHost 时可用（KDE 原生；GNOME 需 AppIndicator 扩展）。缺失时应用仍可运行。左键打开主窗口：Windows/macOS 支持；Linux 本 Tauri/tray-icon 0.24（libayatana-appindicator）无点击回调，通常仅菜单可用。".into(),
+            notes: vec![
+                "Linux portal 录制忽略 target_id 与 include_cursor（由桌面选择器/合成器决定）".into(),
+                "Linux 还原最小化用 xdotool windowactivate，会抢焦点".into(),
+                "Linux 带光标静帧需要 ffmpeg；不可用时静默回退为无光标截图".into(),
+            ],
         };
     }
     #[cfg(target_os = "windows")]
     {
         let ocr_report = ocr::report();
+        let recording = if ffmpeg_on_path() {
+            CapabilityStatus {
+                available: true,
+                detail: "ffmpeg gdigrab（光标由 -draw_mouse 跟随 include_cursor）".into(),
+            }
+        } else {
+            CapabilityStatus {
+                available: false,
+                detail: "未找到 ffmpeg，请安装后加入 PATH".into(),
+            }
+        };
         return PlatformCapabilities {
             os: "windows".into(),
             display_server: "Win32".into(),
-            recording: CapabilityStatus {
-                available: true,
-                detail: "ffmpeg gdigrab".into(),
-            },
+            recording,
             ocr: CapabilityStatus {
                 available: ocr_report.available,
                 detail: ocr_report.detail,
@@ -1187,19 +1237,38 @@ fn platform_capabilities() -> PlatformCapabilities {
                 available: false,
                 detail: "设置项已保存；系统自启挂钩尚未接入".into(),
             },
+            scrolling: CapabilityStatus {
+                available: false,
+                detail: "滚动长截图目前仅在 Linux/X11 实现".into(),
+            },
+            include_cursor: CapabilityStatus {
+                available: true,
+                detail: "录制：gdigrab -draw_mouse；静帧截图目前不合成光标".into(),
+            },
             tray_note: "NotifyIcon：左键/双击打开主窗口；右键菜单打开设置/退出。".into(),
+            notes: vec![
+                "开机自启仅保存偏好，尚未挂钩系统启动项".into(),
+            ],
         };
     }
     #[cfg(target_os = "macos")]
     {
         let ocr_report = ocr::report();
+        let recording = if ffmpeg_on_path() {
+            CapabilityStatus {
+                available: true,
+                detail: "ffmpeg avfoundation（主屏整屏后按窗口裁剪；副屏窗口可能越界失败；光标由 -capture_cursor 跟随 include_cursor）".into(),
+            }
+        } else {
+            CapabilityStatus {
+                available: false,
+                detail: "未找到 ffmpeg；录制走 avfoundation（非整 ScreenCaptureKit 原生路径）".into(),
+            }
+        };
         return PlatformCapabilities {
             os: "macos".into(),
             display_server: "AppKit".into(),
-            recording: CapabilityStatus {
-                available: false,
-                detail: "ScreenCaptureKit 尚未接入".into(),
-            },
+            recording,
             ocr: CapabilityStatus {
                 available: ocr_report.available,
                 detail: ocr_report.detail,
@@ -1208,7 +1277,19 @@ fn platform_capabilities() -> PlatformCapabilities {
                 available: false,
                 detail: "设置项已保存；Launch Agent 挂钩尚未接入".into(),
             },
+            scrolling: CapabilityStatus {
+                available: false,
+                detail: "滚动长截图目前仅在 Linux/X11 实现".into(),
+            },
+            include_cursor: CapabilityStatus {
+                available: true,
+                detail: "录制：avfoundation -capture_cursor；静帧截图目前不合成光标".into(),
+            },
             tray_note: "NSStatusItem：左键打开主窗口；菜单打开设置/退出。".into(),
+            notes: vec![
+                "macOS 还原最小化窗口在标题对不上时，可能还原该进程全部最小化窗口".into(),
+                "开机自启仅保存偏好，尚未挂钩 Launch Agent".into(),
+            ],
         };
     }
     #[cfg(not(any(target_os = "linux", target_os = "windows", target_os = "macos")))]
@@ -1219,7 +1300,10 @@ fn platform_capabilities() -> PlatformCapabilities {
             recording: CapabilityStatus { available: false, detail: "未支持".into() },
             ocr: CapabilityStatus { available: false, detail: "未支持".into() },
             autostart: CapabilityStatus { available: false, detail: "未支持".into() },
+            scrolling: CapabilityStatus { available: false, detail: "未支持".into() },
+            include_cursor: CapabilityStatus { available: false, detail: "未支持".into() },
             tray_note: String::new(),
+            notes: vec![],
         }
     }
 }
@@ -1749,8 +1833,18 @@ fn build_ffmpeg_command(
     command.arg("-y");
     #[cfg(target_os = "windows")]
     {
-        let _ = include_cursor; // gdigrab 跟鼠标开关留到后续；参数先接住避免告警
-        command.args(["-f", "gdigrab", "-framerate", "30", "-i", &format!("title={}", target.title)]);
+        // gdigrab 支持 -draw_mouse 0/1，与 Linux x11grab 对齐
+        let draw_mouse = if include_cursor { "1" } else { "0" };
+        command.args([
+            "-f",
+            "gdigrab",
+            "-framerate",
+            "30",
+            "-draw_mouse",
+            draw_mouse,
+            "-i",
+            &format!("title={}", target.title),
+        ]);
     }
     #[cfg(target_os = "macos")]
     {
@@ -1770,7 +1864,8 @@ fn build_ffmpeg_command(
         // yuv420p 要求偶数宽高
         let (cw, ch) = (to_px(w as f64) & !1, to_px(h as f64) & !1);
         let device = macos_avfoundation_screen_device();
-        command.args(["-f", "avfoundation", "-capture_cursor", "1", "-framerate", "30", "-i", &format!("{device}:")]);
+        let cursor_flag = if include_cursor { "1" } else { "0" };
+        command.args(["-f", "avfoundation", "-capture_cursor", cursor_flag, "-framerate", "30", "-i", &format!("{device}:")]);
         command.args(["-vf", &format!("crop={cw}:{ch}:{}:{}", to_px(x as f64), to_px(y as f64))]);
     }
     command.args(["-c:v", "libx264", "-preset", "veryfast", "-pix_fmt", "yuv420p", "-crf", "23"]);
@@ -2401,7 +2496,7 @@ fn start_tracker(app: AppHandle, tracker: Arc<Mutex<TrackerState>>) {
     });
 }
 
-#[cfg(target_os = "windows")]
+#[cfg(any(target_os = "windows", target_os = "linux"))]
 fn rgba_to_data_url(image: RgbaImage) -> Option<String> {
     let mut bytes = Vec::new();
     DynamicImage::ImageRgba8(image).write_to(&mut Cursor::new(&mut bytes), ImageFormat::Png).ok()?;
@@ -2963,9 +3058,11 @@ mod pet_asset_tests {
     fn h264_passes_and_mp4v_is_reported() {
         assert!(mp4_playable(&fake_mp4(b"avc1")).is_ok());
         assert!(mp4_playable(&fake_mp4(b"hvc1")).is_ok());
-        // AV1 在 WebView2（Chromium）可用；mac 的 WKWebView 白名单保守不含 AV1
-        #[cfg(not(target_os = "macos"))]
+        // AV1 仅 Windows WebView2 白名单收录；Linux WebKitGTK / macOS WKWebView 保守不含
+        #[cfg(target_os = "windows")]
         assert!(mp4_playable(&fake_mp4(b"av01")).is_ok());
+        #[cfg(not(target_os = "windows"))]
+        assert!(mp4_playable(&fake_mp4(b"av01")).is_err());
         assert_eq!(mp4_playable(&fake_mp4(b"mp4v")).unwrap_err(), vec!["mp4v".to_string()]);
         // 解析不出盒子结构时放行，不替用户做判断
         assert!(mp4_playable(b"not an mp4 at all").is_ok());

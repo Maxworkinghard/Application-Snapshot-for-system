@@ -15,10 +15,13 @@ use xcap::{Monitor, Window};
 
 /// 当前会话是 X11 还是 Wayland（给错误信息与设置页用）。
 pub fn display_server_label() -> &'static str {
-    if env::var_os("WAYLAND_DISPLAY").is_some() && env::var_os("DISPLAY").is_none() {
-        "Wayland"
-    } else if env::var_os("WAYLAND_DISPLAY").is_some() {
-        "Wayland (XWayland available)"
+    // 与 is_wayland_session 对齐：也认 XDG_SESSION_TYPE=wayland
+    if is_wayland_session() {
+        if env::var_os("DISPLAY").is_none() {
+            "Wayland"
+        } else {
+            "Wayland (XWayland available)"
+        }
     } else if env::var_os("DISPLAY").is_some() {
         "X11"
     } else {
@@ -27,7 +30,7 @@ pub fn display_server_label() -> &'static str {
 }
 
 /// 当前会话是 Wayland——不管 XWayland 有没有把 `$DISPLAY` 撑起来。
-fn is_wayland_session() -> bool {
+pub fn is_wayland_session() -> bool {
     env::var_os("WAYLAND_DISPLAY").is_some()
         || env::var("XDG_SESSION_TYPE")
             .map(|v| v.eq_ignore_ascii_case("wayland"))
@@ -121,7 +124,7 @@ pub fn recording_capability_detail() -> String {
     }
     match pick_recording_backend() {
         Ok(RecordingBackend::Portal) => format!(
-            "portal ScreenCast + PipeWire → ffmpeg · {}",
+            "portal ScreenCast + PipeWire → ffmpeg（忽略 target_id / include_cursor）· {}",
             display_server_label()
         ),
         Ok(RecordingBackend::X11Grab { xwayland_only: true }) => format!(

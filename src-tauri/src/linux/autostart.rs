@@ -80,3 +80,33 @@ pub fn apply_launch_on_boot(enabled: bool) -> Result<(), String> {
         .map_err(|error| format!("写入开机自启项失败：{error}"))?;
     Ok(())
 }
+
+/// 探测 XDG autostart 目录是否可写（给能力面板用）。
+pub fn autostart_capability() -> Result<(), String> {
+    let dir = autostart_dir();
+    match fs::create_dir_all(&dir) {
+        Ok(()) => {
+            // 试写一个临时文件再删，确认可写
+            let probe = dir.join(".snapshot-autostart-write-probe");
+            match fs::OpenOptions::new()
+                .write(true)
+                .create(true)
+                .truncate(true)
+                .mode(0o644)
+                .open(&probe)
+            {
+                Ok(mut file) => {
+                    let _ = file.write_all(b"ok");
+                    let _ = fs::remove_file(&probe);
+                    Ok(())
+                }
+                Err(error) => Err(format!(
+                    "无法写入 ~/.config/autostart（{error}）；仍可保存偏好，但系统自启项写不进去"
+                )),
+            }
+        }
+        Err(error) => Err(format!(
+            "无法创建 ~/.config/autostart（{error}）；仍可保存偏好，但系统自启项写不进去"
+        )),
+    }
+}

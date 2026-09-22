@@ -2,7 +2,7 @@
   "$schema": "../gen/schemas/desktop-schema.json",
   "identifier": "desktop-capability",
   "description": "主设置窗口、桌宠和快捷菜单所需权限",
-  "windows": ["main", "pet", "quick-menu", "region-picker"],
+  "windows": ["main", "pet", "quick-menu", "region-picker", "annotate"],
   "permissions": [
     "core:default",
     "core:window:allow-start-dragging",
