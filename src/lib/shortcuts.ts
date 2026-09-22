@@ -15,7 +15,6 @@ const isLinux =
 // Win/mac 侧连后端命令都不编译，绑了也只会拿到「未知快捷键动作」。
 const SUPPORTED_ACTIONS: Record<ShortcutAction, boolean> = {
   snapshot: true,
-  region: true,
   fullscreen: true,
   scrolling: isLinux,
   record: true,

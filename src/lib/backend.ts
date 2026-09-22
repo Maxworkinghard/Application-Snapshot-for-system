@@ -31,7 +31,6 @@ const demoSettings: Settings = {
   petAssets: [],
   shortcuts: [
     { action: "snapshot", accelerator: null },
-    { action: "region", accelerator: null },
     { action: "fullscreen", accelerator: null },
     { action: "scrolling", accelerator: null },
     { action: "record", accelerator: null },
