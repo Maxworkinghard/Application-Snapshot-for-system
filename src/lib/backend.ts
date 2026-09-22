@@ -245,3 +245,4 @@ export async function platformCapabilities(): Promise<PlatformCapabilities> {
   }
   return invoke<PlatformCapabilities>("platform_capabilities");
 }
+
