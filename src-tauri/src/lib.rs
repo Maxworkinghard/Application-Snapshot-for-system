@@ -1,5 +1,8 @@
 mod ocr;
 
+#[cfg(target_os = "linux")]
+mod linux;
+
 use arboard::{Clipboard, ImageData};
 use base64::{engine::general_purpose::STANDARD as BASE64, Engine as _};
 use chrono::Local;
@@ -13,20 +16,22 @@ use std::{
     fs,
     io::{Cursor, Read, Write},
     path::PathBuf,
-    process::{Child, Command, Stdio},
+    process::{Child, Command},
     sync::{
         atomic::{AtomicU64, Ordering},
-        Arc,
+        mpsc, Arc,
     },
     thread,
     time::{Duration, SystemTime, UNIX_EPOCH},
 };
+#[cfg(not(target_os = "linux"))]
+use std::process::Stdio;
 use tauri::{
     menu::{Menu, MenuItem},
-    tray::TrayIconBuilder,
+    tray::{MouseButton, MouseButtonState, TrayIconBuilder, TrayIconEvent},
     AppHandle, Emitter, LogicalSize, Manager, PhysicalPosition, Runtime, State, WindowEvent,
 };
-use xcap::Window;
+use xcap::{Monitor, Window};
 
 const KEYRING_SERVICE: &str = "com.appsnapshot.prompt-pet-shortcut";
 const KEYRING_USER: &str = "polish-api-key";
@@ -130,8 +135,6 @@ struct Settings {
     launch_on_boot: bool,
     #[serde(default)]
     include_cursor: bool,
-    #[serde(default = "default_tray_double_click")]
-    tray_double_click: String,
     #[serde(default = "default_after_capture")]
     after_capture: String,
     #[serde(default = "default_true")]
@@ -160,10 +163,6 @@ fn default_snapshot_format() -> String {
 
 fn default_shutter_sound() -> String {
     "crisp".into()
-}
-
-fn default_tray_double_click() -> String {
-    "workbench".into()
 }
 
 fn default_after_capture() -> String {
@@ -210,7 +209,6 @@ impl Default for Settings {
             auto_save_local: true,
             launch_on_boot: false,
             include_cursor: false,
-            tray_double_click: default_tray_double_click(),
             after_capture: default_after_capture(),
             pet_sound_enabled: true,
             pet_sound_volume: default_pet_sound_volume(),
@@ -234,7 +232,6 @@ struct PreferencesPatch {
     auto_save_local: Option<bool>,
     launch_on_boot: Option<bool>,
     include_cursor: Option<bool>,
-    tray_double_click: Option<String>,
     after_capture: Option<String>,
     pet_sound_enabled: Option<bool>,
     pet_sound_volume: Option<u32>,
@@ -290,11 +287,21 @@ struct Recorder {
     target: Option<String>,
     started_at: Option<u64>,
     output_path: Option<PathBuf>,
+    /// Linux：portal 路径的停止句柄（x11grab 时为 None）。
+    #[cfg(target_os = "linux")]
+    linux_active: Option<linux::ActiveRecording>,
 }
 
 impl Default for Recorder {
     fn default() -> Self {
-        Self { child: None, target: None, started_at: None, output_path: None }
+        Self {
+            child: None,
+            target: None,
+            started_at: None,
+            output_path: None,
+            #[cfg(target_os = "linux")]
+            linux_active: None,
+        }
     }
 }
 
@@ -306,6 +313,14 @@ struct RecordingStatus {
     started_at: Option<u64>,
 }
 
+#[derive(Clone, Copy, Debug)]
+struct RegionRect {
+    x: i32,
+    y: i32,
+    width: u32,
+    height: u32,
+}
+
 struct AppState {
     settings_path: PathBuf,
     snapshots_dir: PathBuf,
@@ -314,6 +329,11 @@ struct AppState {
     recorder: Mutex<Recorder>,
     pet_position_revision: AtomicU64,
     quick_menu_anchor: Mutex<Option<(f64, f64)>>,
+    /// 区域框选结果回传（None = 取消）
+    region_tx: Mutex<Option<mpsc::Sender<Option<RegionRect>>>>,
+    /// 标注窗口待编辑 PNG（RGBA 编码前的原始 PNG 字节）
+    annotate_png: Mutex<Option<Vec<u8>>>,
+    annotate_title: Mutex<String>,
 }
 
 #[derive(Deserialize)]
@@ -354,6 +374,7 @@ fn read_settings(path: &PathBuf) -> Settings {
             settings.shortcuts.push(fallback);
         }
     }
+    // annotate / scrolling 已实现：读盘时保留用户选择与绑定。
     for asset in &mut settings.pet_assets {
         if asset.animations.is_empty() {
             if let Ok(animations) = find_pet_animation_entries(&PathBuf::from(&asset.path)) {
@@ -803,12 +824,14 @@ fn save_preferences(
     }
     if let Some(value) = prefs.launch_on_boot {
         settings.launch_on_boot = value;
+        #[cfg(target_os = "linux")]
+        {
+            // 与 Windows「用户勾选才生效」一致：只在显式改动时写 XDG autostart，默认不装。
+            linux::apply_launch_on_boot(value)?;
+        }
     }
     if let Some(value) = prefs.include_cursor {
         settings.include_cursor = value;
-    }
-    if let Some(value) = prefs.tray_double_click {
-        settings.tray_double_click = value;
     }
     if let Some(value) = prefs.after_capture {
         settings.after_capture = value;
@@ -873,8 +896,56 @@ struct SnapshotRecord {
     created_at: u64,
 }
 
+/// 历史落盘目录：优先用户配置的 save_dir，否则用应用数据目录。
+fn history_dir(state: &AppState) -> PathBuf {
+    let configured = state.settings.lock().save_dir.trim().to_string();
+    if !configured.is_empty() {
+        PathBuf::from(expand_user_path(&configured))
+    } else {
+        state.snapshots_dir.clone()
+    }
+}
+
 fn snapshot_index_path(state: &AppState) -> PathBuf {
-    state.snapshots_dir.join("index.json")
+    history_dir(state).join("index.json")
+}
+
+fn clipboard_clear_delay(setting: &str) -> Option<Duration> {
+    match setting {
+        "30s" => Some(Duration::from_secs(30)),
+        "5m" => Some(Duration::from_secs(300)),
+        "never" => None,
+        // "60s" 与未知值一律按 60 秒
+        _ => Some(Duration::from_secs(60)),
+    }
+}
+
+fn snapshot_format_parts(setting: &str) -> (ImageFormat, &'static str) {
+    match setting {
+        "jpeg" | "jpg" => (ImageFormat::Jpeg, "jpg"),
+        "webp" => (ImageFormat::WebP, "webp"),
+        _ => (ImageFormat::Png, "png"),
+    }
+}
+
+fn mime_for_snapshot_file(file_name: &str) -> &'static str {
+    let lower = file_name.to_ascii_lowercase();
+    if lower.ends_with(".jpg") || lower.ends_with(".jpeg") {
+        "image/jpeg"
+    } else if lower.ends_with(".webp") {
+        "image/webp"
+    } else {
+        "image/png"
+    }
+}
+
+fn format_clear_label(setting: &str) -> String {
+    match setting {
+        "30s" => "30 秒后自动清空剪贴板".into(),
+        "5m" => "5 分钟后自动清空剪贴板".into(),
+        "never" => "不会自动清空剪贴板".into(),
+        _ => "60 秒后自动清空剪贴板".into(),
+    }
 }
 
 fn read_snapshot_index(path: &PathBuf) -> Vec<SnapshotRecord> {
@@ -895,14 +966,22 @@ fn write_snapshot_index(path: &PathBuf, records: &[SnapshotRecord]) -> Result<()
 /// 把截图落盘并登记进历史索引。
 /// 这里失败不该影响"已复制到剪贴板"这件事，所以调用方只记录不中断。
 fn store_snapshot(state: &AppState, image: &RgbaImage, app_name: &str) -> Result<SnapshotRecord, String> {
-    fs::create_dir_all(&state.snapshots_dir).map_err(|error| error.to_string())?;
+    let dir = history_dir(state);
+    fs::create_dir_all(&dir).map_err(|error| error.to_string())?;
+    let format_setting = state.settings.lock().snapshot_format.clone();
+    let (format, ext) = snapshot_format_parts(&format_setting);
     let created_at = now_millis();
     let id = format!("snap-{created_at}");
-    let file_name = format!("{id}.png");
-    DynamicImage::ImageRgba8(image.clone())
-        .save_with_format(state.snapshots_dir.join(&file_name), ImageFormat::Png)
-        .map_err(|error| format!("保存快照失败：{error}"))?;
-    let size_bytes = fs::metadata(state.snapshots_dir.join(&file_name)).map(|meta| meta.len()).unwrap_or(0);
+    let file_name = format!("{id}.{ext}");
+    let path = dir.join(&file_name);
+    let dynamic = DynamicImage::ImageRgba8(image.clone());
+    // JPEG 不支持 alpha，先落到 RGB；PNG/WebP 可直接写 RGBA
+    let save_result = match format {
+        ImageFormat::Jpeg => dynamic.to_rgb8().save_with_format(&path, ImageFormat::Jpeg),
+        _ => dynamic.save_with_format(&path, format),
+    };
+    save_result.map_err(|error| format!("保存快照失败：{error}"))?;
+    let size_bytes = fs::metadata(&path).map(|meta| meta.len()).unwrap_or(0);
     let record = SnapshotRecord {
         id,
         file_name,
@@ -916,20 +995,142 @@ fn store_snapshot(state: &AppState, image: &RgbaImage, app_name: &str) -> Result
     let mut records = read_snapshot_index(&index_path);
     records.insert(0, record.clone());
     for stale in records.split_off(records.len().min(SNAPSHOT_LIMIT)) {
-        let _ = fs::remove_file(state.snapshots_dir.join(&stale.file_name));
+        let _ = fs::remove_file(dir.join(&stale.file_name));
     }
     write_snapshot_index(&index_path, &records)?;
     Ok(record)
 }
 
 
+
+/// 展开 `~/…`；其它路径原样返回。录制保存目录与用户填的 save_dir 共用。
+fn expand_user_path(raw: &str) -> String {
+    let trimmed = raw.trim();
+    if let Some(rest) = trimmed.strip_prefix("~/") {
+        if let Some(home) = dirs::home_dir() {
+            return home.join(rest).to_string_lossy().into_owned();
+        }
+    }
+    if trimmed == "~" {
+        if let Some(home) = dirs::home_dir() {
+            return home.to_string_lossy().into_owned();
+        }
+    }
+    trimmed.to_string()
+}
+
+#[derive(Clone, Debug, Serialize)]
+#[serde(rename_all = "camelCase")]
+struct PlatformCapabilities {
+    os: String,
+    display_server: String,
+    recording: CapabilityStatus,
+    ocr: CapabilityStatus,
+    autostart: CapabilityStatus,
+    tray_note: String,
+}
+
+#[derive(Clone, Debug, Serialize)]
+#[serde(rename_all = "camelCase")]
+struct CapabilityStatus {
+    available: bool,
+    detail: String,
+}
+
+#[tauri::command]
+fn platform_capabilities() -> PlatformCapabilities {
+    #[cfg(target_os = "linux")]
+    {
+        let recording = match linux::recording_available() {
+            Ok(()) => CapabilityStatus {
+                available: true,
+                detail: linux::recording_capability_detail(),
+            },
+            Err(detail) => CapabilityStatus {
+                available: false,
+                detail,
+            },
+        };
+        let ocr_report = ocr::report();
+        let ocr = CapabilityStatus {
+            available: ocr_report.available,
+            detail: ocr_report.detail,
+        };
+        let autostart = CapabilityStatus {
+            available: true,
+            detail: "XDG autostart（~/.config/autostart，opt-in）".into(),
+        };
+        return PlatformCapabilities {
+            os: "linux".into(),
+            display_server: linux::display_server_label().into(),
+            recording,
+            ocr,
+            autostart,
+            tray_note: "托盘菜单（打开设置 / 退出）在有 StatusNotifierHost 时可用（KDE 原生；GNOME 需 AppIndicator 扩展）。缺失时应用仍可运行。左键打开主窗口：Windows/macOS 支持；Linux 本 Tauri/tray-icon 0.24（libayatana-appindicator）无点击回调，通常仅菜单可用。".into(),
+        };
+    }
+    #[cfg(target_os = "windows")]
+    {
+        let ocr_report = ocr::report();
+        return PlatformCapabilities {
+            os: "windows".into(),
+            display_server: "Win32".into(),
+            recording: CapabilityStatus {
+                available: true,
+                detail: "ffmpeg gdigrab".into(),
+            },
+            ocr: CapabilityStatus {
+                available: ocr_report.available,
+                detail: ocr_report.detail,
+            },
+            autostart: CapabilityStatus {
+                available: false,
+                detail: "设置项已保存；系统自启挂钩尚未接入".into(),
+            },
+            tray_note: "NotifyIcon：左键/双击打开主窗口；右键菜单打开设置/退出。".into(),
+        };
+    }
+    #[cfg(target_os = "macos")]
+    {
+        let ocr_report = ocr::report();
+        return PlatformCapabilities {
+            os: "macos".into(),
+            display_server: "AppKit".into(),
+            recording: CapabilityStatus {
+                available: false,
+                detail: "ScreenCaptureKit 尚未接入".into(),
+            },
+            ocr: CapabilityStatus {
+                available: ocr_report.available,
+                detail: ocr_report.detail,
+            },
+            autostart: CapabilityStatus {
+                available: false,
+                detail: "设置项已保存；Launch Agent 挂钩尚未接入".into(),
+            },
+            tray_note: "NSStatusItem：左键打开主窗口；菜单打开设置/退出。".into(),
+        };
+    }
+    #[cfg(not(any(target_os = "linux", target_os = "windows", target_os = "macos")))]
+    {
+        PlatformCapabilities {
+            os: std::env::consts::OS.into(),
+            display_server: "unknown".into(),
+            recording: CapabilityStatus { available: false, detail: "未支持".into() },
+            ocr: CapabilityStatus { available: false, detail: "未支持".into() },
+            autostart: CapabilityStatus { available: false, detail: "未支持".into() },
+            tray_note: String::new(),
+        }
+    }
+}
+
 /// 在系统文件管理器里打开快照目录。
 /// 目录可能还没建（一张快照都没截过），先建出来再打开，免得报「路径不存在」。
 #[tauri::command]
 fn open_snapshots_dir(state: State<'_, AppState>) -> Result<String, String> {
-    fs::create_dir_all(&state.snapshots_dir)
+    let path = history_dir(&state);
+    fs::create_dir_all(&path)
         .map_err(|error| format!("无法创建快照目录：{error}"))?;
-    let path = state.snapshots_dir.clone();
 
     #[cfg(target_os = "windows")]
     {
@@ -964,7 +1165,7 @@ fn list_snapshots(state: State<'_, AppState>) -> Vec<SnapshotRecord> {
     // 文件被手动删掉的条目顺手从索引里剔除，避免历史库里全是打不开的记录
     let (alive, dropped): (Vec<_>, Vec<_>) = records
         .into_iter()
-        .partition(|item| state.snapshots_dir.join(&item.file_name).is_file());
+        .partition(|item| history_dir(&state).join(&item.file_name).is_file());
     if !dropped.is_empty() {
         let _ = write_snapshot_index(&index_path, &alive);
     }
@@ -977,9 +1178,10 @@ fn get_snapshot_data_url(state: State<'_, AppState>, id: String) -> Result<Strin
         .into_iter()
         .find(|item| item.id == id)
         .ok_or_else(|| "找不到这条快照".to_string())?;
-    let bytes = fs::read(state.snapshots_dir.join(&record.file_name))
+    let bytes = fs::read(history_dir(&state).join(&record.file_name))
         .map_err(|_| "快照文件已被移动或删除".to_string())?;
-    Ok(format!("data:image/png;base64,{}", BASE64.encode(bytes)))
+    let mime = mime_for_snapshot_file(&record.file_name);
+    Ok(format!("data:{mime};base64,{}", BASE64.encode(bytes)))
 }
 
 #[tauri::command]
@@ -989,7 +1191,7 @@ fn delete_snapshot(state: State<'_, AppState>, id: String) -> Result<Vec<Snapsho
     let position = records.iter().position(|item| item.id == id)
         .ok_or_else(|| "找不到这条快照".to_string())?;
     let removed = records.remove(position);
-    let _ = fs::remove_file(state.snapshots_dir.join(&removed.file_name));
+    let _ = fs::remove_file(history_dir(&state).join(&removed.file_name));
     write_snapshot_index(&index_path, &records)?;
     Ok(records)
 }
@@ -998,7 +1200,7 @@ fn delete_snapshot(state: State<'_, AppState>, id: String) -> Result<Vec<Snapsho
 fn clear_snapshots(state: State<'_, AppState>) -> Result<Vec<SnapshotRecord>, String> {
     let index_path = snapshot_index_path(&state);
     for record in read_snapshot_index(&index_path) {
-        let _ = fs::remove_file(state.snapshots_dir.join(&record.file_name));
+        let _ = fs::remove_file(history_dir(&state).join(&record.file_name));
     }
     write_snapshot_index(&index_path, &[])?;
     Ok(Vec::new())
@@ -1040,7 +1242,7 @@ async fn ocr_snapshot(state: State<'_, AppState>, id: String) -> Result<String, 
         .into_iter()
         .find(|item| item.id == id)
         .ok_or_else(|| "找不到这条快照".to_string())?;
-    let bytes = fs::read(state.snapshots_dir.join(&record.file_name))
+    let bytes = fs::read(history_dir(&state).join(&record.file_name))
         .map_err(|_| "快照文件已被移动或删除".to_string())?;
     // WinRT 这套调用是阻塞的，挪到阻塞线程池，别卡住界面
     tauri::async_runtime::spawn_blocking(move || ocr::adapter().recognize_png(&bytes))
@@ -1065,7 +1267,7 @@ async fn ocr_clipboard() -> Result<String, String> {
 }
 
 #[tauri::command]
-fn capture_window(state: State<'_, AppState>, id: Option<u32>) -> Result<String, String> {
+fn capture_window(app: AppHandle, state: State<'_, AppState>, id: Option<u32>) -> Result<String, String> {
     let target_id = id.or_else(|| state.tracker.lock().previous.as_ref().map(|window| window.id))
         .ok_or_else(|| "还没有上一个应用可截取".to_string())?;
     let window = Window::all()
@@ -1077,15 +1279,119 @@ fn capture_window(state: State<'_, AppState>, id: Option<u32>) -> Result<String,
         restore_minimized_window(target_id)?;
     }
     let app_name = window.app_name().unwrap_or_else(|_| "应用".into());
-    let image = window.capture_image().map_err(|error| format!("截取失败：{error}"))?;
-    // 先落盘再进剪贴板：存历史失败不影响截图本身可用
-    let archived = store_snapshot(&state, &image, &app_name).is_ok();
-    copy_image_to_clipboard(image)?;
-    if archived {
-        Ok(format!("已复制 {app_name} 窗口并存入历史，60 秒后自动清空剪贴板"))
-    } else {
-        Ok(format!("已复制 {app_name} 窗口，60 秒后自动清空（未能存入历史）"))
+    let include_cursor = state.settings.lock().include_cursor;
+    let image = capture_window_image(&window, include_cursor)?;
+    finalize_capture(&app, &state, image, &app_name)
+}
+
+fn capture_window_image(window: &Window, include_cursor: bool) -> Result<RgbaImage, String> {
+    #[cfg(target_os = "linux")]
+    if include_cursor {
+        if let (Ok(x), Ok(y), Ok(width), Ok(height)) =
+            (window.x(), window.y(), window.width(), window.height())
+        {
+            if let Ok(image) = linux::capture_region_with_cursor(x, y, width, height) {
+                return Ok(image);
+            }
+        }
     }
+    let _ = include_cursor;
+    window
+        .capture_image()
+        .map_err(|error| format!("截取失败：{error}"))
+}
+
+/// 统一收尾：按偏好决定是否落盘、剪贴板清空时限、截后动作与闪烁/音效提示。
+fn finalize_capture(
+    app: &AppHandle,
+    state: &AppState,
+    image: RgbaImage,
+    app_name: &str,
+) -> Result<String, String> {
+    let settings = state.settings.lock().clone();
+    let mut archived = false;
+    if settings.auto_save_local {
+        archived = store_snapshot(state, &image, app_name).is_ok();
+    }
+
+    // after_capture：annotate 打开标注窗；saveas 走另存对话框；默认剪贴板。
+    let annotate = settings.after_capture == "annotate";
+    if settings.after_capture == "saveas" {
+        save_image_as_dialog(app, &image, &settings.snapshot_format)?;
+    }
+
+    if annotate {
+        open_annotate_window(app, &state, &image, app_name)?;
+    } else {
+        copy_image_to_clipboard(image, clipboard_clear_delay(&settings.clipboard_auto_clear))?;
+    }
+
+    let _ = app.emit(
+        "capture-feedback",
+        json!({
+            "flash": settings.flash_on_capture,
+            "shutterSound": settings.shutter_sound,
+            "customSoundPath": settings.custom_sound_path,
+        }),
+    );
+    if settings.hide_after_copy {
+        if let Some(window) = app.get_webview_window("main") {
+            let _ = window.hide();
+        }
+    }
+
+    if annotate {
+        if archived {
+            Ok(format!("已打开标注：{app_name}（已存入历史）"))
+        } else if settings.auto_save_local {
+            Ok(format!("已打开标注：{app_name}（未能存入历史）"))
+        } else {
+            Ok(format!("已打开标注：{app_name}"))
+        }
+    } else {
+        let clear_label = format_clear_label(&settings.clipboard_auto_clear);
+        if archived {
+            Ok(format!("已复制 {app_name} 并存入历史，{clear_label}"))
+        } else if settings.auto_save_local {
+            Ok(format!("已复制 {app_name}，{clear_label}（未能存入历史）"))
+        } else {
+            Ok(format!("已复制 {app_name}，{clear_label}"))
+        }
+    }
+}
+
+fn save_image_as_dialog(app: &AppHandle, image: &RgbaImage, format_setting: &str) -> Result<(), String> {
+    use tauri_plugin_dialog::DialogExt;
+    let (format, ext) = snapshot_format_parts(format_setting);
+    let suggested = format!("snapshot-{}.{}", Local::now().format("%Y%m%d-%H%M%S"), ext);
+    let picked = app
+        .dialog()
+        .file()
+        .set_file_name(&suggested)
+        .add_filter("Image", &[ext, "png", "jpg", "webp"])
+        .blocking_save_file();
+    let Some(file_path) = picked else {
+        return Ok(()); // 用户取消另存，不视为错误
+    };
+    let path = file_path.into_path().map_err(|error| error.to_string())?;
+    let dynamic = DynamicImage::ImageRgba8(image.clone());
+    let result = match format {
+        ImageFormat::Jpeg => dynamic.to_rgb8().save_with_format(&path, ImageFormat::Jpeg),
+        other => {
+            // 若用户改了扩展名，按路径猜测；失败再回退偏好格式
+            if let Some(guessed) = ImageFormat::from_path(&path).ok() {
+                if guessed == ImageFormat::Jpeg {
+                    dynamic.to_rgb8().save_with_format(&path, ImageFormat::Jpeg)
+                } else {
+                    dynamic.save_with_format(&path, guessed)
+                }
+            } else {
+                dynamic.save_with_format(&path, other)
+            }
+        }
+    };
+    result.map_err(|error| format!("另存为失败：{error}"))?;
+    Ok(())
 }
 
 #[cfg(target_os = "windows")]
@@ -1098,12 +1404,17 @@ fn restore_minimized_window(id: u32) -> Result<(), String> {
     Ok(())
 }
 
-#[cfg(not(target_os = "windows"))]
+#[cfg(target_os = "linux")]
+fn restore_minimized_window(id: u32) -> Result<(), String> {
+    linux::restore_minimized(id)
+}
+
+#[cfg(all(not(target_os = "windows"), not(target_os = "linux")))]
 fn restore_minimized_window(_id: u32) -> Result<(), String> {
     Err("目标窗口已最小化，请先还原".into())
 }
 
-fn copy_image_to_clipboard(image: RgbaImage) -> Result<(), String> {
+fn copy_image_to_clipboard(image: RgbaImage, clear_after: Option<Duration>) -> Result<(), String> {
     let width = image.width() as usize;
     let height = image.height() as usize;
     let bytes = image.into_raw();
@@ -1111,16 +1422,18 @@ fn copy_image_to_clipboard(image: RgbaImage) -> Result<(), String> {
         .and_then(|mut clipboard| clipboard.set_image(ImageData { width, height, bytes: Cow::Borrowed(&bytes) }))
         .map_err(|error| error.to_string())?;
 
-    thread::spawn(move || {
-        thread::sleep(Duration::from_secs(60));
-        if let Ok(mut clipboard) = Clipboard::new() {
-            if let Ok(current) = clipboard.get_image() {
-                if current.width == width && current.height == height && current.bytes.as_ref() == bytes.as_slice() {
-                    let _ = clipboard.clear();
+    if let Some(delay) = clear_after {
+        thread::spawn(move || {
+            thread::sleep(delay);
+            if let Ok(mut clipboard) = Clipboard::new() {
+                if let Ok(current) = clipboard.get_image() {
+                    if current.width == width && current.height == height && current.bytes.as_ref() == bytes.as_slice() {
+                        let _ = clipboard.clear();
+                    }
                 }
             }
-        }
-    });
+        });
+    }
     Ok(())
 }
 
@@ -1130,8 +1443,14 @@ fn get_recording_status(state: State<'_, AppState>) -> RecordingStatus {
 }
 
 fn recording_status(recorder: &Recorder) -> RecordingStatus {
+    let active = recorder.child.is_some() || {
+        #[cfg(target_os = "linux")]
+        { recorder.linux_active.is_some() }
+        #[cfg(not(target_os = "linux"))]
+        { false }
+    };
     RecordingStatus {
-        active: recorder.child.is_some(),
+        active,
         target: recorder.target.clone(),
         started_at: recorder.started_at,
     }
@@ -1140,47 +1459,97 @@ fn recording_status(recorder: &Recorder) -> RecordingStatus {
 #[tauri::command]
 fn toggle_recording(state: State<'_, AppState>) -> Result<RecordingStatus, String> {
     let mut recorder = state.recorder.lock();
-    if let Some(mut child) = recorder.child.take() {
-        if let Some(stdin) = child.stdin.as_mut() { let _ = stdin.write_all(b"q\n"); }
-        let _ = child.wait();
-        recorder.target = None;
-        recorder.started_at = None;
-        recorder.output_path = None;
+    if recorder.child.is_some() || {
+        #[cfg(target_os = "linux")]
+        { recorder.linux_active.is_some() }
+        #[cfg(not(target_os = "linux"))]
+        { false }
+    } {
+        stop_active_recording(&mut recorder);
         return Ok(recording_status(&recorder));
     }
 
     let target = state.tracker.lock().previous.clone().ok_or_else(|| "还没有上一个应用可录制".to_string())?;
-    let output_dir = dirs::download_dir().or_else(dirs::document_dir).ok_or_else(|| "无法确定录制保存目录".to_string())?;
+    let settings = state.settings.lock().clone();
+    let output_dir = {
+        let configured = settings.save_dir.trim();
+        if !configured.is_empty() {
+            let expanded = expand_user_path(configured);
+            PathBuf::from(expanded)
+        } else {
+            dirs::download_dir()
+                .or_else(dirs::document_dir)
+                .ok_or_else(|| "无法确定录制保存目录".to_string())?
+        }
+    };
     fs::create_dir_all(&output_dir).map_err(|error| error.to_string())?;
     let output = output_dir.join(format!("应用快照-{}.mp4", Local::now().format("%Y-%m-%d_%H-%M-%S")));
 
-    let mut command = build_ffmpeg_command(&target, &output)?;
-    command.stdin(Stdio::piped()).stdout(Stdio::null()).stderr(Stdio::null());
-    let child = command.spawn().map_err(|_| "未找到 ffmpeg，请安装后将它加入 PATH".to_string())?;
-    recorder.child = Some(child);
-    recorder.target = Some(target.app_name);
-    recorder.started_at = Some(now_millis());
-    recorder.output_path = Some(output);
-    Ok(recording_status(&recorder))
+    #[cfg(target_os = "linux")]
+    {
+        let active = linux::start_recording(target.id, settings.include_cursor, &output)?;
+        // child 也放一份，供 status.active 判断；停止走 linux_active
+        // ActiveRecording 拥有 child，这里不双持——只用 linux_active
+        recorder.linux_active = Some(active);
+        // 同步一个占位，让 recording_status 的 active 仍看 child；改为看 linux_active
+        recorder.target = Some(target.app_name);
+        recorder.started_at = Some(now_millis());
+        recorder.output_path = Some(output);
+        return Ok(recording_status(&recorder));
+    }
+
+    #[cfg(not(target_os = "linux"))]
+    {
+        let mut command = build_ffmpeg_command(&target, &output, settings.include_cursor)?;
+        command.stdin(Stdio::piped()).stdout(Stdio::null()).stderr(Stdio::null());
+        let child = command.spawn().map_err(|_| "未找到 ffmpeg，请安装后将它加入 PATH".to_string())?;
+        recorder.child = Some(child);
+        recorder.target = Some(target.app_name);
+        recorder.started_at = Some(now_millis());
+        recorder.output_path = Some(output);
+        Ok(recording_status(&recorder))
+    }
 }
 
-fn build_ffmpeg_command(target: &TrackedWindow, output: &PathBuf) -> Result<Command, String> {
+fn stop_active_recording(recorder: &mut Recorder) {
+    #[cfg(target_os = "linux")]
+    {
+        if let Some(active) = recorder.linux_active.take() {
+            active.stop();
+            recorder.child = None;
+            recorder.target = None;
+            recorder.started_at = None;
+            recorder.output_path = None;
+            return;
+        }
+    }
+    if let Some(mut child) = recorder.child.take() {
+        if let Some(stdin) = child.stdin.as_mut() {
+            let _ = stdin.write_all(b"q\n");
+        }
+        let _ = child.wait();
+    }
+    recorder.target = None;
+    recorder.started_at = None;
+    recorder.output_path = None;
+}
+
+#[cfg(not(target_os = "linux"))]
+fn build_ffmpeg_command(
+    target: &TrackedWindow,
+    output: &PathBuf,
+    include_cursor: bool,
+) -> Result<Command, String> {
     let mut command = Command::new("ffmpeg");
     command.arg("-y");
     #[cfg(target_os = "windows")]
     {
+        let _ = include_cursor; // gdigrab 跟鼠标开关留到后续；参数先接住避免告警
         command.args(["-f", "gdigrab", "-framerate", "30", "-i", &format!("title={}", target.title)]);
-    }
-    #[cfg(target_os = "linux")]
-    {
-        let window = Window::all().map_err(|error| error.to_string())?.into_iter()
-            .find(|window| window.id().ok() == Some(target.id)).ok_or_else(|| "目标窗口已关闭".to_string())?;
-        let size = format!("{}x{}", window.width().map_err(|e| e.to_string())?, window.height().map_err(|e| e.to_string())?);
-        let input = format!(":0.0+{},{}", window.x().map_err(|e| e.to_string())?, window.y().map_err(|e| e.to_string())?);
-        command.args(["-f", "x11grab", "-framerate", "30", "-video_size", &size, "-i", &input]);
     }
     #[cfg(target_os = "macos")]
     {
+        let _ = include_cursor;
         return Err("macOS 录制后端将在下一轮接入 ScreenCaptureKit".into());
     }
     command.args(["-c:v", "libx264", "-preset", "veryfast", "-pix_fmt", "yuv420p", "-crf", "23"]);
@@ -1384,6 +1753,101 @@ fn focus_existing_window(app: &AppHandle) {
     }
 }
 
+fn open_annotate_window(
+    app: &AppHandle,
+    state: &AppState,
+    image: &RgbaImage,
+    title: &str,
+) -> Result<(), String> {
+    let png = encode_png(image)?;
+    *state.annotate_png.lock() = Some(png);
+    *state.annotate_title.lock() = title.to_string();
+    let window = app
+        .get_webview_window("annotate")
+        .ok_or_else(|| "标注窗口不存在".to_string())?;
+    // 按图幅大致缩放窗口，避免小图撑满或大图溢出
+    let w = (image.width().max(480).min(1280)) as f64;
+    let h = (image.height().max(360).min(900) + 56) as f64;
+    let _ = window.set_size(LogicalSize::new(w, h));
+    let _ = window.center();
+    window.show().map_err(|error| error.to_string())?;
+    window.set_focus().map_err(|error| error.to_string())?;
+    let _ = app.emit("annotate-ready", json!({ "title": title }));
+    Ok(())
+}
+
+#[tauri::command]
+fn get_annotate_image(state: State<'_, AppState>) -> Result<Option<String>, String> {
+    let Some(png) = state.annotate_png.lock().clone() else {
+        return Ok(None);
+    };
+    Ok(Some(format!("data:image/png;base64,{}", BASE64.encode(png))))
+}
+
+#[tauri::command]
+fn annotate_get_title(state: State<'_, AppState>) -> String {
+    state.annotate_title.lock().clone()
+}
+
+fn decode_png_base64(data: &str) -> Result<RgbaImage, String> {
+    let trimmed = data
+        .strip_prefix("data:image/png;base64,")
+        .or_else(|| data.strip_prefix("data:image/jpeg;base64,"))
+        .unwrap_or(data);
+    let bytes = BASE64
+        .decode(trimmed.trim())
+        .map_err(|error| format!("标注图解码失败：{error}"))?;
+    image::load_from_memory(&bytes)
+        .map(|img| img.to_rgba8())
+        .map_err(|error| format!("标注图解析失败：{error}"))
+}
+
+#[tauri::command]
+fn annotate_copy(app: AppHandle, state: State<'_, AppState>, image_data: String) -> Result<String, String> {
+    let image = decode_png_base64(&image_data)?;
+    let settings = state.settings.lock().clone();
+    if settings.auto_save_local {
+        let _ = store_snapshot(&state, &image, "标注");
+    }
+    copy_image_to_clipboard(image, clipboard_clear_delay(&settings.clipboard_auto_clear))?;
+    hide_annotate_window(&app, &state);
+    Ok(format!("已复制标注图，{}", format_clear_label(&settings.clipboard_auto_clear)))
+}
+
+#[tauri::command]
+fn annotate_save(app: AppHandle, state: State<'_, AppState>, image_data: String) -> Result<String, String> {
+    let image = decode_png_base64(&image_data)?;
+    let format = state.settings.lock().snapshot_format.clone();
+    save_image_as_dialog(&app, &image, &format)?;
+    hide_annotate_window(&app, &state);
+    Ok("已保存标注图".into())
+}
+
+#[tauri::command]
+fn annotate_close(app: AppHandle, state: State<'_, AppState>) {
+    hide_annotate_window(&app, &state);
+}
+
+fn hide_annotate_window(app: &AppHandle, state: &AppState) {
+    *state.annotate_png.lock() = None;
+    if let Some(window) = app.get_webview_window("annotate") {
+        let _ = window.hide();
+    }
+}
+
+fn capture_scrolling_image(target_id: u32) -> Result<(RgbaImage, String), String> {
+    #[cfg(target_os = "linux")]
+    {
+        let image = linux::capture_scrolling_window(target_id)?;
+        return Ok((image, "滚动长截图".into()));
+    }
+    #[cfg(not(target_os = "linux"))]
+    {
+        let _ = target_id;
+        Err("滚动长截图目前仅在 Linux/X11 实现 / scrolling capture is Linux/X11-only for now".into())
+    }
+}
+
 #[tauri::command]
 fn show_main_window(app: AppHandle) {
     if let Some(window) = app.get_webview_window("main") {
@@ -1405,14 +1869,206 @@ async fn ocr_clipboard_into_clipboard() -> Result<String, String> {
     Ok(format!("已提取 {count} 个字符到剪贴板"))
 }
 
+fn primary_monitor() -> Result<Monitor, String> {
+    let monitors = Monitor::all().map_err(|error| format!("无法枚举显示器：{error}"))?;
+    monitors
+        .into_iter()
+        .find(|monitor| monitor.is_primary().unwrap_or(false))
+        .or_else(|| Monitor::all().ok().and_then(|items| items.into_iter().next()))
+        .ok_or_else(|| "未找到可用显示器".into())
+}
+
+fn capture_fullscreen_image(include_cursor: bool) -> Result<(RgbaImage, String), String> {
+    let monitor = primary_monitor()?;
+    let name = monitor.name().unwrap_or_else(|_| "全屏".into());
+    #[cfg(target_os = "linux")]
+    if include_cursor {
+        if let Ok(image) = linux::capture_primary_with_cursor() {
+            return Ok((image, name));
+        }
+        // 失败则回退 xcap（无光标）。
+    }
+    let _ = include_cursor;
+    let image = monitor
+        .capture_image()
+        .map_err(|error| format!("全屏截取失败：{error} / fullscreen capture failed: {error}"))?;
+    Ok((image, name))
+}
+
+/// 把屏幕绝对坐标矩形裁成相对某块显示器的区域，再交给 xcap（或 Linux 带光标 x11grab）。
+fn capture_region_image(rect: RegionRect, include_cursor: bool) -> Result<(RgbaImage, String), String> {
+    if rect.width < 2 || rect.height < 2 {
+        return Err("选区太小".into());
+    }
+    #[cfg(target_os = "linux")]
+    if include_cursor {
+        if let Ok(image) = linux::capture_region_with_cursor(rect.x, rect.y, rect.width, rect.height) {
+            return Ok((image, "区域截图".into()));
+        }
+    }
+    let _ = include_cursor;
+    let monitor = Monitor::from_point(rect.x, rect.y)
+        .or_else(|_| primary_monitor())
+        .map_err(|error| format!("无法定位选区所在显示器：{error}"))?;
+    let mx = monitor.x().unwrap_or(0);
+    let my = monitor.y().unwrap_or(0);
+    let mw = monitor.width().unwrap_or(0);
+    let mh = monitor.height().unwrap_or(0);
+    let rel_x = (rect.x - mx).max(0) as u32;
+    let rel_y = (rect.y - my).max(0) as u32;
+    let width = rect.width.min(mw.saturating_sub(rel_x));
+    let height = rect.height.min(mh.saturating_sub(rel_y));
+    if width < 2 || height < 2 {
+        return Err("选区超出显示器范围".into());
+    }
+    let image = monitor
+        .capture_region(rel_x, rel_y, width, height)
+        .map_err(|error| format!("区域截取失败：{error} / region capture failed: {error}"))?;
+    Ok((image, "区域截图".into()))
+}
+
+/// 可选：系统装了 slop 时直接框选，免开自绘层。
+fn try_slop_region() -> Option<RegionRect> {
+    let output = Command::new("slop")
+        .args(["-f", "%x %y %w %h"])
+        .output()
+        .ok()?;
+    if !output.status.success() {
+        return None;
+    }
+    let text = String::from_utf8_lossy(&output.stdout);
+    let parts: Vec<&str> = text.split_whitespace().collect();
+    if parts.len() != 4 {
+        return None;
+    }
+    let x = parts[0].parse().ok()?;
+    let y = parts[1].parse().ok()?;
+    let width = parts[2].parse().ok()?;
+    let height = parts[3].parse().ok()?;
+    Some(RegionRect { x, y, width, height })
+}
+
+fn show_region_picker(app: &AppHandle) -> Result<(), String> {
+    let window = app
+        .get_webview_window("region-picker")
+        .ok_or_else(|| "区域选择窗口不存在".to_string())?;
+    let _ = window.set_fullscreen(true);
+    window.show().map_err(|error| error.to_string())?;
+    window.set_focus().map_err(|error| error.to_string())
+}
+
+fn hide_region_picker(app: &AppHandle) {
+    if let Some(window) = app.get_webview_window("region-picker") {
+        let _ = window.hide();
+        let _ = window.set_fullscreen(false);
+    }
+}
+
 #[tauri::command]
-async fn perform_action(action: String, state: State<'_, AppState>) -> Result<String, String> {
+fn complete_region_capture(
+    app: AppHandle,
+    state: State<'_, AppState>,
+    x: i32,
+    y: i32,
+    width: u32,
+    height: u32,
+) {
+    hide_region_picker(&app);
+    if let Some(tx) = state.region_tx.lock().take() {
+        let _ = tx.send(Some(RegionRect { x, y, width, height }));
+    }
+}
+
+#[tauri::command]
+fn cancel_region_capture(app: AppHandle, state: State<'_, AppState>) {
+    hide_region_picker(&app);
+    if let Some(tx) = state.region_tx.lock().take() {
+        let _ = tx.send(None);
+    }
+}
+
+fn capture_region_interactive(app: &AppHandle, state: &AppState) -> Result<(RgbaImage, String), String> {
+    let include_cursor = state.settings.lock().include_cursor;
+    if let Some(rect) = try_slop_region() {
+        // 等 slop 叠加层消失再抓，避免把框选 UI 拍进去
+        thread::sleep(Duration::from_millis(80));
+        return capture_region_image(rect, include_cursor);
+    }
+
+    let (tx, rx) = mpsc::channel();
+    *state.region_tx.lock() = Some(tx);
+    if let Err(error) = show_region_picker(app) {
+        let _ = state.region_tx.lock().take();
+        return Err(error);
+    }
+    let selected = rx
+        .recv_timeout(Duration::from_secs(120))
+        .map_err(|_| "区域选择超时 / region selection timed out".to_string())?;
+    hide_region_picker(app);
+    // 等自绘层隐藏后再截，避免框选蒙版入镜
+    thread::sleep(Duration::from_millis(120));
+    match selected {
+        Some(rect) => capture_region_image(rect, include_cursor),
+        None => Err("已取消区域截图 / region capture cancelled".into()),
+    }
+}
+
+#[tauri::command]
+async fn perform_action(action: String, app: AppHandle, state: State<'_, AppState>) -> Result<String, String> {
     match action.as_str() {
-        "snapshot" => capture_window(state, None),
+        "snapshot" => capture_window(app, state, None),
         "record" => toggle_recording(state).map(|status| if status.active { "录制已开始".into() } else { "录制已保存".into() }),
         "polish" => polish_clipboard(state).await,
         "ocr" => ocr_clipboard_into_clipboard().await,
-        "region" | "fullscreen" | "scrolling" => Ok("该截图模式将在后续版本接入，当前请使用窗口快照".into()),
+        "fullscreen" => {
+            let app2 = app.clone();
+            let include_cursor = state.settings.lock().include_cursor;
+            let (image, name) = tauri::async_runtime::spawn_blocking(move || {
+                capture_fullscreen_image(include_cursor)
+            })
+                .await
+                .map_err(|error| error.to_string())??;
+            finalize_capture(&app2, &state, image, &name)
+        }
+        "region" => {
+            let app2 = app.clone();
+            let (image, name) = {
+                let (tx, rx) = mpsc::channel::<Result<(RgbaImage, String), String>>();
+                let app_thread = app.clone();
+                thread::spawn(move || {
+                    let Some(app_state) = app_thread.try_state::<AppState>() else {
+                        let _ = tx.send(Err("应用状态不可用".into()));
+                        return;
+                    };
+                    let result = capture_region_interactive(&app_thread, app_state.inner());
+                    let _ = tx.send(result);
+                });
+                // 阻塞等待选区，同时主线程继续派发 region-picker 的鼠标事件
+                tauri::async_runtime::spawn_blocking(move || {
+                    rx.recv_timeout(Duration::from_secs(130))
+                        .map_err(|_| "区域选择超时 / region selection timed out".to_string())?
+                })
+                .await
+                .map_err(|error| error.to_string())??
+            };
+            finalize_capture(&app2, &state, image, &name)
+        }
+        "scrolling" => {
+            let app2 = app.clone();
+            let target_id = state
+                .tracker
+                .lock()
+                .previous
+                .as_ref()
+                .map(|window| window.id)
+                .ok_or_else(|| "还没有上一个应用可截取".to_string())?;
+            let (image, name) = tauri::async_runtime::spawn_blocking(move || {
+                capture_scrolling_image(target_id)
+            })
+            .await
+            .map_err(|error| error.to_string())??;
+            finalize_capture(&app2, &state, image, &name)
+        }
         _ => Err("未知快捷键动作".into()),
     }
 }
@@ -1474,7 +2130,12 @@ fn app_icon_data_url(pid: u32) -> Option<String> {
     windows_icon::icon_for_process(pid).and_then(rgba_to_data_url)
 }
 
-#[cfg(not(target_os = "windows"))]
+#[cfg(target_os = "linux")]
+fn app_icon_data_url(pid: u32) -> Option<String> {
+    linux::icon_for_process(pid).and_then(rgba_to_data_url)
+}
+
+#[cfg(all(not(target_os = "windows"), not(target_os = "linux")))]
 fn app_icon_data_url(_pid: u32) -> Option<String> {
     None
 }
@@ -1607,6 +2268,9 @@ pub fn run() {
             recorder: Mutex::new(Recorder::default()),
             pet_position_revision: AtomicU64::new(0),
             quick_menu_anchor: Mutex::new(None),
+            region_tx: Mutex::new(None),
+            annotate_png: Mutex::new(None),
+            annotate_title: Mutex::new(String::new()),
         })
         .setup(|app| {
             let state = app.state::<AppState>();
@@ -1641,6 +2305,16 @@ pub fn run() {
             }
             start_tracker(app.handle().clone(), tracker);
 
+            #[cfg(target_os = "linux")]
+            {
+                // 配置里若已勾选自启，启动时把 XDG 条目与设置对齐（不会默认打开）。
+                if settings.launch_on_boot {
+                    if let Err(error) = linux::apply_launch_on_boot(true) {
+                        eprintln!("snapshot: could not sync XDG autostart: {error}");
+                    }
+                }
+            }
+
             let open_settings = MenuItem::with_id(app, "open-settings", "打开设置", true, None::<&str>)?;
             let quit = MenuItem::with_id(app, "quit", "退出", true, None::<&str>)?;
             let menu = Menu::with_items(app, &[&open_settings, &quit])?;
@@ -1648,9 +2322,33 @@ pub fn run() {
                 "open-settings" => show_main_window(app.clone()),
                 "quit" => app.exit(0),
                 _ => {}
+            })
+            .on_tray_icon_event(|tray, event| {
+                // Left-click (and Windows double-click) opens the main window where the
+                // tray backend emits click events. Linux tray-icon 0.24 via
+                // libayatana-appindicator has no Activate/click callback — menu only.
+                // Right-click / context menu (打开设置 / 退出) is unchanged.
+                match event {
+                    TrayIconEvent::Click {
+                        button: MouseButton::Left,
+                        button_state: MouseButtonState::Up,
+                        ..
+                    }
+                    | TrayIconEvent::DoubleClick {
+                        button: MouseButton::Left,
+                        ..
+                    } => {
+                        show_main_window(tray.app_handle().clone());
+                    }
+                    _ => {}
+                }
             });
             if let Some(icon) = app.default_window_icon() { tray = tray.icon(icon.clone()); }
-            tray.build(app)?;
+            // Linux 上若会话没有 StatusNotifierHost（精简环境 / 无扩展的 GNOME），
+            // 托盘会建失败；主窗口与快捷键仍应可用，不能把整个 setup 拖死。
+            if let Err(error) = tray.build(app) {
+                eprintln!("snapshot: system tray unavailable ({error}); continuing without tray");
+            }
             Ok(())
         })
         .on_window_event(|window, event| {
@@ -1704,11 +2402,19 @@ pub fn run() {
             ocr_capability,
             ocr_snapshot,
             ocr_clipboard,
+            platform_capabilities,
             show_quick_menu,
             set_quick_menu_expanded,
             hide_quick_menu,
             show_main_window,
             perform_action,
+            complete_region_capture,
+            cancel_region_capture,
+            get_annotate_image,
+            annotate_get_title,
+            annotate_copy,
+            annotate_save,
+            annotate_close,
         ])
         .run(context)
         .expect("运行 snapshot 失败");
@@ -1872,6 +2578,36 @@ mod pet_asset_tests {
         let path = make_zip("static-only", &["cover.png", "notes.txt"]);
         let found = find_pet_animation_entries(&path).expect("应当回退到静态图");
         assert_eq!(found, vec!["cover.png".to_string()]);
+    }
+
+
+    #[test]
+    fn expand_user_path_keeps_absolute_and_expands_tilde() {
+        assert_eq!(expand_user_path("/tmp/out"), "/tmp/out");
+        assert_eq!(expand_user_path("  /tmp/out  "), "/tmp/out");
+        if let Some(home) = dirs::home_dir() {
+            let expected = home.join("Videos").to_string_lossy().into_owned();
+            assert_eq!(expand_user_path("~/Videos"), expected);
+        }
+    }
+
+    #[test]
+    fn clipboard_clear_delay_honors_preference_tokens() {
+        assert_eq!(clipboard_clear_delay("30s"), Some(Duration::from_secs(30)));
+        assert_eq!(clipboard_clear_delay("60s"), Some(Duration::from_secs(60)));
+        assert_eq!(clipboard_clear_delay("5m"), Some(Duration::from_secs(300)));
+        assert_eq!(clipboard_clear_delay("never"), None);
+        assert_eq!(clipboard_clear_delay("weird"), Some(Duration::from_secs(60)));
+    }
+
+    #[test]
+    fn snapshot_format_parts_map_ui_tokens() {
+        assert_eq!(snapshot_format_parts("png"), (ImageFormat::Png, "png"));
+        assert_eq!(snapshot_format_parts("jpeg"), (ImageFormat::Jpeg, "jpg"));
+        assert_eq!(snapshot_format_parts("webp"), (ImageFormat::WebP, "webp"));
+        assert_eq!(mime_for_snapshot_file("a.JPG"), "image/jpeg");
+        assert_eq!(mime_for_snapshot_file("a.webp"), "image/webp");
+        assert_eq!(mime_for_snapshot_file("a.png"), "image/png");
     }
 
     #[test]
