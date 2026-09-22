@@ -83,6 +83,6 @@ bash scripts/linux/build.sh  # 正式二进制；bundler 成功时还有 deb / A
 
 ## 发布
 
-推 `v*` tag 会打出 macOS universal 包（zip）和 Windows 两个架构的安装程序，生成 `SHA256SUMS.txt`，创建 draft + pre-release。当前无签名、无公证。Linux 暂时没有发行附件——它的 adapter 还没在真实桌面上跑过，只能从源码构建。
+推 `v*` tag 会打三端的包——macOS universal（zip）、Windows 两个架构的安装程序、Linux x86_64 与 aarch64 各一份 `.deb` 和 `.AppImage`（两个架构都用原生 runner，不交叉编译）——生成 `SHA256SUMS.txt`，创建 draft + pre-release。当前无签名、无公证。
 
 仓库没有 `LICENSE` 文件。尚未添加许可证，默认保留版权。

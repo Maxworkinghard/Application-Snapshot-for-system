@@ -81,6 +81,6 @@ One file per action; a file name containing `idle` becomes the default pose. The
 
 ## Release
 
-Pushing a `v*` tag builds the macOS universal app bundle (zipped) and the two Windows installers, writes `SHA256SUMS.txt`, and creates a draft + pre-release. There is no signing and no notarization. Linux has no release asset yet — its adapter has never been exercised on a real desktop, so it is source-build only.
+Pushing a `v*` tag builds all three platforms — the macOS universal app bundle (zipped), the two Windows installers, and a `.deb` plus `.AppImage` for Linux x86_64 and aarch64 (native runners, no cross-compilation) — writes `SHA256SUMS.txt`, and creates a draft + pre-release. There is no signing and no notarization.
 
 There is no `LICENSE` file. No license has been added; copyright is reserved by default.
