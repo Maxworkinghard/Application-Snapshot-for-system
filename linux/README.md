@@ -1,5 +1,10 @@
 # 应用快照（Linux 版）
 
+> **参考实现 / Reference only.** 产品主线是仓库根目录的 Tauri 2 应用（见根 README 与 `scripts/linux/`）。
+> 本目录的 `windowsnap` 仍被 GitHub Release 打包为 `Application-Snapshot-*-linux-*.tar.gz`，但不再承接新功能。
+> 若你只想在 Linux 上使用与 Windows Tauri 版对等的功能，请构建根目录工程，而不是这里。
+
+
 Linux 实现。全局快捷键截取当前活动窗口、悬浮球或桌宠、窗口录制、提示词润色。总览见 [README](../README.md)（英文）或 [简体中文](../README.zh-CN.md)。会话限制（尤其是 Wayland）见下文。
 
 ## 功能
