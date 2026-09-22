@@ -1,4 +1,4 @@
-export type NavPage = "shortcuts" | "prompt" | "history" | "pet" | "prefs" | "theme" | "ocr" | "models";
+export type NavPage = "shortcuts" | "prompt" | "history" | "pet" | "prefs" | "theme" | "ocr";
 export type ShortcutAction =
   | "snapshot"
   | "fullscreen"
@@ -105,4 +105,3 @@ export interface PlatformCapabilities {
   trayNote: string;
   notes: string[];
 }
-
