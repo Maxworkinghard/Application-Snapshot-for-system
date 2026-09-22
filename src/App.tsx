@@ -60,6 +60,7 @@ import {
   platformCapabilities,
   ocrClipboard,
   ocrSnapshot,
+  openRecordingsDir,
   openSnapshotsDir,
   polishText,
   savePreferences,
@@ -118,6 +119,7 @@ const actionLabels: Record<ShortcutAction, { name: string; tag?: string }> = {
   fullscreen: { name: "全屏快照", tag: "主显示器" },
   scrolling: { name: "滚动长截图", tag: "窗口连拍" },
   record: { name: "窗口录制", tag: "MP4" },
+  recordings: { name: "打开录制目录", tag: "文件管理器" },
   polish: { name: "润色 Prompt", tag: "剪贴板" },
   ocr: { name: "提取文字 (OCR)", tag: "离线识别" },
 };
@@ -139,12 +141,14 @@ const initialSettings: Settings = {
     { action: "fullscreen", accelerator: "Alt+Shift+F" },
     ...(SCROLLING_SUPPORTED ? [{ action: "scrolling" as const, accelerator: null }] : []),
     { action: "record", accelerator: null },
+    { action: "recordings", accelerator: null },
     { action: "polish", accelerator: "Alt+Shift+P" },
     { action: "ocr", accelerator: "Alt+Shift+O" },
   ],
   clipboardAutoClear: "60s",
   snapshotFormat: "png",
   saveDir: "",
+  recordingDir: "",
   customTheme: null,
   shutterSound: "crisp",
   customSoundPath: null,
@@ -1416,6 +1420,7 @@ function ShortcutsPage({
               : binding.action === "fullscreen" ? <Camera size={15} />
               : binding.action === "scrolling" ? <Layers size={15} />
               : binding.action === "record" ? <span className="record-symbol" />
+              : binding.action === "recordings" ? <FolderOpen size={15} />
               : binding.action === "ocr" ? <ScanText size={15} />
               : <TextCursorInput size={15} />}
           </span>
@@ -1950,6 +1955,26 @@ function PreferencesPage({
     }
   }
 
+  async function chooseRecordingDir() {
+    try {
+      const selected = await open({ directory: true, multiple: false });
+      if (typeof selected === "string") {
+        await updatePrefs({ recordingDir: selected }, "录制目录已更新");
+      }
+    } catch {
+      notify("当前环境不支持选择目录");
+    }
+  }
+
+  async function revealRecordings() {
+    try {
+      // 目录可能还没建过（一次都没录过），后端会先建再打开
+      await openRecordingsDir();
+    } catch (error) {
+      notify(error instanceof Error ? error.message : String(error));
+    }
+  }
+
   async function importShutterSound() {
     try {
       const selected = await open({ multiple: false, filters: [{ name: "音效文件", extensions: ["mp3", "wav", "ogg", "m4a"] }] });
@@ -2088,6 +2113,43 @@ function PreferencesPage({
             />
           </div>
         </div>
+        </section>
+
+        <section className="hub-section-block">
+          <div className="section-label-bar">
+            <span className="section-name">录制</span>
+          </div>
+          <div className="preferences-group-card">
+            <div className="pref-item-row folder-row">
+              <span className="pref-title">录制保存目录</span>
+              <div className="folder-picker-box">
+                <span className="folder-path-text" title={settings.recordingDir || undefined}>
+                  {settings.recordingDir || (settings.saveDir ? `跟随截图目录：${settings.saveDir}` : "默认下载目录")}
+                </span>
+                <button type="button" className="folder-action-btn" onClick={() => void chooseRecordingDir()}>
+                  <FolderOpen size={12} />
+                  更改
+                </button>
+                {settings.recordingDir && (
+                  <button
+                    type="button"
+                    className="folder-action-btn"
+                    onClick={() => void updatePrefs({ recordingDir: "" }, "已恢复默认录制目录")}
+                    title="清除后跟随截图目录，没设过则落到下载目录"
+                  >
+                    恢复默认
+                  </button>
+                )}
+              </div>
+            </div>
+            <div className="pref-item-row">
+              <span className="pref-title">打开录制目录</span>
+              <button type="button" className="folder-action-btn" onClick={() => void revealRecordings()}>
+                <FolderOpen size={12} />
+                打开
+              </button>
+            </div>
+          </div>
         </section>
 
       {caps && (

@@ -18,6 +18,7 @@ const SUPPORTED_ACTIONS: Record<ShortcutAction, boolean> = {
   fullscreen: true,
   scrolling: isLinux,
   record: true,
+  recordings: true,
   polish: true,
   ocr: true,
 };

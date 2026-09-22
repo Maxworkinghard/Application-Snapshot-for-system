@@ -34,12 +34,14 @@ const demoSettings: Settings = {
     { action: "fullscreen", accelerator: null },
     { action: "scrolling", accelerator: null },
     { action: "record", accelerator: null },
+    { action: "recordings", accelerator: null },
     { action: "polish", accelerator: null },
     { action: "ocr", accelerator: null },
   ],
   clipboardAutoClear: "60s",
   snapshotFormat: "png",
   saveDir: "",
+  recordingDir: "",
   customTheme: null,
   shutterSound: "crisp",
   customSoundPath: null,
@@ -187,6 +189,11 @@ export function onCaptureFeedback(callback: (payload: CaptureFeedback) => void) 
 export async function listSnapshots(): Promise<SnapshotRecord[]> {
   if (!inTauri) return [];
   return invoke<SnapshotRecord[]>("list_snapshots");
+}
+
+export async function openRecordingsDir(): Promise<string> {
+  if (!inTauri) return "";
+  return invoke<string>("open_recordings_dir");
 }
 
 export async function openSnapshotsDir(): Promise<string> {
