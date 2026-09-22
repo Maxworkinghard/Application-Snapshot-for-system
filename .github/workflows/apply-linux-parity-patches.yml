@@ -16,8 +16,16 @@ jobs:
         run: |
           set -euo pipefail
           : > /tmp/lib.rs.patch
-          for f in patches/linux-parity/lib.rs.s*.b64; do
-            base64 -d "$f" >> /tmp/lib.rs.patch
+          decode_part() {
+            local stem="$1"
+            if [ -f "patches/linux-parity/${stem}a.b64" ]; then
+              cat "patches/linux-parity/${stem}a.b64" "patches/linux-parity/${stem}b.b64" | tr -d '\n' | base64 -d >> /tmp/lib.rs.patch
+            else
+              base64 -d "patches/linux-parity/${stem}.b64" >> /tmp/lib.rs.patch
+            fi
+          }
+          for i in 00 01 02 03 04 05 06; do
+            decode_part "lib.rs.s${i}"
           done
           git apply --verbose patches/linux-parity/styles.css.patch
           git apply --verbose patches/linux-parity/App.tsx.patch
