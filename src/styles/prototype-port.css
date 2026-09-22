@@ -6846,3 +6846,92 @@ input {
   padding: 0 14px;
   box-sizing: border-box;
 }
+
+/* ---------------------------------------------------------------- 界面主题页 */
+.theme-choice-grid {
+  display: grid;
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+  gap: var(--space-2);
+  margin-top: var(--space-3);
+}
+
+.theme-choice-card {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-1);
+  align-items: flex-start;
+  padding: var(--space-3);
+  border: 1px solid var(--border-subtle);
+  border-radius: var(--radius-xs);
+  background: var(--bg-surface-subtle);
+  cursor: pointer;
+  text-align: left;
+  transition: var(--transition-base);
+}
+
+.theme-choice-card:hover {
+  border-color: var(--border-strong);
+  background: var(--bg-hover);
+}
+
+.theme-choice-card.is-active {
+  border-color: var(--accent-primary);
+  background: color-mix(in srgb, var(--accent-primary) 8%, var(--bg-surface-subtle));
+}
+
+.theme-choice-card:focus-visible {
+  outline: var(--focus-ring);
+}
+
+/* 色块直接把该主题的底色画出来，比读文字快 */
+.theme-choice-swatch {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  width: 32px;
+  height: 32px;
+  margin-bottom: var(--space-1);
+  border: 1px solid var(--border-subtle);
+  border-radius: var(--radius-xs);
+}
+
+.theme-choice-swatch.is-light {
+  color: #b4801f;
+  background: #f7f7f5;
+}
+
+.theme-choice-swatch.is-dark {
+  color: #cfd4dc;
+  background: #24262b;
+}
+
+/* 跟随系统：一半浅一半深，表示两种都可能 */
+.theme-choice-swatch.is-system {
+  color: var(--text-secondary);
+  background: linear-gradient(135deg, #f7f7f5 0% 50%, #24262b 50% 100%);
+}
+
+.theme-choice-name {
+  color: var(--text-primary);
+  font-size: var(--text-caption);
+  line-height: var(--leading-caption);
+  font-weight: 500;
+}
+
+.theme-choice-hint {
+  color: var(--text-tertiary);
+  font-size: var(--text-caption);
+  line-height: var(--leading-caption);
+}
+
+@media (max-width: 860px) {
+  .theme-choice-grid { grid-template-columns: 1fr; }
+}
+
+/* 说明文字是段落，竖排；不要套用 drawer-inputs-grid 的多列网格 */
+.theme-note-list {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-1);
+  margin-top: var(--space-3);
+}

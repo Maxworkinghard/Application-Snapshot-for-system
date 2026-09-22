@@ -6,6 +6,7 @@ import {
   AppWindow,
   Check,
   ChevronDown,
+  Monitor,
   MonitorSmartphone,
   Keyboard,
   ImagePlus,
@@ -67,7 +68,16 @@ import {
 import { applyGlobalShortcuts, platformSupports } from "./lib/shortcuts";
 import { renderPetMedia } from "./windows/PetWindow";
 import { KbdBadge } from "./components/ui/KbdBadge";
-import { applyTheme, persistTheme, readTheme, type ThemeMode } from "./lib/theme";
+import {
+  applyTheme,
+  broadcastTheme,
+  persistThemePreference,
+  readThemePreference,
+  resolveTheme,
+  watchSystemTheme,
+  type ThemeMode,
+  type ThemePreference,
+} from "./lib/theme";
 import type {
   NavPage,
   OcrCapability,
@@ -94,6 +104,7 @@ const navGroups: Array<{ title: string; items: NavEntry[] }> = [
   {
     title: "设置",
     items: [
+      { id: "theme", label: "界面主题", icon: Palette },
       { id: "ocr", label: "文字识别", icon: Cpu },
       { id: "models", label: "模型设置", icon: HardDrive },
     ],
@@ -160,14 +171,32 @@ export function App() {
   const [settings, setSettings] = useState<Settings>(initialSettings);
   const [loading, setLoading] = useState(true);
   const [toast, setToast] = useState<string | null>(null);
-  const [theme, setTheme] = useState<ThemeMode>(() => readTheme());
+  const [themePreference, setThemePreference] = useState<ThemePreference>(() => readThemePreference());
+  const [theme, setTheme] = useState<ThemeMode>(() => resolveTheme(readThemePreference()));
 
-  function toggleTheme() {
-    const next: ThemeMode = theme === "dark" ? "light" : "dark";
-    setTheme(next);
-    applyTheme(next);
-    persistTheme(next);
+  function changeTheme(next: ThemePreference) {
+    setThemePreference(next);
+    persistThemePreference(next);
+    const mode = resolveTheme(next);
+    setTheme(mode);
+    applyTheme(mode);
+    broadcastTheme(mode);
   }
+
+  // 顶栏那个按钮是快捷切换：点一下就落到明确的浅色或深色，不再跟随系统
+  function toggleTheme() {
+    changeTheme(theme === "dark" ? "light" : "dark");
+  }
+
+  // 跟随系统时，系统外观变了要当场跟上，否则得重开窗口才生效
+  useEffect(() => {
+    if (themePreference !== "system") return;
+    return watchSystemTheme((mode) => {
+      setTheme(mode);
+      applyTheme(mode);
+      broadcastTheme(mode);
+    });
+  }, [themePreference]);
 
   const [flashVisible, setFlashVisible] = useState(false);
 
@@ -244,8 +273,11 @@ export function App() {
     if (shownPage === "ocr") {
       return <OcrPage notify={notify} />;
     }
+    if (shownPage === "theme") {
+      return <ThemePage preference={themePreference} resolved={theme} onChange={changeTheme} />;
+    }
     return <ShortcutsPage settings={settings} onSaved={setSettings} notify={notify} />;
-  }, [shownPage, settings]);
+  }, [shownPage, settings, themePreference, theme]);
 
   const appWindow = "__TAURI_INTERNALS__" in window ? getCurrentWindow() : null;
 
@@ -268,9 +300,13 @@ export function App() {
         </div>
 
         <div className="titlebar-right">
-          <button className="theme-switch-btn" onClick={toggleTheme} title="切换主题">
+          <button
+            className="theme-switch-btn"
+            onClick={toggleTheme}
+            title={themePreference === "system" ? "当前跟随系统，点击固定为浅色/深色" : "切换主题"}
+          >
             {theme === "dark" ? <Sun size={13} /> : <Moon size={13} />}
-            <span>{theme === "dark" ? "深色" : "浅色"}</span>
+            <span>{themePreference === "system" ? "跟随系统" : theme === "dark" ? "深色" : "浅色"}</span>
           </button>
         </div>
       </div>
@@ -1520,17 +1556,6 @@ function ShortcutsPage({
                   </button>
                 </div>
               </div>
-              <div className="pref-item-row folder-row">
-                <span className="pref-title">界面主题</span>
-                <div className="folder-picker-box" style={{ flexDirection: "column", alignItems: "flex-start", gap: 6 }}>
-                  <span className="folder-path-text">浅色 / 深色（右上角切换）</span>
-                  <span className="history-sub">自定义主题导入尚未接入，目前仅支持内置浅色/深色</span>
-                  <button type="button" className="folder-action-btn" disabled style={{ opacity: 0.45, cursor: "not-allowed" }} title="尚未接入">
-                    <Palette size={12} />
-                    导入主题（尚未接入）
-                  </button>
-                </div>
-              </div>
             </div>
           </section>
 
@@ -2064,6 +2089,77 @@ function HistoryPage({ notify }: { notify: (message: string) => void }) {
           </div>
         </div>
       )}
+    </div>
+  );
+}
+
+const themeOptions: Array<{
+  value: ThemePreference;
+  label: string;
+  hint: string;
+  icon: typeof Sun;
+}> = [
+  { value: "light", label: "浅色", hint: "始终使用浅色界面", icon: Sun },
+  { value: "dark", label: "深色", hint: "始终使用深色界面", icon: Moon },
+  { value: "system", label: "跟随系统", hint: "随系统外观自动切换", icon: Monitor },
+];
+
+function ThemePage({
+  preference,
+  resolved,
+  onChange,
+}: {
+  preference: ThemePreference;
+  resolved: ThemeMode;
+  onChange: (next: ThemePreference) => void;
+}) {
+  const resolvedLabel = resolved === "dark" ? "深色" : "浅色";
+
+  return (
+    <div className="prompt-lab-workspace-container">
+      <div className="prompt-endpoint-drawer" role="region" aria-label="界面主题">
+        <div className="drawer-header-row">
+          <div className="drawer-title-group">
+            <span className="drawer-title">界面主题</span>
+            <span className="honest-hint-tag">
+              {preference === "system" ? `跟随系统 · 当前为${resolvedLabel}` : `已固定为${resolvedLabel}`}
+            </span>
+          </div>
+        </div>
+
+        <div className="theme-choice-grid" role="radiogroup" aria-label="界面主题">
+          {themeOptions.map((option) => {
+            const Icon = option.icon;
+            const isActive = preference === option.value;
+            return (
+              <button
+                key={option.value}
+                type="button"
+                role="radio"
+                aria-checked={isActive}
+                className={`theme-choice-card ${isActive ? "is-active" : ""}`}
+                onClick={() => onChange(option.value)}
+              >
+                <span className={`theme-choice-swatch is-${option.value}`} aria-hidden="true">
+                  <Icon size={16} />
+                </span>
+                <span className="theme-choice-name">{option.label}</span>
+                <span className="theme-choice-hint">{option.hint}</span>
+              </button>
+            );
+          })}
+        </div>
+
+        <div className="theme-note-list">
+          <span className="history-sub">
+            主题对主窗口、桌面伴侣与快捷菜单同时生效。
+          </span>
+          <span className="history-sub">
+            该选择存在本机浏览器存储里，不写入配置文件，也不随配置同步到别的设备。
+          </span>
+          <span className="history-sub">自定义主题导入尚未接入，目前只有以上三项内置主题。</span>
+        </div>
+      </div>
     </div>
   );
 }
