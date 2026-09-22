@@ -102,7 +102,12 @@ export function QuickMenuWindow() {
       setRecording(next);
       if (next.active) {
         // 录制进行中菜单不自动收起，方便随时回来点“停止”
-        showStatus({ kind: "ok", text: "已开始录制 " + (next.target ?? "应用窗口") });
+        // Linux portal 会带回 message（须重新选窗/屏）；否则用默认文案
+        showStatus({
+          kind: "ok",
+          text: next.message?.trim()
+            || ("已开始录制 " + (next.target ?? "应用窗口")),
+        });
       } else {
         showStatus({ kind: "ok", text: wasActive ? "录制已保存" : "录制已停止" });
         scheduleHideAfterOk();

@@ -72,6 +72,8 @@ export interface RecordingStatus {
   active: boolean;
   target: string | null;
   startedAt: number | null;
+  /** 启动时的提示（如 Linux portal 需重新选窗）；停止时通常缺省 */
+  message?: string | null;
 }
 
 export interface SnapshotRecord {

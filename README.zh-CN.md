@@ -71,6 +71,8 @@ bash scripts/linux/build.sh  # 正式二进制；bundler 成功时还有 deb / A
 
 细节见 [scripts/linux/README.md](scripts/linux/README.md)。
 
+每次 push / PR 会跑 [`.github/workflows/check.yml`](.github/workflows/check.yml)：前端 `npm run build`，以及 Linux（经 `scripts/linux/install-deps.sh`）、Windows、macOS 上的 `cargo check` / `cargo test`。
+
 ## 快捷键
 
 默认不绑定任何键。应用快照、区域截图、全屏截图、滚动长截图（目前仅 Linux/X11）、录制、润色 Prompt、提取文字都可以在「快捷操作」页各绑一个全局快捷键，窗口最小化时同样触发。
