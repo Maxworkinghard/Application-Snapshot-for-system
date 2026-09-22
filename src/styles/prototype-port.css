@@ -1298,43 +1298,6 @@ select:disabled,
   white-space: nowrap;
 }
 
-.window-traffic-lights {
-  display: flex;
-  align-items: center;
-  gap: var(--space-2);
-  flex-shrink: 0;
-}
-
-.traffic-dot {
-  width: 12px;
-  height: 12px;
-  border-radius: 50%;
-  border: 1px solid var(--border-strong);
-  background: var(--bg-surface-subtle);
-  cursor: pointer;
-  transition: var(--transition-fast);
-}
-
-.traffic-dot:hover {
-  background: var(--text-tertiary);
-  border-color: var(--text-tertiary);
-}
-
-.traffic-dot:active {
-  transform: scale(0.85);
-  background: var(--text-primary);
-}
-
-.traffic-dot:focus-visible {
-  outline: none;
-  box-shadow: var(--focus-ring);
-}
-
-.traffic-dot:disabled {
-  opacity: 0.3;
-  cursor: not-allowed;
-}
-
 .window-title-chip {
   display: flex;
   align-items: center;
@@ -1393,45 +1356,6 @@ select:disabled,
   border-radius: 50%;
   background: var(--success);
   box-shadow: 0 0 4px var(--success);
-}
-
-.theme-switch-btn {
-  display: inline-flex;
-  align-items: center;
-  gap: var(--space-1);
-  height: 24px;
-  padding: 0 var(--space-2);
-  border-radius: var(--radius-sm);
-  background: var(--bg-surface-subtle);
-  border: 1px solid var(--border-subtle);
-  font-size: var(--text-caption);
-  line-height: var(--leading-caption);
-  color: var(--text-secondary);
-  cursor: pointer;
-  transition: var(--transition-base);
-  white-space: nowrap;
-  flex-shrink: 0;
-}
-
-.theme-switch-btn:hover {
-  color: var(--text-primary);
-  border-color: var(--border-strong);
-  background: var(--bg-hover);
-}
-
-.theme-switch-btn:active {
-  transform: scale(0.96);
-  background: var(--bg-active);
-}
-
-.theme-switch-btn:focus-visible {
-  outline: none;
-  box-shadow: var(--focus-ring);
-}
-
-.theme-switch-btn:disabled {
-  opacity: 0.45;
-  cursor: not-allowed;
 }
 
 /* 窗口内部结构：左边栏 + 右主画布 (Linear 极客级比例) */
@@ -4347,7 +4271,7 @@ button.record-trigger-pill-btn:active {
 .hub-bottom-status-strip {
   display: flex;
   align-items: center;
-  justify-content: space-between;
+  justify-content: flex-end;
   font-size: var(--text-caption);
   line-height: var(--leading-caption);
   color: var(--text-tertiary);
@@ -6934,4 +6858,41 @@ input {
   flex-direction: column;
   gap: var(--space-1);
   margin-top: var(--space-3);
+}
+
+/* -------------------------------------------------- 标题栏右侧的窗口控制按钮 */
+.window-controls {
+  display: flex;
+  align-items: center;
+  gap: var(--space-1);
+  flex-shrink: 0;
+}
+
+.window-control-btn {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 28px;
+  height: 24px;
+  border: none;
+  border-radius: var(--radius-xs);
+  background: transparent;
+  color: var(--text-secondary);
+  cursor: pointer;
+  transition: var(--transition-fast);
+}
+
+.window-control-btn:hover {
+  color: var(--text-primary);
+  background: var(--bg-hover);
+}
+
+.window-control-btn:focus-visible {
+  outline: var(--focus-ring);
+}
+
+/* 关闭是不可撤销的那个，hover 时明确区分于另外两个 */
+.window-control-btn.is-close:hover {
+  color: #fff;
+  background: #c4403a;
 }
