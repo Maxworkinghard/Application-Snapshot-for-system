@@ -166,11 +166,6 @@ export async function setQuickMenuExpanded(expanded: boolean): Promise<void> {
   await invoke("set_quick_menu_expanded", { expanded });
 }
 
-export async function showMainWindow(): Promise<void> {
-  if (!inTauri) return;
-  await invoke("show_main_window");
-}
-
 export function onSettingsChanged(callback: (settings: Settings) => void) {
   if (!inTauri) return Promise.resolve(() => undefined);
   return listen<Settings>("settings-changed", ({ payload }) => callback(payload));
