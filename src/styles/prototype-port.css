@@ -5585,6 +5585,17 @@ button.record-trigger-pill-btn:active {
   background: var(--bg-surface);
 }
 
+/* 草稿与结果合并成一个编辑框后只剩单栏，窄窗口下也不会被挤成两条窄缝。
+   名字不用 prompt-main-workbench——那个类名已经被别处占着（200px + 1fr 的老规则）。 */
+.prompt-single-workbench {
+  display: grid;
+  grid-template-columns: 1fr;
+  flex: 1;
+  min-height: 0;
+  overflow: hidden;
+  background: var(--bg-surface);
+}
+
 .workbench-pane {
   display: flex;
   flex-direction: column;

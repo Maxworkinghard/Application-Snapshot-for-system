@@ -31,6 +31,8 @@ import {
   Maximize2,
   Layers,
   Cpu,
+  Eye,
+  EyeOff,
   HardDrive,
   RotateCcw,
   Send,
@@ -529,8 +531,12 @@ function PromptPage({
   const [saving, setSaving] = useState(false);
   const [showRuleEditor, setShowRuleEditor] = useState(false);
 
-  const [draft, setDraft] = useState("");
-  const [result, setResult] = useState("");
+  // 草稿与结果共用一个编辑框：润色后直接就地替换，窄窗口下不用左右分屏对着看。
+  // original 留着润色前的原文，lastResult 用来判断框里的内容有没有被手改过。
+  const [text, setText] = useState("");
+  const [original, setOriginal] = useState<string | null>(null);
+  const [lastResult, setLastResult] = useState<string | null>(null);
+  const [peeking, setPeeking] = useState(false);
   const [polishing, setPolishing] = useState(false);
   const [copied, setCopied] = useState(false);
   const [autoCopy, setAutoCopy] = useState(false);
@@ -542,6 +548,8 @@ function PromptPage({
 
   const active = templates.find((item) => item.id === activeId) ?? templates[0];
   const serviceReady = Boolean(settings.baseUrl && settings.model);
+  // 看原文时编辑框显示原文且只读，切回来仍是润色结果
+  const shown = peeking ? original ?? "" : text;
 
   function updateActive(content: string) {
     if (!active) return;
@@ -585,15 +593,19 @@ function PromptPage({
   }
 
   async function runPolish() {
-    if (!draft.trim() || polishing) return;
+    // 框里是上一次的结果且没被手改过，就拿原文重跑——否则一次次润色自己，
+    // 每轮都在上一轮的措辞上再加工，很快就跑偏了。
+    const source = original !== null && text === lastResult ? original : text;
+    if (!source.trim() || polishing || peeking) return;
     setPolishing(true);
-    setResult("");
     try {
       // 用的是当前已保存的提示词；改了规则要先保存才会生效
-      const text = await polishText(draft);
-      setResult(text);
+      const polished = await polishText(source);
+      setOriginal(source);
+      setLastResult(polished);
+      setText(polished);
       if (autoCopy) {
-        await navigator.clipboard.writeText(text).catch(() => notify("自动复制失败"));
+        await navigator.clipboard.writeText(polished).catch(() => notify("自动复制失败"));
       }
     } catch (error) {
       notify(error instanceof Error ? error.message : String(error));
@@ -604,7 +616,7 @@ function PromptPage({
 
   async function copyResult() {
     try {
-      await navigator.clipboard.writeText(result);
+      await navigator.clipboard.writeText(text);
       setCopied(true);
       window.setTimeout(() => setCopied(false), 1800);
     } catch {
@@ -614,7 +626,10 @@ function PromptPage({
 
   async function pasteDraft() {
     try {
-      setDraft(await navigator.clipboard.readText());
+      setText(await navigator.clipboard.readText());
+      setOriginal(null);
+      setLastResult(null);
+      setPeeking(false);
     } catch {
       notify("读取剪贴板失败");
     }
@@ -708,15 +723,33 @@ function PromptPage({
         </div>
       )}
 
-      <div className="prompt-main-split-workbench">
+      <div className="prompt-single-workbench">
         <div className="workbench-pane draft-pane">
           <div className="pane-header-strip">
             <div className="pane-title-group">
-              <span className="pane-main-title">输入草稿</span>
-              <span className="pane-char-count tabular-nums">{draft.length} 字符</span>
+              <span className="pane-main-title">
+                {peeking ? "润色前原文" : original !== null ? "润色结果" : "输入草稿"}
+              </span>
+              <span className="pane-char-count tabular-nums">{shown.length} 字符</span>
             </div>
             <div className="pane-quick-samples">
-              <button className="paste-clip-btn" onClick={() => void pasteDraft()} title="从系统剪贴板填入草稿">
+              {original !== null && (
+                <button
+                  className={`paste-clip-btn ${peeking ? "is-active" : ""}`}
+                  onClick={() => setPeeking((value) => !value)}
+                  aria-pressed={peeking}
+                  title={peeking ? "回到润色结果" : "查看润色前的原文"}
+                >
+                  {peeking ? <EyeOff size={13} /> : <Eye size={13} />}
+                  <span>{peeking ? "看结果" : "看原文"}</span>
+                </button>
+              )}
+              <button
+                className="paste-clip-btn"
+                onClick={() => void pasteDraft()}
+                disabled={peeking}
+                title="从系统剪贴板填入草稿"
+              >
                 <ClipboardCopy size={13} />
                 <span>粘贴剪贴板</span>
               </button>
@@ -724,69 +757,62 @@ function PromptPage({
           </div>
 
           <div className="pane-textarea-wrap">
-            <textarea
-              className="draft-input-textarea"
-              value={draft}
-              onChange={(event) => setDraft(event.target.value)}
-              onKeyDown={(event) => {
-                if ((event.ctrlKey || event.metaKey) && event.key === "Enter") {
-                  event.preventDefault();
-                  void runPolish();
-                }
-              }}
-              placeholder="把想让编程助手做的事写在这里，不用讲究措辞… (按 Ctrl+Enter 立即生成)"
-              spellCheck={false}
-            />
+            {polishing ? (
+              <div className="polish-placeholder">
+                <span className="inline-spinner" />正在调用模型，最长等待 180 秒…
+              </div>
+            ) : (
+              <textarea
+                className="draft-input-textarea"
+                value={shown}
+                readOnly={peeking}
+                onChange={(event) => setText(event.target.value)}
+                onKeyDown={(event) => {
+                  if ((event.ctrlKey || event.metaKey) && event.key === "Enter") {
+                    event.preventDefault();
+                    void runPolish();
+                  }
+                }}
+                placeholder="把想让编程助手做的事写在这里，不用讲究措辞… (按 Ctrl+Enter 立即生成)"
+                spellCheck={false}
+              />
+            )}
           </div>
 
           <div className="pane-action-bar">
             <span className="action-kbd-hint">
-              {serviceReady ? <>按 <kbd>Ctrl</kbd> + <kbd>Enter</kbd> 触发生成</> : "请先到「模型设置」填写 Base URL 与模型"}
+              {peeking ? (
+                "正在看原文，只读；切回结果才能编辑"
+              ) : serviceReady ? (
+                <>按 <kbd>Ctrl</kbd> + <kbd>Enter</kbd> 触发生成</>
+              ) : (
+                "请先到「模型设置」填写 Base URL 与模型"
+              )}
             </span>
             <div className="pane-action-buttons">
+              {original !== null && (
+                <button
+                  className={`result-tool-btn ${copied ? "copied" : ""}`}
+                  onClick={() => void copyResult()}
+                  disabled={peeking}
+                  title="复制当前内容"
+                >
+                  {copied ? <Check size={12} /> : <ClipboardCopy size={12} />}
+                  <span>{copied ? "已复制" : "复制"}</span>
+                </button>
+              )}
               <button
                 className="main-action-btn generate"
                 onClick={() => void runPolish()}
-                disabled={polishing || !draft.trim() || !serviceReady}
-                title="按当前规则改写草稿"
+                disabled={polishing || peeking || !shown.trim() || !serviceReady}
+                title={original !== null ? "拿原文按当前规则重跑一遍" : "按当前规则改写草稿"}
               >
-                <Send size={13} />
-                <span>{polishing ? "生成中…" : "生成 (Ctrl+↵)"}</span>
+                {original !== null ? <RefreshCw size={13} /> : <Send size={13} />}
+                <span>
+                  {polishing ? "生成中…" : original !== null ? "重新生成" : "生成 (Ctrl+↵)"}
+                </span>
               </button>
             </div>
-          </div>
-        </div>
-
-        <div className="workbench-pane result-pane">
-          <div className="pane-header-strip">
-            <div className="pane-title-group">
-              <span className="pane-main-title">改写结果</span>
-              {result && <span className="pane-char-count tabular-nums">{result.length} 字符</span>}
-            </div>
-            <div className="pane-result-actions" role="toolbar" aria-label="生成结果操作">
-              {result && (
-                <div className="result-action-button-group">
-                  <button className={`result-tool-btn ${copied ? "copied" : ""}`} onClick={() => void copyResult()} title="复制生成结果">
-                    {copied ? <Check size={12} /> : <ClipboardCopy size={12} />}
-                    <span>{copied ? "已复制" : "复制结果"}</span>
-                  </button>
-                  <button className="result-tool-btn" onClick={() => void runPolish()} disabled={polishing} title="重新生成">
-                    <RefreshCw size={12} />
-                    <span>重新生成</span>
-                  </button>
-                </div>
-              )}
-            </div>
-          </div>
-
-          <div className="pane-textarea-wrap">
-            {polishing ? (
-              <div className="polish-placeholder"><span className="inline-spinner" />正在调用模型，最长等待 180 秒…</div>
-            ) : result ? (
-              <pre className="polish-output">{result}</pre>
-            ) : (
-              <div className="polish-placeholder">结果会显示在这里，也可以直接复制走。</div>
-            )}
           </div>
         </div>
       </div>
