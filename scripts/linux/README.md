@@ -4,7 +4,7 @@ These scripts target the **repository-root Tauri app**, not `linux/windowsnap`.
 
 | Script | Purpose |
 |---|---|
-| `install-deps.sh` | Debian/Ubuntu packages for compiling + optional runtime (`ffmpeg`, `tesseract`, `xdotool`) |
+| `install-deps.sh` | Debian/Ubuntu packages for compiling + optional runtime (`ffmpeg`, `tesseract`, `xdotool`); also used by `.github/workflows/check.yml` / `release.yml` on ubuntu-24.04 |
 | `check-env.sh` | Non-destructive environment report |
 | `build.sh` | `npm install` + `npm run tauri build` |
 | `com.appsnapshot.prompt-pet-shortcut.service.example` | **Optional** systemd `--user` unit (advanced; not enabled by default) |

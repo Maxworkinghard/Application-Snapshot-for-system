@@ -1,6 +1,10 @@
 #!/usr/bin/env bash
 # Install build + optional runtime dependencies for the Tauri mainline on Debian/Ubuntu.
 # Idempotent. Does NOT enable any autostart.
+#
+# Aimed at Ubuntu 24.04 / Debian bookworm+ (webkit2gtk 4.1 + soup3). Explicitly lists
+# libsoup-3.0-dev / libjavascriptcoregtk-4.1-dev even though webkit often pulls them,
+# so a minimal CI image does not miss pkg-config files during cargo check.
 set -euo pipefail
 
 if [[ "$(uname -s)" != "Linux" ]]; then
@@ -25,6 +29,8 @@ sudo apt-get install -y -o Dpkg::Options::=--force-confdef -o Dpkg::Options::=--
   file \
   pkg-config \
   libwebkit2gtk-4.1-dev \
+  libjavascriptcoregtk-4.1-dev \
+  libsoup-3.0-dev \
   libgtk-3-dev \
   librsvg2-dev \
   patchelf \

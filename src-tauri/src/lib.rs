@@ -311,6 +311,9 @@ struct RecordingStatus {
     active: bool,
     target: Option<String>,
     started_at: Option<u64>,
+    /// 启动时的 UI 提示（如 Linux portal 需重新选窗）；停止时为 None。
+    #[serde(skip_serializing_if = "Option::is_none")]
+    message: Option<String>,
 }
 
 #[derive(Clone, Copy, Debug)]
@@ -1193,7 +1196,7 @@ fn platform_capabilities() -> PlatformCapabilities {
         };
         let include_cursor = CapabilityStatus {
             available: true,
-            detail: "静帧：ffmpeg x11grab 带光标（失败则回退无光标）；录制：x11grab 尊重开关，portal 路径忽略".into(),
+            detail: "静帧：ffmpeg x11grab 带光标（失败则回退无光标并在成功提示中说明）；录制：x11grab 尊重开关，portal 路径忽略".into(),
         };
         return PlatformCapabilities {
             os: "linux".into(),
@@ -1203,11 +1206,12 @@ fn platform_capabilities() -> PlatformCapabilities {
             autostart,
             scrolling,
             include_cursor,
-            tray_note: "托盘菜单（打开设置 / 退出）在有 StatusNotifierHost 时可用（KDE 原生；GNOME 需 AppIndicator 扩展）。缺失时应用仍可运行。左键打开主窗口：Windows/macOS 支持；Linux 本 Tauri/tray-icon 0.24（libayatana-appindicator）无点击回调，通常仅菜单可用。".into(),
+            tray_note: "托盘菜单（打开设置 / 退出）在有 StatusNotifierHost 时可用（KDE 原生；GNOME 需 AppIndicator 扩展）。缺失时应用仍可运行。左键打开主窗口：Windows/macOS 支持；Linux 本 Tauri/tray-icon 0.24（libayatana-appindicator）无点击回调，通常仅菜单可用。Wayland 下托盘/透明宠物表现依赖合成器，需本机验证。".into(),
             notes: vec![
-                "Linux portal 录制忽略 target_id 与 include_cursor（由桌面选择器/合成器决定）".into(),
-                "Linux 还原最小化用 xdotool windowactivate，会抢焦点".into(),
-                "Linux 带光标静帧需要 ffmpeg；不可用时静默回退为无光标截图".into(),
+                "Linux portal 录制忽略 target_id 与 include_cursor（由桌面选择器/合成器决定）；启动时会提示重新选窗/屏".into(),
+                "Linux 还原最小化用 xdotool（先 windowmap 再 windowactivate），会抢焦点".into(),
+                "Linux 带光标静帧需要 ffmpeg；不可用时回退为无光标截图，并在成功提示中告知".into(),
+                "Wayland（GNOME/KDE）下 portal 录制、托盘与宠物透明需在对应合成器上本机验证".into(),
             ],
         };
     }
@@ -1464,33 +1468,62 @@ fn capture_window(app: AppHandle, state: State<'_, AppState>, id: Option<u32>) -
     }
     let app_name = window.app_name().unwrap_or_else(|_| "应用".into());
     let include_cursor = state.settings.lock().include_cursor;
-    let image = capture_window_image(&window, include_cursor)?;
-    finalize_capture(&app, &state, image, &app_name)
+    let (image, cursor_degraded) = capture_window_image(&window, include_cursor)?;
+    finalize_capture(&app, &state, image, &app_name, cursor_degraded)
 }
 
-fn capture_window_image(window: &Window, include_cursor: bool) -> Result<RgbaImage, String> {
+fn capture_window_image(
+    window: &Window,
+    include_cursor: bool,
+) -> Result<(RgbaImage, Option<String>), String> {
     #[cfg(target_os = "linux")]
     if include_cursor {
-        if let (Ok(x), Ok(y), Ok(width), Ok(height)) =
-            (window.x(), window.y(), window.width(), window.height())
-        {
-            if let Ok(image) = linux::capture_region_with_cursor(x, y, width, height) {
-                return Ok(image);
+        match (window.x(), window.y(), window.width(), window.height()) {
+            (Ok(x), Ok(y), Ok(width), Ok(height)) => {
+                match linux::capture_region_with_cursor(x, y, width, height) {
+                    Ok(image) => return Ok((image, None)),
+                    Err(error) => {
+                        let note = cursor_degrade_note(&error);
+                        let image = window
+                            .capture_image()
+                            .map_err(|error| format!("截取失败：{error}"))?;
+                        return Ok((image, Some(note)));
+                    }
+                }
+            }
+            _ => {
+                let note = cursor_degrade_note("无法读取窗口几何，已回退无光标截图");
+                let image = window
+                    .capture_image()
+                    .map_err(|error| format!("截取失败：{error}"))?;
+                return Ok((image, Some(note)));
             }
         }
     }
     let _ = include_cursor;
-    window
+    let image = window
         .capture_image()
-        .map_err(|error| format!("截取失败：{error}"))
+        .map_err(|error| format!("截取失败：{error}"))?;
+    Ok((image, None))
+}
+
+/// 把 ffmpeg/x11grab 失败原因压成短中文，附在截图成功 toast 后。
+#[cfg(target_os = "linux")]
+fn cursor_degrade_note(error: &str) -> String {
+    let head = error.split(" / ").next().unwrap_or(error).trim();
+    let short: String = head.chars().take(48).collect();
+    let ellipsis = if head.chars().count() > 48 { "…" } else { "" };
+    format!("（未能包含鼠标光标：{short}{ellipsis}）")
 }
 
 /// 统一收尾：按偏好决定是否落盘、剪贴板清空时限、截后动作与闪烁/音效提示。
+/// `cursor_degraded`：Linux 带光标静帧失败后回退时的说明，会拼进成功文案。
 fn finalize_capture(
     app: &AppHandle,
     state: &AppState,
     image: RgbaImage,
     app_name: &str,
+    cursor_degraded: Option<String>,
 ) -> Result<String, String> {
     let settings = state.settings.lock().clone();
     let mut archived = false;
@@ -1524,22 +1557,23 @@ fn finalize_capture(
         }
     }
 
+    let suffix = cursor_degraded.unwrap_or_default();
     if annotate {
         if archived {
-            Ok(format!("已打开标注：{app_name}（已存入历史）"))
+            Ok(format!("已打开标注：{app_name}（已存入历史）{suffix}"))
         } else if settings.auto_save_local {
-            Ok(format!("已打开标注：{app_name}（未能存入历史）"))
+            Ok(format!("已打开标注：{app_name}（未能存入历史）{suffix}"))
         } else {
-            Ok(format!("已打开标注：{app_name}"))
+            Ok(format!("已打开标注：{app_name}{suffix}"))
         }
     } else {
         let clear_label = format_clear_label(&settings.clipboard_auto_clear);
         if archived {
-            Ok(format!("已复制 {app_name} 并存入历史，{clear_label}"))
+            Ok(format!("已复制 {app_name} 并存入历史，{clear_label}{suffix}"))
         } else if settings.auto_save_local {
-            Ok(format!("已复制 {app_name}，{clear_label}（未能存入历史）"))
+            Ok(format!("已复制 {app_name}，{clear_label}（未能存入历史）{suffix}"))
         } else {
-            Ok(format!("已复制 {app_name}，{clear_label}"))
+            Ok(format!("已复制 {app_name}，{clear_label}{suffix}"))
         }
     }
 }
@@ -1732,6 +1766,10 @@ fn get_recording_status(state: State<'_, AppState>) -> RecordingStatus {
 }
 
 fn recording_status(recorder: &Recorder) -> RecordingStatus {
+    recording_status_with_message(recorder, None)
+}
+
+fn recording_status_with_message(recorder: &Recorder, message: Option<String>) -> RecordingStatus {
     let active = recorder.child.is_some() || {
         #[cfg(target_os = "linux")]
         { recorder.linux_active.is_some() }
@@ -1742,6 +1780,7 @@ fn recording_status(recorder: &Recorder) -> RecordingStatus {
         active,
         target: recorder.target.clone(),
         started_at: recorder.started_at,
+        message,
     }
 }
 
@@ -1776,7 +1815,8 @@ fn toggle_recording(state: State<'_, AppState>) -> Result<RecordingStatus, Strin
 
     #[cfg(target_os = "linux")]
     {
-        let active = linux::start_recording(target.id, settings.include_cursor, &output)?;
+        let (active, start_message) =
+            linux::start_recording(target.id, settings.include_cursor, &output)?;
         // child 也放一份，供 status.active 判断；停止走 linux_active
         // ActiveRecording 拥有 child，这里不双持——只用 linux_active
         recorder.linux_active = Some(active);
@@ -1784,7 +1824,7 @@ fn toggle_recording(state: State<'_, AppState>) -> Result<RecordingStatus, Strin
         recorder.target = Some(target.app_name);
         recorder.started_at = Some(now_millis());
         recorder.output_path = Some(output);
-        return Ok(recording_status(&recorder));
+        return Ok(recording_status_with_message(&recorder, start_message));
     }
 
     #[cfg(not(target_os = "linux"))]
@@ -2228,32 +2268,48 @@ fn primary_monitor() -> Result<Monitor, String> {
         .ok_or_else(|| "未找到可用显示器".into())
 }
 
-fn capture_fullscreen_image(include_cursor: bool) -> Result<(RgbaImage, String), String> {
+fn capture_fullscreen_image(
+    include_cursor: bool,
+) -> Result<(RgbaImage, String, Option<String>), String> {
     let monitor = primary_monitor()?;
     let name = monitor.name().unwrap_or_else(|_| "全屏".into());
     #[cfg(target_os = "linux")]
     if include_cursor {
-        if let Ok(image) = linux::capture_primary_with_cursor() {
-            return Ok((image, name));
+        match linux::capture_primary_with_cursor() {
+            Ok(image) => return Ok((image, name, None)),
+            Err(error) => {
+                let note = cursor_degrade_note(&error);
+                let image = monitor.capture_image().map_err(|error| {
+                    format!("全屏截取失败：{error} / fullscreen capture failed: {error}")
+                })?;
+                return Ok((image, name, Some(note)));
+            }
         }
-        // 失败则回退 xcap（无光标）。
     }
     let _ = include_cursor;
     let image = monitor
         .capture_image()
         .map_err(|error| format!("全屏截取失败：{error} / fullscreen capture failed: {error}"))?;
-    Ok((image, name))
+    Ok((image, name, None))
 }
 
 /// 把屏幕绝对坐标矩形裁成相对某块显示器的区域，再交给 xcap（或 Linux 带光标 x11grab）。
-fn capture_region_image(rect: RegionRect, include_cursor: bool) -> Result<(RgbaImage, String), String> {
+fn capture_region_image(
+    rect: RegionRect,
+    include_cursor: bool,
+) -> Result<(RgbaImage, String, Option<String>), String> {
     if rect.width < 2 || rect.height < 2 {
         return Err("选区太小".into());
     }
     #[cfg(target_os = "linux")]
+    let mut cursor_degraded: Option<String> = None;
+    #[cfg(target_os = "linux")]
     if include_cursor {
-        if let Ok(image) = linux::capture_region_with_cursor(rect.x, rect.y, rect.width, rect.height) {
-            return Ok((image, "区域截图".into()));
+        match linux::capture_region_with_cursor(rect.x, rect.y, rect.width, rect.height) {
+            Ok(image) => return Ok((image, "区域截图".into(), None)),
+            Err(error) => {
+                cursor_degraded = Some(cursor_degrade_note(&error));
+            }
         }
     }
     let _ = include_cursor;
@@ -2274,7 +2330,12 @@ fn capture_region_image(rect: RegionRect, include_cursor: bool) -> Result<(RgbaI
     let image = monitor
         .capture_region(rel_x, rel_y, width, height)
         .map_err(|error| format!("区域截取失败：{error} / region capture failed: {error}"))?;
-    Ok((image, "区域截图".into()))
+    #[cfg(target_os = "linux")]
+    {
+        return Ok((image, "区域截图".into(), cursor_degraded));
+    }
+    #[cfg(not(target_os = "linux"))]
+    Ok((image, "区域截图".into(), None))
 }
 
 /// 可选：系统装了 slop 时直接框选，免开自绘层。
@@ -2337,7 +2398,10 @@ fn cancel_region_capture(app: AppHandle, state: State<'_, AppState>) {
     }
 }
 
-fn capture_region_interactive(app: &AppHandle, state: &AppState) -> Result<(RgbaImage, String), String> {
+fn capture_region_interactive(
+    app: &AppHandle,
+    state: &AppState,
+) -> Result<(RgbaImage, String, Option<String>), String> {
     let include_cursor = state.settings.lock().include_cursor;
     if let Some(rect) = try_slop_region() {
         // 等 slop 叠加层消失再抓，避免把框选 UI 拍进去
@@ -2367,23 +2431,31 @@ fn capture_region_interactive(app: &AppHandle, state: &AppState) -> Result<(Rgba
 async fn perform_action(action: String, app: AppHandle, state: State<'_, AppState>) -> Result<String, String> {
     match action.as_str() {
         "snapshot" => capture_window(app, state, None),
-        "record" => toggle_recording(state).map(|status| if status.active { "录制已开始".into() } else { "录制已保存".into() }),
+        "record" => toggle_recording(state).map(|status| {
+            if status.active {
+                status
+                    .message
+                    .unwrap_or_else(|| "录制已开始".into())
+            } else {
+                "录制已保存".into()
+            }
+        }),
         "polish" => polish_clipboard(state).await,
         "ocr" => ocr_clipboard_into_clipboard().await,
         "fullscreen" => {
             let app2 = app.clone();
             let include_cursor = state.settings.lock().include_cursor;
-            let (image, name) = tauri::async_runtime::spawn_blocking(move || {
+            let (image, name, cursor_degraded) = tauri::async_runtime::spawn_blocking(move || {
                 capture_fullscreen_image(include_cursor)
             })
                 .await
                 .map_err(|error| error.to_string())??;
-            finalize_capture(&app2, &state, image, &name)
+            finalize_capture(&app2, &state, image, &name, cursor_degraded)
         }
         "region" => {
             let app2 = app.clone();
-            let (image, name) = {
-                let (tx, rx) = mpsc::channel::<Result<(RgbaImage, String), String>>();
+            let (image, name, cursor_degraded) = {
+                let (tx, rx) = mpsc::channel::<Result<(RgbaImage, String, Option<String>), String>>();
                 let app_thread = app.clone();
                 thread::spawn(move || {
                     let Some(app_state) = app_thread.try_state::<AppState>() else {
@@ -2401,7 +2473,7 @@ async fn perform_action(action: String, app: AppHandle, state: State<'_, AppStat
                 .await
                 .map_err(|error| error.to_string())??
             };
-            finalize_capture(&app2, &state, image, &name)
+            finalize_capture(&app2, &state, image, &name, cursor_degraded)
         }
         "scrolling" => {
             let app2 = app.clone();
@@ -2417,7 +2489,7 @@ async fn perform_action(action: String, app: AppHandle, state: State<'_, AppStat
             })
             .await
             .map_err(|error| error.to_string())??;
-            finalize_capture(&app2, &state, image, &name)
+            finalize_capture(&app2, &state, image, &name, None)
         }
         _ => Err("未知快捷键动作".into()),
     }
