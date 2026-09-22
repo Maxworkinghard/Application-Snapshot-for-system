@@ -48,7 +48,6 @@ const demoSettings: Settings = {
   autoSaveLocal: true,
   launchOnBoot: false,
   includeCursor: false,
-  trayDoubleClick: "workbench",
   afterCapture: "clipboard",
   petSoundEnabled: true,
   petSoundVolume: 65,
