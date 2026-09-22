@@ -15,7 +15,10 @@ jobs:
       - name: Apply patches
         run: |
           set -euo pipefail
-          cat patches/linux-parity/lib.rs.part* > /tmp/lib.rs.patch
+          : > /tmp/lib.rs.patch
+          for f in patches/linux-parity/lib.rs.s*.b64; do
+            base64 -d "$f" >> /tmp/lib.rs.patch
+          done
           git apply --verbose patches/linux-parity/styles.css.patch
           git apply --verbose patches/linux-parity/App.tsx.patch
           git apply --verbose patches/linux-parity/Cargo.lock.patch
