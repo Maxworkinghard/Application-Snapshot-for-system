@@ -1,4 +1,4 @@
-export type NavPage = "shortcuts" | "prompt" | "history" | "pet" | "theme" | "ocr" | "models";
+export type NavPage = "shortcuts" | "prompt" | "history" | "pet" | "prefs" | "theme" | "ocr" | "models";
 export type ShortcutAction =
   | "snapshot"
   | "region"

@@ -4861,23 +4861,6 @@ button.record-trigger-pill-btn:active {
   font-weight: 500;
 }
 
-.section-toggle-icon-btn {
-  display: grid;
-  place-items: center;
-  width: 22px;
-  height: 22px;
-  border-radius: var(--radius-xs);
-  color: var(--text-secondary);
-  background: transparent;
-  border: 1px solid transparent;
-  cursor: pointer;
-}
-
-.section-toggle-icon-btn:hover {
-  background: var(--bg-hover);
-  color: var(--text-primary);
-  border-color: var(--border-subtle);
-}
 
 .preferences-collapsed-summary-card {
   display: flex;
@@ -6842,4 +6825,20 @@ input {
 .window-control-btn.is-close:hover {
   color: #fff;
   background: #c4403a;
+}
+
+/* ------------------------------------------------------------ 偏好设置独立页 */
+.hub-preferences-page {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-3);
+  min-height: 100%;
+}
+
+/* 单列铺开：偏好项原本挤在快捷操作页的右栏里才需要折叠，独立成页后直接全展开 */
+.hub-preferences-page-body {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-3);
+  max-width: 560px;
 }
