@@ -15,7 +15,7 @@ System capabilities sit behind a shared interface with one adapter per platform,
 | | Windows | macOS | Linux |
 |---|---|---|---|
 | Window capture | xcap | xcap | xcap |
-| Window recording | ffmpeg `gdigrab` | ffmpeg `avfoundation` (main screen, cropped to the window) | portal ScreenCast + PipeWire → ffmpeg (Wayland); ffmpeg `x11grab` (X11) |
+| Window recording | Windows.Graphics.Capture + Media Foundation | ffmpeg `avfoundation` (main screen, cropped to the window) | portal ScreenCast + PipeWire → ffmpeg (Wayland); ffmpeg `x11grab` (X11) |
 | Text recognition | `Windows.Media.Ocr` | Vision via a `snapshot-ocr` helper | `tesseract` |
 | Snapshot history, companion, prompt polishing | yes | yes | yes |
 
