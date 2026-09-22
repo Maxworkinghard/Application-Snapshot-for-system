@@ -16,7 +16,7 @@ use serde_json::{json, Value};
 use std::{
     borrow::Cow,
     fs,
-    io::{Cursor, Read, Write},
+    io::{BufRead, BufReader, Cursor, Read, Write},
     path::{Path, PathBuf},
     process::{Child, Command},
     sync::{
@@ -26,7 +26,7 @@ use std::{
     thread,
     time::{Duration, SystemTime, UNIX_EPOCH},
 };
-// 只有仍旧 spawn ffmpeg 的平台需要它
+// macOS 的录制 sidecar 走 stdin/stdout 管道通信，只有它需要 Stdio
 #[cfg(not(any(target_os = "linux", target_os = "windows")))]
 use std::process::Stdio;
 use tauri::{
@@ -289,6 +289,10 @@ struct Recorder {
     target: Option<String>,
     started_at: Option<u64>,
     output_path: Option<PathBuf>,
+    /// Windows/macOS 子进程的 stderr。后台线程持续读取，避免管道写满，并在异常退出时
+    /// 把真实原因回传给 UI。
+    diagnostic: Option<Arc<Mutex<String>>>,
+    last_message: Option<String>,
     /// Linux：portal 路径的停止句柄（x11grab 时为 None）。
     #[cfg(target_os = "linux")]
     linux_active: Option<linux::ActiveRecording>,
@@ -306,6 +310,8 @@ impl Default for Recorder {
             target: None,
             started_at: None,
             output_path: None,
+            diagnostic: None,
+            last_message: None,
             #[cfg(target_os = "linux")]
             linux_active: None,
         }
@@ -358,10 +364,25 @@ fn has_api_key() -> bool {
 }
 
 fn read_settings(path: &PathBuf) -> Settings {
-    let mut settings = fs::read_to_string(path)
-        .ok()
-        .and_then(|content| serde_json::from_str::<Settings>(&content).ok())
+    let content = fs::read_to_string(path).ok();
+    let recording_dir_was_present = content
+        .as_deref()
+        .and_then(|raw| serde_json::from_str::<Value>(raw).ok())
+        .and_then(|value| {
+            value
+                .as_object()
+                .map(|object| object.contains_key("recordingDir"))
+        })
+        .unwrap_or(false);
+    let mut settings = content
+        .as_deref()
+        .and_then(|raw| serde_json::from_str::<Settings>(raw).ok())
         .unwrap_or_default();
+    // 旧版本让录制与快照共用 saveDir。升级后只迁移一次，保留用户原来的落盘位置；
+    // 新配置里显式的空 recordingDir 则仍表示使用系统下载目录。
+    if !recording_dir_was_present && !settings.save_dir.trim().is_empty() {
+        settings.recording_dir = settings.save_dir.clone();
+    }
     settings.has_api_key = has_api_key();
     if settings.templates.is_empty() {
         settings.templates = Settings::default().templates;
@@ -779,6 +800,23 @@ fn get_previous_app(state: State<'_, AppState>) -> PreviousApp {
     state.tracker.lock().previous_view.clone()
 }
 
+/// 菜单栏图标、状态项和其它辅助窗口也会出现在系统窗口列表里。
+/// 它们通常只有几十像素，选中后录制出来的就只有应用图标。
+const MIN_CONTENT_WINDOW_EDGE: u32 = 80;
+
+fn content_window_area_from_size(width: u32, height: u32) -> Option<u64> {
+    if width < MIN_CONTENT_WINDOW_EDGE || height < MIN_CONTENT_WINDOW_EDGE {
+        return None;
+    }
+    Some(u64::from(width) * u64::from(height))
+}
+
+fn content_window_area(window: &Window) -> Option<u64> {
+    let width = window.width().ok()?;
+    let height = window.height().ok()?;
+    content_window_area_from_size(width, height)
+}
+
 #[tauri::command]
 fn list_capturable_windows() -> Result<Vec<CapturableWindow>, String> {
     let mut result = Window::all()
@@ -786,22 +824,32 @@ fn list_capturable_windows() -> Result<Vec<CapturableWindow>, String> {
         .into_iter()
         .filter(|window| !is_own_window(window))
         .filter_map(|window| {
+            let area = content_window_area(&window)?;
             let title = window.title().ok()?;
             if title.trim().is_empty() {
                 return None;
             }
             let pid = window.pid().ok()?;
-            Some(CapturableWindow {
-                id: window.id().ok()?,
-                app_name: window.app_name().unwrap_or_else(|_| "应用".into()),
-                title,
-                icon_data_url: app_icon_data_url(pid),
-            })
+            Some((
+                area,
+                CapturableWindow {
+                    id: window.id().ok()?,
+                    app_name: window.app_name().unwrap_or_else(|_| "应用".into()),
+                    title,
+                    icon_data_url: app_icon_data_url(pid),
+                },
+            ))
         })
         .collect::<Vec<_>>();
-    result.sort_by(|a, b| a.app_name.cmp(&b.app_name).then(a.title.cmp(&b.title)));
+    result.sort_by(|(left_area, left), (right_area, right)| {
+        left.app_name
+            .cmp(&right.app_name)
+            // 同一应用有多个窗口时，先放最可能是主内容的大窗口。
+            .then(right_area.cmp(left_area))
+            .then(left.title.cmp(&right.title))
+    });
     result.truncate(80);
-    Ok(result)
+    Ok(result.into_iter().map(|(_, window)| window).collect())
 }
 
 
@@ -927,7 +975,7 @@ fn store_snapshot(state: &AppState, image: &RgbaImage, app_name: &str) -> Result
 
 
 
-/// 展开 `~/…`；其它路径原样返回。录制保存目录与用户填的 save_dir 共用。
+/// 展开 `~/…`；其它路径原样返回。
 fn expand_user_path(raw: &str) -> String {
     let trimmed = raw.trim();
     if let Some(rest) = trimmed.strip_prefix("~/") {
@@ -969,8 +1017,42 @@ struct CapabilityStatus {
 
 
 #[cfg(target_os = "macos")]
-fn ffmpeg_on_path() -> bool {
-    Command::new("ffmpeg").arg("-version").output().is_ok()
+const MACOS_RECORDER_HELPER: &str = "snapshot-recorder";
+
+#[cfg(target_os = "macos")]
+fn macos_recorder_program() -> PathBuf {
+    if let Ok(exe) = std::env::current_exe() {
+        let bundled = exe.with_file_name(MACOS_RECORDER_HELPER);
+        if bundled.is_file() {
+            return bundled;
+        }
+    }
+
+    let triple = if cfg!(target_arch = "aarch64") {
+        "aarch64-apple-darwin"
+    } else {
+        "x86_64-apple-darwin"
+    };
+    let prepared =
+        PathBuf::from(env!("CARGO_MANIFEST_DIR")).join(format!("{MACOS_RECORDER_HELPER}-{triple}"));
+    if prepared.is_file() {
+        return prepared;
+    }
+
+    PathBuf::from(MACOS_RECORDER_HELPER)
+}
+
+#[cfg(target_os = "macos")]
+fn macos_recorder_capability() -> Result<(), String> {
+    let output = Command::new(macos_recorder_program())
+        .arg("--probe")
+        .output()
+        .map_err(|_| "未找到 ScreenCaptureKit 录制组件，请重新安装应用".to_string())?;
+    if output.status.success() {
+        Ok(())
+    } else {
+        Err("ScreenCaptureKit 录制组件不可用，请重新安装应用".into())
+    }
 }
 
 #[tauri::command]
@@ -1069,16 +1151,15 @@ fn platform_capabilities() -> PlatformCapabilities {
     #[cfg(target_os = "macos")]
     {
         let ocr_report = ocr::report();
-        let recording = if ffmpeg_on_path() {
-            CapabilityStatus {
+        let recording = match macos_recorder_capability() {
+            Ok(()) => CapabilityStatus {
                 available: true,
-                detail: "ffmpeg avfoundation（主屏整屏后按窗口裁剪；副屏/跨屏窗口会在录制前被拒并提示移回主屏；光标由 -capture_cursor 跟随 include_cursor）".into(),
-            }
-        } else {
-            CapabilityStatus {
+                detail: "ScreenCaptureKit 原生窗口流（不受遮挡，支持副屏与窗口移动；首次使用会请求屏幕录制权限）".into(),
+            },
+            Err(detail) => CapabilityStatus {
                 available: false,
-                detail: "未找到 ffmpeg；录制走 avfoundation（非整 ScreenCaptureKit 原生路径）".into(),
-            }
+                detail,
+            },
         };
         return PlatformCapabilities {
             os: "macos".into(),
@@ -1097,11 +1178,12 @@ fn platform_capabilities() -> PlatformCapabilities {
             },
             include_cursor: CapabilityStatus {
                 available: true,
-                detail: "录制：avfoundation -capture_cursor；静帧截图：截后按热点与 DPI 比例合成当前系统光标".into(),
+                detail: "录制：ScreenCaptureKit showsCursor；静帧截图：截后按热点与 DPI 比例合成当前系统光标".into(),
             },
             tray_note: "NSStatusItem：左键打开主窗口；菜单打开设置/退出。".into(),
             notes: vec![
                 "macOS 还原最小化窗口按 AXTitle 对齐；标题对不上且该应用有多个最小化窗口时，不代劳、提示手动还原".into(),
+                "窗口录制使用 ScreenCaptureKit，仅录目标窗口，不包含系统音频或麦克风".into(),
             ],
         };
     }
@@ -1479,99 +1561,10 @@ fn restore_minimized_window(id: u32) -> Result<(), String> {
 }
 
 #[cfg(target_os = "macos")]
-mod mac_display {
-    //! 主屏范围（点，全局左上原点——与 xcap 报窗口位置同一个坐标系）。
-    //!
-    //! avfoundation 只能采整块屏幕，录窗口是「采主屏 + crop」。窗口在副屏时 crop 的
-    //! 偏移落在采集画面之外，ffmpeg 只会甩一句用户看不懂的失败，所以录制前先做范围检查。
-
-    #[repr(C)]
-    #[derive(Clone, Copy)]
-    struct CGPoint {
-        x: f64,
-        y: f64,
-    }
-
-    #[repr(C)]
-    #[derive(Clone, Copy)]
-    struct CGSize {
-        width: f64,
-        height: f64,
-    }
-
-    #[repr(C)]
-    #[derive(Clone, Copy)]
-    struct CGRect {
-        origin: CGPoint,
-        size: CGSize,
-    }
-
-    extern "C" {
-        fn CGMainDisplayID() -> u32;
-        fn CGDisplayBounds(display: u32) -> CGRect;
-    }
-
-    /// 主屏尺寸（点）。取不到时返回 None，调用方按「不做检查」处理，不误伤。
-    pub fn main_display_size() -> Option<(f64, f64)> {
-        unsafe {
-            let bounds = CGDisplayBounds(CGMainDisplayID());
-            (bounds.size.width >= 1.0 && bounds.size.height >= 1.0)
-                .then_some((bounds.size.width, bounds.size.height))
-        }
-    }
-
-    /// 窗口矩形是否完整落在主屏内。部分越界也算不合格——crop 出来会缺一块。
-    pub fn window_fits_main_display(
-        origin: (i32, i32),
-        size: (u32, u32),
-        display: (f64, f64),
-    ) -> bool {
-        let (x, y) = (origin.0 as f64, origin.1 as f64);
-        let (w, h) = (size.0 as f64, size.1 as f64);
-        x >= 0.0 && y >= 0.0 && x + w <= display.0 && y + h <= display.1
-    }
-
-    #[cfg(test)]
-    mod tests {
-        use super::*;
-
-        const MAIN: (f64, f64) = (1440.0, 900.0);
-
-        #[test]
-        fn window_inside_main_display_fits() {
-            assert!(window_fits_main_display((100, 100), (800, 600), MAIN));
-        }
-
-        #[test]
-        fn window_on_a_display_to_the_right_does_not_fit() {
-            // 副屏在主屏右侧时，窗口的 x 从主屏宽度之后开始
-            assert!(!window_fits_main_display((1500, 100), (800, 600), MAIN));
-        }
-
-        #[test]
-        fn window_on_a_display_above_does_not_fit() {
-            // 副屏在上方时 y 是负的
-            assert!(!window_fits_main_display((100, -400), (800, 600), MAIN));
-        }
-
-        #[test]
-        fn window_hanging_off_the_right_edge_does_not_fit() {
-            // 跨屏摆放：左半在主屏、右半在副屏，crop 会缺一块
-            assert!(!window_fits_main_display((1200, 100), (800, 600), MAIN));
-        }
-
-        #[test]
-        fn window_exactly_filling_the_display_fits() {
-            assert!(window_fits_main_display((0, 0), (1440, 900), MAIN));
-        }
-    }
-}
-
-#[cfg(target_os = "macos")]
 mod mac_cursor {
     //! 静帧截图合成鼠标光标。
     //!
-    //! xcap 的窗口位图不含光标，录制那条路有 avfoundation 的 `-capture_cursor`，静帧
+    //! xcap 的窗口位图不含光标，录制那条路有 ScreenCaptureKit 的 `showsCursor`，静帧
     //! 没有对应开关，只能截完再自己画上去——与 Windows 侧同样的做法。
 
     use image::RgbaImage;
@@ -1619,7 +1612,7 @@ mod mac_cursor {
     // currentSystemCursor 已被苹果标记弃用，推荐改用 ScreenCaptureKit 的
     // SCStreamConfiguration.showsCursor。这里仍然用它，因为替代品 NSCursor::currentCursor
     // 只知道**本应用**的光标：截别人的窗口时它返回我们自己的箭头，而不是对方正在显示的
-    // I 形/手形光标，语义是错的。等录制那条路接上 ScreenCaptureKit 时一并迁移。
+    // I 形/手形光标，语义是错的。录制已使用 ScreenCaptureKit；静帧仍需单独迁移。
     #[allow(deprecated)]
     fn cursor_bitmap(scale: f64) -> Option<(RgbaImage, f64, f64)> {
         unsafe {
@@ -2088,7 +2081,9 @@ fn copy_image_to_clipboard(image: RgbaImage, clear_after: Option<Duration>) -> R
 
 #[tauri::command]
 fn get_recording_status(state: State<'_, AppState>) -> RecordingStatus {
-    recording_status(&state.recorder.lock())
+    let mut recorder = state.recorder.lock();
+    refresh_recording_process(&mut recorder);
+    recording_status(&recorder)
 }
 
 fn recording_status(recorder: &Recorder) -> RecordingStatus {
@@ -2108,7 +2103,125 @@ fn recording_status_with_message(recorder: &Recorder, message: Option<String>) -
         active,
         target: recorder.target.clone(),
         started_at: recorder.started_at,
-        message,
+        message: message.or_else(|| recorder.last_message.clone()),
+    }
+}
+
+fn recorder_diagnostic(recorder: &Recorder) -> String {
+    recorder
+        .diagnostic
+        .as_ref()
+        .map(|value| value.lock().trim().to_string())
+        .filter(|value| !value.is_empty())
+        .unwrap_or_default()
+}
+
+fn refresh_recording_process(recorder: &mut Recorder) {
+    let Some(child) = recorder.child.as_mut() else { return };
+    let Ok(Some(status)) = child.try_wait() else { return };
+    let detail = recorder_diagnostic(recorder);
+    recorder.last_message = Some(if detail.is_empty() {
+        format!("录制进程意外退出（{status}）")
+    } else {
+        format!("录制进程意外退出：{detail}")
+    });
+    recorder.child = None;
+    recorder.target = None;
+    recorder.started_at = None;
+    recorder.output_path = None;
+    recorder.diagnostic = None;
+}
+
+#[cfg(not(target_os = "linux"))]
+fn capture_child_stderr(stderr: Option<std::process::ChildStderr>) -> Arc<Mutex<String>> {
+    let diagnostic = Arc::new(Mutex::new(String::new()));
+    if let Some(mut stderr) = stderr {
+        let destination = diagnostic.clone();
+        thread::spawn(move || {
+            let mut text = String::new();
+            let _ = stderr.read_to_string(&mut text);
+            if text.len() > 8_000 {
+                text = text.split_off(text.len() - 8_000);
+            }
+            *destination.lock() = text;
+        });
+    }
+    diagnostic
+}
+
+#[cfg(target_os = "macos")]
+fn spawn_macos_recorder(
+    target: &TrackedWindow,
+    output: &PathBuf,
+    include_cursor: bool,
+) -> Result<(Child, Arc<Mutex<String>>), String> {
+    let mut command = Command::new(macos_recorder_program());
+    command
+        .arg("--window-id")
+        .arg(target.id.to_string())
+        .arg("--output")
+        .arg(output);
+    if include_cursor {
+        command.arg("--include-cursor");
+    }
+    command
+        .stdin(Stdio::piped())
+        .stdout(Stdio::piped())
+        .stderr(Stdio::piped());
+
+    let mut child = command
+        .spawn()
+        .map_err(|error| format!("无法启动 ScreenCaptureKit 录制组件：{error}"))?;
+    let diagnostic = capture_child_stderr(child.stderr.take());
+    let stdout = child.stdout.take().ok_or_else(|| "录制组件 stdout 不可用".to_string())?;
+    let (sender, receiver) = std::sync::mpsc::sync_channel(1);
+    thread::spawn(move || {
+        let mut reader = BufReader::new(stdout);
+        let mut first = String::new();
+        let result = reader
+            .read_line(&mut first)
+            .map(|_| first.trim().to_string())
+            .map_err(|error| error.to_string());
+        let _ = sender.send(result);
+
+        // 保持 stdout 管道打开并排空 FINISHED，避免 sidecar 收尾时遭遇 SIGPIPE。
+        let mut rest = String::new();
+        while reader.read_line(&mut rest).unwrap_or(0) > 0 {
+            rest.clear();
+        }
+    });
+
+    let line = match receiver.recv_timeout(Duration::from_secs(20)) {
+        Ok(Ok(line)) => line,
+        Ok(Err(error)) => {
+            let _ = child.kill();
+            let _ = child.wait();
+            return Err(format!("读取录制组件启动状态失败：{error}"));
+        }
+        Err(_) => {
+            let _ = child.kill();
+            let _ = child.wait();
+            return Err("等待 ScreenCaptureKit 首帧超时".into());
+        }
+    };
+
+    if line.starts_with("READY ") {
+        return Ok((child, diagnostic));
+    }
+
+    let _ = child.kill();
+    let _ = child.wait();
+    if let Some(message) = line.strip_prefix("ERROR ") {
+        Err(message.to_string())
+    } else if line.is_empty() {
+        let detail = diagnostic.lock().trim().to_string();
+        Err(if detail.is_empty() {
+            "ScreenCaptureKit 录制组件启动后没有返回状态".into()
+        } else {
+            detail
+        })
+    } else {
+        Err(format!("录制组件返回了未知状态：{line}"))
     }
 }
 
@@ -2156,6 +2269,7 @@ fn toggle_recording(
     target_id: Option<u32>,
 ) -> Result<RecordingStatus, String> {
     let mut recorder = state.recorder.lock();
+    refresh_recording_process(&mut recorder);
     if recorder.child.is_some() || {
         #[cfg(target_os = "linux")]
         { recorder.linux_active.is_some() }
@@ -2182,6 +2296,7 @@ fn toggle_recording(
     let output_dir = resolve_recording_dir(&settings)?;
     fs::create_dir_all(&output_dir).map_err(|error| error.to_string())?;
     let output = output_dir.join(format!("应用快照-{}.mp4", Local::now().format("%Y-%m-%d_%H-%M-%S")));
+    recorder.last_message = None;
 
     #[cfg(target_os = "linux")]
     {
@@ -2213,16 +2328,16 @@ fn toggle_recording(
         return Ok(recording_status(&recorder));
     }
 
-    #[cfg(not(any(target_os = "linux", target_os = "windows")))]
+    #[cfg(target_os = "macos")]
     {
-        let mut command = build_ffmpeg_command(&target, &output, settings.include_cursor)?;
-        command.stdin(Stdio::piped()).stdout(Stdio::null()).stderr(Stdio::null());
-        let child = command.spawn().map_err(|_| "未找到 ffmpeg，请安装后将它加入 PATH".to_string())?;
+        let (child, diagnostic) =
+            spawn_macos_recorder(&target, &output, settings.include_cursor)?;
         recorder.child = Some(child);
+        recorder.diagnostic = Some(diagnostic);
         recorder.target = Some(target.app_name);
         recorder.started_at = Some(now_millis());
         recorder.output_path = Some(output);
-        Ok(recording_status(&recorder))
+        return Ok(recording_status(&recorder));
     }
 }
 
@@ -2251,6 +2366,7 @@ fn stop_active_recording(recorder: &mut Recorder) {
             recorder.target = None;
             recorder.started_at = None;
             recorder.output_path = None;
+            recorder.diagnostic = None;
             return;
         }
     }
@@ -2258,92 +2374,22 @@ fn stop_active_recording(recorder: &mut Recorder) {
         if let Some(stdin) = child.stdin.as_mut() {
             let _ = stdin.write_all(b"q\n");
         }
-        let _ = child.wait();
+        if let Ok(status) = child.wait() {
+            if !status.success() {
+                thread::sleep(Duration::from_millis(20));
+                let detail = recorder_diagnostic(recorder);
+                recorder.last_message = Some(if detail.is_empty() {
+                    format!("录制停止异常（{status}）")
+                } else {
+                    format!("录制停止异常：{detail}")
+                });
+            }
+        }
     }
     recorder.target = None;
     recorder.started_at = None;
     recorder.output_path = None;
-}
-
-#[cfg(not(any(target_os = "linux", target_os = "windows")))]
-fn build_ffmpeg_command(
-    target: &TrackedWindow,
-    output: &PathBuf,
-    include_cursor: bool,
-) -> Result<Command, String> {
-    let mut command = Command::new("ffmpeg");
-    command.arg("-y");
-    #[cfg(target_os = "macos")]
-    {
-        // avfoundation 没有"按窗口采集"，只能采主屏整屏，再按窗口边界 crop。
-        // CGWindow 边界是点坐标（主屏左上角原点），Retina 屏要乘缩放系数换成像素；
-        // 副屏上的窗口不在主屏采集范围内，crop 越界时 ffmpeg 会直接失败。
-        let window = Window::all().map_err(|error| error.to_string())?.into_iter()
-            .find(|window| window.id().ok() == Some(target.id)).ok_or_else(|| "目标窗口已关闭".to_string())?;
-        let (x, y) = (window.x().map_err(|e| e.to_string())?, window.y().map_err(|e| e.to_string())?);
-        let (w, h) = (window.width().map_err(|e| e.to_string())?, window.height().map_err(|e| e.to_string())?);
-        // 副屏 / 跨屏的窗口不在主屏采集范围内，与其让 ffmpeg 甩一句天书，不如提前说清楚
-        if let Some(display) = mac_display::main_display_size() {
-            if !mac_display::window_fits_main_display((x, y), (w, h), display) {
-                return Err(format!(
-                    "目标窗口不在主屏范围内（窗口 {w}×{h} @ {x},{y}，主屏 {}×{}）。\
-                     macOS 录制走 avfoundation 采主屏再裁剪，副屏或跨屏摆放的窗口采不到；\
-                     请把窗口整个移回主屏后重试。",
-                    display.0.round(),
-                    display.1.round()
-                ));
-            }
-        }
-        // 用一次试截换算缩放：截出的像素宽 / 点宽。截不了（如屏幕录制权限未授）按 1x 处理
-        let scale = window.capture_image().ok()
-            .and_then(|image| (w > 0).then(|| image.width() as f64 / w as f64))
-            .filter(|scale| (0.5..=4.0).contains(scale))
-            .unwrap_or(1.0);
-        let to_px = |points: f64| (points * scale).round() as i64;
-        // yuv420p 要求偶数宽高
-        let (cw, ch) = (to_px(w as f64) & !1, to_px(h as f64) & !1);
-        let device = macos_avfoundation_screen_device();
-        let cursor_flag = if include_cursor { "1" } else { "0" };
-        command.args(["-f", "avfoundation", "-capture_cursor", cursor_flag, "-framerate", "30", "-i", &format!("{device}:")]);
-        command.args(["-vf", &format!("crop={cw}:{ch}:{}:{}", to_px(x as f64), to_px(y as f64))]);
-    }
-    command.args(["-c:v", "libx264", "-preset", "veryfast", "-pix_fmt", "yuv420p", "-crf", "23"]);
-    command.arg(output);
-    Ok(command)
-}
-
-/// ffmpeg 的 avfoundation 屏幕设备序号随机器而异（通常摄像头 0、屏幕 1），
-/// 列一次设备找名字里带 screen 的；探测失败（如没装 ffmpeg）回退 "1"，
-/// 由 spawn 处统一报「未找到 ffmpeg」。
-#[cfg(target_os = "macos")]
-fn macos_avfoundation_screen_device() -> String {
-    let fallback = "1".to_string();
-    let output = match Command::new("ffmpeg")
-        .args(["-f", "avfoundation", "-list_devices", "true", "-i", ""])
-        .stdin(Stdio::null())
-        .stdout(Stdio::null())
-        .stderr(Stdio::piped())
-        .output()
-    {
-        Ok(output) => output,
-        Err(_) => return fallback,
-    };
-    let text = String::from_utf8_lossy(&output.stderr);
-    // 形如 "[AVFoundation indev @ 0x7f8] [1] Capture screen 0"
-    for line in text.lines() {
-        if !line.to_lowercase().contains("screen") {
-            continue;
-        }
-        if let Some(start) = line.rfind('[') {
-            if let Some(end) = line[start + 1..].find(']') {
-                let candidate = &line[start + 1..start + 1 + end];
-                if !candidate.is_empty() && candidate.chars().all(|c| c.is_ascii_digit()) {
-                    return candidate.to_string();
-                }
-            }
-        }
-    }
-    fallback
+    recorder.diagnostic = None;
 }
 
 /// 待润色草稿的长度上限（字符）
@@ -2777,16 +2823,14 @@ fn start_tracker(app: AppHandle, tracker: Arc<Mutex<TrackerState>>) {
         if let Ok(windows) = Window::all() {
             // 焦点可能落在桌宠/快捷菜单这类自有窗口上，先向前找最近一个
             // 真正的业务窗口作为焦点候选，避免把"上一个应用"记成自己。
-            let mut focused: Option<Window> = None;
-            for window in windows.into_iter() {
-                if !window.is_focused().unwrap_or(false) {
-                    continue;
-                }
-                if !is_own_window(&window) {
-                    focused = Some(window);
-                    break;
-                }
-            }
+            // xcap 的 macOS is_focused 实际按 PID 判断：同一 App 的菜单栏图标
+            // 和主窗口都会返回 true。因此先排除小辅助窗，再取面积最大的内容窗。
+            let focused = windows
+                .into_iter()
+                .filter(|window| window.is_focused().unwrap_or(false) && !is_own_window(window))
+                .filter_map(|window| content_window_area(&window).map(|area| (area, window)))
+                .max_by_key(|(area, _)| *area)
+                .map(|(_, window)| window);
             if let Some(focused) = focused {
                 if let (Ok(id), Ok(pid)) = (focused.id(), focused.pid()) {
                     let next = TrackedWindow {
@@ -3390,7 +3434,12 @@ pub fn run() {
             let menu = Menu::with_items(app, &[&open_settings, &quit])?;
             let mut tray = TrayIconBuilder::new().menu(&menu).on_menu_event(|app, event| match event.id.as_ref() {
                 "open-settings" => show_main_window(app.clone()),
-                "quit" => app.exit(0),
+                "quit" => {
+                    if let Some(state) = app.try_state::<AppState>() {
+                        stop_active_recording(&mut state.recorder.lock());
+                    }
+                    app.exit(0);
+                }
                 _ => {}
             })
             .on_tray_icon_event(|tray, event| {
@@ -3539,6 +3588,7 @@ mod pet_asset_tests {
             "activeTemplateId": "builtin-default",
             "selectedAppearanceId": "app-icon",
             "petAssets": [],
+            "saveDir": "~/LegacyCaptures",
             "shortcuts": [
                 {"action":"snapshot","accelerator":"Alt+Shift+2"},
                 {"action":"record","accelerator":null},
@@ -3567,6 +3617,8 @@ mod pet_asset_tests {
         // 新补的那条应当是未绑定状态
         let ocr = settings.shortcuts.iter().find(|item| item.action == "ocr").unwrap();
         assert!(ocr.accelerator.is_none());
+        // 老版录制与快照共用 saveDir，新版应将它迁移到独立录制目录。
+        assert_eq!(settings.recording_dir, "~/LegacyCaptures");
 
         let _ = fs::remove_file(&path);
     }
@@ -3579,6 +3631,14 @@ mod pet_asset_tests {
         assert!(!is_pet_gif("a.webp"));
         assert!(!is_pet_gif("a.png"));
         assert!(!is_pet_gif("noext"));
+    }
+
+    #[test]
+    fn menu_bar_items_are_not_treated_as_content_windows() {
+        // Shadowrocket 在本机暴露的 Item-0 是 34×24，真正主窗口是 1024×655。
+        assert_eq!(content_window_area_from_size(34, 24), None);
+        assert_eq!(content_window_area_from_size(79, 600), None);
+        assert_eq!(content_window_area_from_size(1024, 655), Some(670_720));
     }
 
     #[test]

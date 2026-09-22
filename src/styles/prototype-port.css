@@ -4174,6 +4174,11 @@ button.record-trigger-pill-btn:active {
   overflow: hidden;
   text-overflow: ellipsis;
   max-width: 140px;
+  min-width: 0;
+}
+
+.recording-folder-picker {
+  max-width: 260px;
 }
 
 .folder-action-btn {

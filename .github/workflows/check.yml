@@ -53,9 +53,9 @@ jobs:
         if: matrix.name == 'linux'
         run: bash scripts/linux/install-deps.sh
       # tauri-build 会校验 externalBin 声明的 sidecar 是否存在，macOS 上要先备好
-      - name: Prepare sidecar
+      - name: Prepare sidecars
         if: matrix.name == 'macos'
-        run: bash scripts/build-ocr-sidecar.sh
+        run: npm run prepare:sidecars
       - name: cargo check
         working-directory: src-tauri
         run: cargo check --all-targets

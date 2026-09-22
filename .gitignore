@@ -1,6 +1,8 @@
 /src-tauri/snapshot-ocr/.build/
+/src-tauri/snapshot-recorder/.build/
 # tauri build 前置脚本产出的 sidecar 二进制（按目标 triple 命名）
 /src-tauri/snapshot-ocr-*-apple-darwin
+/src-tauri/snapshot-recorder-*-apple-darwin
 /dist/
 .DS_Store
 /node_modules/
