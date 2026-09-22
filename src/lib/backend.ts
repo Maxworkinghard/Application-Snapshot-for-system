@@ -191,14 +191,14 @@ export async function listSnapshots(): Promise<SnapshotRecord[]> {
   return invoke<SnapshotRecord[]>("list_snapshots");
 }
 
-export async function openRecordingsDir(): Promise<string> {
-  if (!inTauri) return "";
-  return invoke<string>("open_recordings_dir");
-}
-
 export async function openSnapshotsDir(): Promise<string> {
   if (!inTauri) return "预览模式下不会打开文件管理器";
   return invoke<string>("open_snapshots_dir");
+}
+
+export async function openRecordingsDir(): Promise<string> {
+  if (!inTauri) return "预览模式下不会打开文件管理器";
+  return invoke<string>("open_recordings_dir");
 }
 
 export async function getSnapshotDataUrl(id: string): Promise<string> {
@@ -247,4 +247,3 @@ export async function platformCapabilities(): Promise<PlatformCapabilities> {
   }
   return invoke<PlatformCapabilities>("platform_capabilities");
 }
-

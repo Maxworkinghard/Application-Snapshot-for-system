@@ -1420,7 +1420,6 @@ function ShortcutsPage({
     }
   }
 
-
   const renderRow = (binding: ShortcutBinding) => {
     const isRecording = recording === binding.action;
     return (
@@ -1565,10 +1564,10 @@ function ShortcutsPage({
                 />
               </div>
               <div className="pref-item-row folder-row">
-                <span className="pref-title">本地保存目录</span>
+                <span className="pref-title">快照保存目录</span>
                 <div className="folder-picker-box">
                   <span className="folder-path-text" title={settings.saveDir || undefined}>
-                    {settings.saveDir || "默认图片目录"}
+                    {settings.saveDir || "默认快照目录"}
                   </span>
                   <button type="button" className="folder-action-btn" onClick={() => void chooseSaveDir()}>
                     <FolderOpen size={12} />

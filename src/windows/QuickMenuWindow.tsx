@@ -53,6 +53,10 @@ export function QuickMenuWindow() {
     };
   }, []);
 
+  useEffect(() => {
+    void setQuickMenuExpanded(page === "windows" || Boolean(status?.text));
+  }, [page, status?.text]);
+
   function showStatus(next: QuickStatus) {
     if (hideTimer.current !== null) {
       window.clearTimeout(hideTimer.current);
@@ -71,7 +75,6 @@ export function QuickMenuWindow() {
     showStatus({ kind: "info", text: "" });
     setPickerMode(mode);
     setPage("windows");
-    void setQuickMenuExpanded(true);
     try {
       setWindows(await listWindows());
     } catch (error) {
@@ -84,7 +87,6 @@ export function QuickMenuWindow() {
   function returnToMenu() {
     setPage("menu");
     showStatus({ kind: "info", text: "" });
-    void setQuickMenuExpanded(false);
   }
 
   async function capture(id: number) {
@@ -164,7 +166,11 @@ export function QuickMenuWindow() {
             <span className="quick-action-icon violet"><Camera size={16} /></span>
             <strong>应用快照</strong>
           </button>
-          <button onClick={() => void record()}>
+          <button
+            disabled={status?.kind === "busy"}
+            aria-busy={status?.kind === "busy"}
+            onClick={() => void record()}
+          >
             <span className="quick-action-icon red">{recording.active ? <CircleStop size={16} /> : <Video size={16} />}</span>
             <strong>{recording.active ? "停止录制" : "录制"}</strong>
           </button>

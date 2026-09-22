@@ -17,18 +17,18 @@
 | | Windows | macOS | Linux |
 |---|---|---|---|
 | 窗口截图 | xcap | xcap | xcap |
-| 窗口录制 | Windows.Graphics.Capture + Media Foundation | ffmpeg `avfoundation`（采主屏整屏后按窗口裁剪） | Wayland 走 portal ScreenCast + PipeWire → ffmpeg；X11 走 ffmpeg `x11grab` |
+| 窗口录制 | Windows.Graphics.Capture + Media Foundation | ScreenCaptureKit 原生窗口流 + AVAssetWriter | Wayland 走 portal ScreenCast + PipeWire → ffmpeg；X11 走 ffmpeg `x11grab` |
 | 文字识别 | `Windows.Media.Ocr` | Vision（经 `snapshot-ocr` 桥） | `tesseract` |
 | 快照历史、桌面伴侣、Prompt 润色 | 有 | 有 | 有 |
 
-**真机验证**：目前以 Windows 为主（adapter、托盘、快捷键、截图/录制等已在真机跑过）。macOS / Linux 能力主要来自代码路径、编译检查与适配层实现；macOS 的 `snapshot-ocr` 桥与部分窗口能力（截图、图标、Accessibility 还原最小化）有过真机验证，录制走 ffmpeg `avfoundation`（非 ScreenCaptureKit）已接入并通过编译/单测，但端到端实测仍有限。Linux 在修复编译阻断后已恢复 `cargo check`；X11 路径（xcap / x11grab / tesseract / xdotool / XDG 自启）按适配层实现，Wayland portal ScreenCast、托盘点击、打包安装包等仍可能需本机再验。
+**真机验证**：目前以 Windows 为主（adapter、托盘、快捷键、截图/录制等已在真机跑过）。macOS / Linux 能力主要来自代码路径、编译检查与适配层实现；macOS 的 `snapshot-ocr` 桥与部分窗口能力（截图、图标、Accessibility 还原最小化）有过真机验证，录制已切到 ScreenCaptureKit 原生窗口流并由 AVAssetWriter 输出 H.264 MP4。Linux 在修复编译阻断后已恢复 `cargo check`；X11 路径（xcap / x11grab / tesseract / xdotool / XDG 自启）按适配层实现，Wayland portal ScreenCast、托盘点击、打包安装包等仍可能需本机再验。
 
 ## 依赖
 
-- **录制**在 Windows 上走系统自带的 Windows.Graphics.Capture 与 Media Foundation，不需要 ffmpeg；macOS 与 Linux 的录制仍需要 `ffmpeg` 在 `PATH` 中。Linux 上「截屏包含鼠标光标」的静帧也会优先走 ffmpeg `x11grab`（失败则回退为无光标截图）；OCR、润色不需要 ffmpeg。
+- **录制**：Windows 走系统自带的 Windows.Graphics.Capture 与 Media Foundation，不需要 ffmpeg；macOS 使用随应用打包的 ScreenCaptureKit sidecar，不依赖外部 ffmpeg；Linux 需要 `ffmpeg` 在 `PATH` 中。Linux 上「截屏包含鼠标光标」的静帧也会优先走 ffmpeg `x11grab`（失败则回退为无光标截图）；OCR、润色不需要 ffmpeg。
 - **macOS 权限**：窗口截图与录制需要「屏幕录制」权限；还原已最小化的窗口再截图需要「辅助功能」权限。
 - **Linux 的 OCR** 需要 `tesseract` 及至少一个语言包（`apt install tesseract-ocr tesseract-ocr-chi-sim`）。
-- **macOS 的 OCR** 需要 `snapshot-ocr`。Vision 没有系统自带的命令行入口，主线改为调用一个 Swift 小桥（[src-tauri/snapshot-ocr/](src-tauri/snapshot-ocr/)）：stdin 收 PNG，stdout 每行输出一行识别结果；`--probe` 报告识别语言。`npm run tauri build` 会自动构建并以 Tauri sidecar 形式打进包（`bundle.externalBin` 写在 [src-tauri/tauri.macos.conf.json](src-tauri/tauri.macos.conf.json) 里，免得 Windows / Linux 构建去找一个只有 macOS 才有的二进制；产物落在 `Contents/MacOS/` 主程序旁边）；单独构建用 `bash scripts/build-ocr-sidecar.sh`。从源码运行时：`cd src-tauri/snapshot-ocr && swift build -c release`，把产物拷到 `PATH` 内任意目录（如 `~/.local/bin`）——应用优先用与自己同目录的 sidecar，找不到才回退 `PATH`。
+- **macOS sidecar**：Vision OCR 由 [src-tauri/snapshot-ocr/](src-tauri/snapshot-ocr/) 提供；ScreenCaptureKit 录制由 [src-tauri/snapshot-recorder/](src-tauri/snapshot-recorder/) 提供。`npm run tauri dev` 和 `npm run tauri build` 都会自动准备二者，正式包内位于 `Contents/MacOS/` 主程序旁边。
 - **Prompt 润色**需要一个 OpenAI 兼容端点，在「模型设置」里填写。API Key 存入系统钥匙串，不写进配置文件。
 
 ## 从源码运行
@@ -77,7 +77,7 @@ bash scripts/linux/build.sh  # 正式二进制；bundler 成功时还有 deb / A
 
 默认不绑定任何键。应用快照、全屏截图、滚动长截图（目前仅 Linux/X11）、录制、润色 Prompt、提取文字都可以在「快捷操作」页各绑一个全局快捷键，窗口最小化时同样触发。
 
-截图完成后的行为由「截图完成后动作」与「自动写入本地文件」决定：默认复制到剪贴板；可选打开标注窗或另存为。仅在开启自动保存时写入本地历史。剪贴板自动清空时限可在设置中配置（默认约 60 秒；期间若又复制了别的内容则跳过这次清空）。录制保存为 MP4 到下载目录（或自定义保存目录）。提取出的文字直接替换剪贴板内容。
+截图完成后的行为由「截图完成后动作」与「自动写入本地文件」决定：默认复制到剪贴板；可选打开标注窗或另存为。仅在开启自动保存时写入本地历史。剪贴板自动清空时限可在设置中配置（默认约 60 秒；期间若又复制了别的内容则跳过这次清空）。录制默认保存为 MP4 到系统「下载」目录；可在「快捷操作 → 剪贴板与保存」中直接打开或更改独立的录制目录。提取出的文字直接替换剪贴板内容。
 
 ## 伴侣素材
 
