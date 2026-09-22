@@ -3,6 +3,7 @@ import { listen } from "@tauri-apps/api/event";
 import type {
   CapturableWindow,
   OcrCapability,
+  PlatformCapabilities,
   PreviousApp,
   RecordingStatus,
   Settings,
@@ -180,6 +181,17 @@ export function onPreviousAppChanged(callback: (app: PreviousApp) => void) {
   return listen<PreviousApp>("previous-app-changed", ({ payload }) => callback(payload));
 }
 
+export type CaptureFeedback = {
+  flash: boolean;
+  shutterSound: Settings["shutterSound"];
+  customSoundPath: string | null;
+};
+
+export function onCaptureFeedback(callback: (payload: CaptureFeedback) => void) {
+  if (!inTauri) return Promise.resolve(() => undefined);
+  return listen<CaptureFeedback>("capture-feedback", ({ payload }) => callback(payload));
+}
+
 export async function listSnapshots(): Promise<SnapshotRecord[]> {
   if (!inTauri) return [];
   return invoke<SnapshotRecord[]>("list_snapshots");
@@ -219,3 +231,18 @@ export async function ocrClipboard(): Promise<string> {
   if (!inTauri) return "";
   return invoke<string>("ocr_clipboard");
 }
+
+export async function platformCapabilities(): Promise<PlatformCapabilities> {
+  if (!inTauri) {
+    return {
+      os: "preview",
+      displayServer: "n/a",
+      recording: { available: false, detail: "预览模式" },
+      ocr: { available: false, detail: "预览模式" },
+      autostart: { available: false, detail: "预览模式" },
+      trayNote: "",
+    };
+  }
+  return invoke<PlatformCapabilities>("platform_capabilities");
+}
+

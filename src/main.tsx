@@ -4,6 +4,8 @@ import { getCurrentWindow } from "@tauri-apps/api/window";
 import { App } from "./App";
 import { PetWindow } from "./windows/PetWindow";
 import { QuickMenuWindow } from "./windows/QuickMenuWindow";
+import { RegionPickerWindow } from "./windows/RegionPickerWindow";
+import { AnnotateWindow } from "./windows/AnnotateWindow";
 import { applyTheme, readTheme } from "./lib/theme";
 import "./styles/variables.css";
 import "./styles/prototype-port.css";
@@ -14,7 +16,7 @@ import "./styles/responsive.css";
 applyTheme(readTheme());
 
 const label = "__TAURI_INTERNALS__" in window ? getCurrentWindow().label : "main";
-const usesTransparentSurface = label === "pet" || label === "quick-menu";
+const usesTransparentSurface = label === "pet" || label === "quick-menu" || label === "region-picker";
 
 document.documentElement.classList.toggle("transparent-window", usesTransparentSurface);
 document.body.classList.toggle("transparent-window", usesTransparentSurface);
@@ -22,6 +24,8 @@ document.body.classList.toggle("transparent-window", usesTransparentSurface);
 function CurrentWindow() {
   if (label === "pet") return <PetWindow />;
   if (label === "quick-menu") return <QuickMenuWindow />;
+  if (label === "region-picker") return <RegionPickerWindow />;
+  if (label === "annotate") return <AnnotateWindow />;
   return <App />;
 }
 

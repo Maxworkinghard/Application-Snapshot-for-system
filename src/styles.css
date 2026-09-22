@@ -563,3 +563,111 @@ button {
   background: var(--panel-2);
 }
 .lightbox-meta { color: var(--text-tertiary); font-size: var(--text-caption); }
+
+/* 区域截图全屏框选层 */
+.region-picker-root {
+  position: fixed;
+  inset: 0;
+  cursor: crosshair;
+  background: rgba(8, 12, 20, 0.28);
+  user-select: none;
+}
+.region-picker-hint {
+  position: fixed;
+  top: 24px;
+  left: 50%;
+  transform: translateX(-50%);
+  padding: 8px 14px;
+  border-radius: 999px;
+  background: rgba(0, 0, 0, 0.72);
+  color: #fff;
+  font-size: 13px;
+  letter-spacing: 0.02em;
+  pointer-events: none;
+  z-index: 2;
+}
+.region-picker-rect {
+  position: fixed;
+  border: 2px solid #6ea8ff;
+  background: rgba(110, 168, 255, 0.12);
+  box-shadow: 0 0 0 9999px rgba(8, 12, 20, 0.35);
+  pointer-events: none;
+  z-index: 1;
+}
+
+.shortcut-interactive-row.is-unavailable {
+  opacity: 0.55;
+  cursor: not-allowed;
+}
+.shortcut-interactive-row.is-unavailable .action-tag {
+  background: rgba(220, 120, 60, 0.18);
+  color: #c45c1a;
+}
+
+
+/* 截后标注窗口 */
+.annotate-root {
+  display: flex;
+  flex-direction: column;
+  height: 100vh;
+  background: var(--bg, #0f141c);
+  color: var(--text, #e8eef7);
+}
+.annotate-toolbar {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  padding: 10px 12px;
+  border-bottom: 1px solid rgba(255,255,255,0.08);
+  background: var(--panel, #171d28);
+}
+.annotate-title {
+  font-size: 13px;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  max-width: 28vw;
+}
+.annotate-tools,
+.annotate-actions {
+  display: flex;
+  gap: 8px;
+  align-items: center;
+}
+.annotate-tools {
+  margin-right: auto;
+}
+.annotate-tools button,
+.annotate-actions button {
+  border: 1px solid rgba(255,255,255,0.12);
+  background: rgba(255,255,255,0.04);
+  color: inherit;
+  border-radius: 8px;
+  padding: 6px 10px;
+  cursor: pointer;
+}
+.annotate-tools button.is-active {
+  background: rgba(110, 168, 255, 0.22);
+  border-color: rgba(110, 168, 255, 0.55);
+}
+.annotate-stage {
+  flex: 1;
+  overflow: auto;
+  display: grid;
+  place-items: center;
+  padding: 12px;
+  background: #0b0f16;
+}
+.annotate-canvas {
+  max-width: 100%;
+  max-height: calc(100vh - 96px);
+  background: #111;
+  cursor: crosshair;
+  box-shadow: 0 8px 28px rgba(0,0,0,0.35);
+}
+.annotate-status {
+  padding: 8px 12px;
+  font-size: 12px;
+  color: var(--text-secondary, #a9b4c6);
+  border-top: 1px solid rgba(255,255,255,0.08);
+}

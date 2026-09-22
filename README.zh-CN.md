@@ -17,11 +17,11 @@
 | | Windows | macOS | Linux |
 |---|---|---|---|
 | 窗口截图 | xcap | xcap | xcap |
-| 窗口录制 | ffmpeg `gdigrab` | ffmpeg `avfoundation`（采主屏整屏后按窗口裁剪） | ffmpeg `x11grab` |
+| 窗口录制 | ffmpeg `gdigrab` | ffmpeg `avfoundation`（采主屏整屏后按窗口裁剪） | ffmpeg `x11grab`（X11）；纯 Wayland 走 portal ScreenCast + PipeWire → ffmpeg |
 | 文字识别 | `Windows.Media.Ocr` | Vision（经 `snapshot-ocr` 桥） | `tesseract` |
 | 快照历史、桌面伴侣、Prompt 润色 | 有 | 有 | 有 |
 
-目前 Windows 侧的 adapter、macOS 的 `snapshot-ocr` 桥接程序、以及 macOS 的窗口能力（截图、`NSRunningApplication` 取上一个应用图标、Accessibility API 还原最小化窗口）已经在真机上跑过；macOS 录制已接入 ffmpeg `avfoundation` 并通过编译与单测，但尚未端到端实测。Linux 的 adapter 尚未编译、也未运行。
+目前 Windows 侧的 adapter、macOS 的 `snapshot-ocr` 桥接程序、以及 macOS 的窗口能力（截图、`NSRunningApplication` 取上一个应用图标、Accessibility API 还原最小化窗口）已经在真机上跑过；macOS 录制已接入 ffmpeg `avfoundation` 并通过编译与单测，但尚未端到端实测。Linux adapter 已可在本仓库编译，覆盖 X11 录制、纯 Wayland 的 portal ScreenCast 录制、tesseract OCR、XDG 开机自启（需用户勾选；systemd 用户单元仅作可选文档）以及尽力而为的应用图标，其中部分功能已在真实桌面上实测，纯 Wayland 路径仍需端到端验证。
 
 ## 依赖
 
@@ -44,6 +44,30 @@ npm run tauri dev
 npm run build          # 仅前端
 npm run tauri build    # 安装包
 ```
+
+
+## Linux
+
+```bash
+# Debian / Ubuntu — 编译与可选运行时依赖
+sudo bash scripts/linux/install-deps.sh
+bash scripts/linux/check-env.sh
+
+npm install
+npm run tauri dev            # 开发
+bash scripts/linux/build.sh  # 正式二进制；bundler 成功时还有 deb / AppImage
+```
+
+| 可选工具 | 能力 |
+|---|---|
+| `ffmpeg` | 窗口录制（有 `$DISPLAY` 时用 `x11grab`；portal 路径用 ffmpeg `rawvideo` 编码） |
+| `tesseract` + 语言包 | OCR |
+| `xdotool` | 截图前还原已最小化的目标窗口 |
+| StatusNotifierHost | 系统托盘（KDE 原生；GNOME 需 AppIndicator 扩展） |
+
+**开机自启**需在「设置 → 开机静默自启动」中勾选，才会写入 `~/.config/autostart/…desktop`（这是受支持的主路径）。可选的 systemd `--user` 单元示例见 `scripts/linux/com.appsnapshot.prompt-pet-shortcut.service.example`（高级；应用不会替你 enable）。
+
+细节见 [scripts/linux/README.md](scripts/linux/README.md)。
 
 ## 快捷键
 

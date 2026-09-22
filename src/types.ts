@@ -89,3 +89,18 @@ export interface OcrCapability {
   language: string | null;
   detail: string;
 }
+
+export interface CapabilityStatus {
+  available: boolean;
+  detail: string;
+}
+
+export interface PlatformCapabilities {
+  os: string;
+  displayServer: string;
+  recording: CapabilityStatus;
+  ocr: CapabilityStatus;
+  autostart: CapabilityStatus;
+  trayNote: string;
+}
+

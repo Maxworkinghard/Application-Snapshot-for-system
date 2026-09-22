@@ -48,6 +48,7 @@ import {
   getPetAssetDataUrl,
   loadSettings,
   onSettingsChanged,
+  onCaptureFeedback,
   clearSnapshots,
   deleteSnapshot,
   getSnapshotDataUrl,
@@ -101,7 +102,7 @@ const actionLabels: Record<ShortcutAction, { name: string; tag?: string }> = {
   snapshot: { name: "窗口快照", tag: "前台窗口" },
   region: { name: "区域截图", tag: "矩形框选" },
   fullscreen: { name: "全屏快照", tag: "主显示器" },
-  scrolling: { name: "滚动长截图", tag: "整页截取" },
+  scrolling: { name: "滚动长截图", tag: "窗口连拍" },
   record: { name: "窗口录制", tag: "MP4" },
   polish: { name: "润色 Prompt", tag: "剪贴板" },
   ocr: { name: "提取文字 (OCR)", tag: "离线识别" },
@@ -162,11 +163,32 @@ export function App() {
     persistTheme(next);
   }
 
+  const [flashVisible, setFlashVisible] = useState(false);
+
   useEffect(() => {
     loadSettings()
       .then(setSettings)
       .finally(() => setLoading(false));
     const pending = onSettingsChanged(setSettings);
+    return () => {
+      void pending.then((unlisten) => unlisten());
+    };
+  }, []);
+
+  useEffect(() => {
+    const pending = onCaptureFeedback((payload) => {
+      if (payload.flash) {
+        setFlashVisible(true);
+        window.setTimeout(() => setFlashVisible(false), 220);
+      }
+      if (payload.shutterSound !== "none") {
+        previewHintSound(
+          payload.shutterSound === "soft" ? "soft" : "crisp",
+          payload.shutterSound === "custom" ? payload.customSoundPath : null,
+          80,
+        );
+      }
+    });
     return () => {
       void pending.then((unlisten) => unlisten());
     };
@@ -295,6 +317,7 @@ export function App() {
         </main>
       </div>
 
+      {flashVisible && <div className="shutter-flash-overlay" aria-hidden />}
       {toast && (
         <div className="toast-portal">
           <div className="toast-card toast-info" role="status">
@@ -1249,7 +1272,6 @@ function ShortcutsPage({
   const [shortcuts, setShortcuts] = useState(settings.shortcuts);
   const [recording, setRecording] = useState<ShortcutAction | null>(null);
   const [saving, setSaving] = useState(false);
-
   useEffect(() => setShortcuts(settings.shortcuts), [settings.shortcuts]);
 
   function captureShortcut(action: ShortcutAction, event: React.KeyboardEvent<HTMLDivElement>) {
@@ -1338,7 +1360,9 @@ function ShortcutsPage({
         tabIndex={0}
         aria-label={`快捷键：${actionLabels[binding.action].name}，当前按键：${binding.accelerator || "未设置"}`}
         className={`shortcut-interactive-row compact-row ${isRecording ? "is-recording-mode" : ""}`}
-        onClick={() => setRecording(binding.action)}
+        onClick={() => {
+          setRecording(binding.action);
+        }}
         onKeyDown={(event) => {
           if (isRecording) {
             captureShortcut(binding.action, event);
