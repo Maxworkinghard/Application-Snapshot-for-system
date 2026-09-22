@@ -10,7 +10,9 @@ The **Tauri 2 app at the repository root is the whole application**. It is one c
 
 ## Platform capabilities
 
-System capabilities sit behind a shared interface with one adapter per platform, so the calling code does not change between systems.
+Each platform has its own native implementation behind a shared set of commands. **Capabilities and behaviour differ per platform** — the same button may go through entirely different system APIs, with different edge cases. See the table below, and the "local capabilities" panel in Settings, which each adapter reports at runtime rather than being hard-coded copy.
+
+Only the parts that do not depend on system capabilities are shared: settings, snapshot history, prompt polishing, the UI. Anything the OS itself provides where the platforms genuinely differ — recording, OCR, window control — is written separately for each. Picking a lowest-common-denominator implementation for the sake of uniformity produced something that was not good enough anywhere.
 
 | | Windows | macOS | Linux |
 |---|---|---|---|
