@@ -7,7 +7,7 @@ use std::env;
 use std::fs;
 use std::io::Write;
 use std::os::unix::fs::OpenOptionsExt;
-use std::path::PathBuf;
+use std::path::{Path, PathBuf};
 use std::process::Command;
 
 const DESKTOP_NAME: &str = "com.appsnapshot.prompt-pet-shortcut.desktop";
@@ -81,12 +81,10 @@ pub fn apply_launch_on_boot(enabled: bool) -> Result<(), String> {
     Ok(())
 }
 
-/// 探测 XDG autostart 目录是否可写（给能力面板用）。
-pub fn autostart_capability() -> Result<(), String> {
-    let dir = autostart_dir();
-    match fs::create_dir_all(&dir) {
+/// 探测给定目录是否可写（能力面板 / 单测复用）。
+pub(crate) fn probe_autostart_dir(dir: &Path) -> Result<(), String> {
+    match fs::create_dir_all(dir) {
         Ok(()) => {
-            // 试写一个临时文件再删，确认可写
             let probe = dir.join(".snapshot-autostart-write-probe");
             match fs::OpenOptions::new()
                 .write(true)
@@ -108,5 +106,51 @@ pub fn autostart_capability() -> Result<(), String> {
         Err(error) => Err(format!(
             "无法创建 ~/.config/autostart（{error}）；仍可保存偏好，但系统自启项写不进去"
         )),
+    }
+}
+
+/// 探测 XDG autostart 目录是否可写（给能力面板用）。
+pub fn autostart_capability() -> Result<(), String> {
+    probe_autostart_dir(&autostart_dir())
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use std::os::unix::fs::PermissionsExt;
+    use std::time::{SystemTime, UNIX_EPOCH};
+
+    fn unique_temp_subdir(label: &str) -> PathBuf {
+        let stamp = SystemTime::now()
+            .duration_since(UNIX_EPOCH)
+            .unwrap_or_default()
+            .as_nanos();
+        let dir = env::temp_dir().join(format!("snapshot-autostart-test-{label}-{stamp}"));
+        let _ = fs::remove_dir_all(&dir);
+        dir
+    }
+
+    #[test]
+    fn probe_ok_on_writable_dir() {
+        let dir = unique_temp_subdir("ok");
+        fs::create_dir_all(&dir).expect("create temp autostart dir");
+        assert!(probe_autostart_dir(&dir).is_ok());
+        let _ = fs::remove_dir_all(&dir);
+    }
+
+    #[test]
+    fn probe_err_on_non_writable_dir() {
+        let dir = unique_temp_subdir("ro");
+        fs::create_dir_all(&dir).expect("create temp autostart dir");
+        let mut perms = fs::metadata(&dir).expect("meta").permissions();
+        perms.set_mode(0o555);
+        fs::set_permissions(&dir, perms).expect("chmod 555");
+        let result = probe_autostart_dir(&dir);
+        // restore writable so cleanup works
+        let mut perms = fs::metadata(&dir).expect("meta").permissions();
+        perms.set_mode(0o755);
+        let _ = fs::set_permissions(&dir, perms);
+        let _ = fs::remove_dir_all(&dir);
+        assert!(result.is_err(), "expected Err on non-writable dir, got {result:?}");
     }
 }
