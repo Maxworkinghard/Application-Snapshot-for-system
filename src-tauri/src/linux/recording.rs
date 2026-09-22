@@ -1,0 +1,494 @@
+//! Linux 录制：优先 ffmpeg x11grab；纯 Wayland（无 `$DISPLAY`）走
+//! xdg-desktop-portal ScreenCast（经 xcap）+ PipeWire 帧 → ffmpeg rawvideo。
+
+use std::env;
+use std::io::Write;
+use std::path::Path;
+use std::process::{Child, Command, Stdio};
+use std::sync::atomic::{AtomicBool, Ordering};
+use std::sync::Arc;
+use std::thread;
+use std::time::Duration;
+
+use xcap::{Monitor, Window};
+
+/// 当前会话是 X11 还是 Wayland（给错误信息与设置页用）。
+pub fn display_server_label() -> &'static str {
+    if env::var_os("WAYLAND_DISPLAY").is_some() && env::var_os("DISPLAY").is_none() {
+        "Wayland"
+    } else if env::var_os("WAYLAND_DISPLAY").is_some() {
+        "Wayland (XWayland available)"
+    } else if env::var_os("DISPLAY").is_some() {
+        "X11"
+    } else {
+        "unknown"
+    }
+}
+
+/// 纯 Wayland、没有可用的 `$DISPLAY` 时走 portal；有 DISPLAY 时继续 x11grab。
+pub fn should_use_portal() -> bool {
+    env::var_os("DISPLAY").is_none()
+        && (env::var_os("WAYLAND_DISPLAY").is_some()
+            || env::var("XDG_SESSION_TYPE")
+                .map(|v| v.eq_ignore_ascii_case("wayland"))
+                .unwrap_or(false))
+}
+
+fn ensure_ffmpeg() -> Result<(), String> {
+    if Command::new("ffmpeg").arg("-version").output().is_err() {
+        return Err(
+            "未找到 ffmpeg，请安装后将它加入 PATH（如 apt install ffmpeg） / ffmpeg not found on PATH"
+                .into(),
+        );
+    }
+    Ok(())
+}
+
+/// 探测 session bus 上 ScreenCast portal 是否存在（不弹授权框）。
+pub fn portal_screencast_available() -> Result<(), String> {
+    let conn = zbus::blocking::Connection::session().map_err(|error| {
+        format!(
+            "无法连接 session D-Bus（ScreenCast 需要）：{error} / session D-Bus unavailable: {error}"
+        )
+    })?;
+    let proxy = zbus::blocking::Proxy::new(
+        &conn,
+        "org.freedesktop.portal.Desktop",
+        "/org/freedesktop/portal/desktop",
+        "org.freedesktop.DBus.Introspectable",
+    )
+    .map_err(|error| format!("xdg-desktop-portal 不可用：{error} / portal missing: {error}"))?;
+    let xml: String = proxy
+        .call("Introspect", &())
+        .map_err(|error| format!("无法探测 portal：{error} / cannot introspect portal: {error}"))?;
+    if !xml.contains("org.freedesktop.portal.ScreenCast") {
+        return Err(
+            "桌面未提供 org.freedesktop.portal.ScreenCast（请安装 xdg-desktop-portal 及对应后端，如 portal-gtk / portal-gnome / portal-kde） / ScreenCast portal interface missing"
+                .into(),
+        );
+    }
+    Ok(())
+}
+
+/// 录制是否可用：X11/`$DISPLAY` 或 portal ScreenCast。
+pub fn recording_available() -> Result<(), String> {
+    ensure_ffmpeg()?;
+    if should_use_portal() {
+        return portal_screencast_available().map_err(|detail| {
+            format!(
+                "当前是 {} 会话且没有 X11 DISPLAY。门户录制不可用：{detail}",
+                display_server_label()
+            )
+        });
+    }
+    if env::var_os("DISPLAY").is_none() {
+        return Err(format!(
+            "当前是 {} 会话且没有 X11 DISPLAY，窗口录制需要 X11/XWayland 或可用的 xdg-desktop-portal ScreenCast / recording needs X11 DISPLAY or ScreenCast portal",
+            display_server_label()
+        ));
+    }
+    Ok(())
+}
+
+/// 能力探测文案（设置 / diagnostics）。
+pub fn recording_capability_detail() -> String {
+    match recording_available() {
+        Ok(()) if should_use_portal() => {
+            format!(
+                "portal ScreenCast + PipeWire → ffmpeg · {}",
+                display_server_label()
+            )
+        }
+        Ok(()) => format!("ffmpeg x11grab · {}", display_server_label()),
+        Err(detail) => detail,
+    }
+}
+
+/// 组装 x11grab 输入参数：`-f x11grab … -i :N.N+x,y`
+///
+/// 旧实现写死 `:0.0`，远程桌面 / 多显示 / `DISPLAY=:3` 会录错屏。
+pub fn build_ffmpeg_grab_args(
+    target_id: u32,
+    include_cursor: bool,
+) -> Result<Vec<String>, String> {
+    ensure_ffmpeg()?;
+    if env::var_os("DISPLAY").is_none() {
+        return Err("x11grab 需要 $DISPLAY".into());
+    }
+
+    let display = env::var("DISPLAY").unwrap_or_else(|_| ":0".into());
+    // ffmpeg 的 x11grab 接受 `:3.0+x,y`；若 DISPLAY 已是 `:3.0` 就原样用。
+    let display_spec = if display.contains('.') {
+        display
+    } else {
+        format!("{display}.0")
+    };
+
+    let window = Window::all()
+        .map_err(|error| error.to_string())?
+        .into_iter()
+        .find(|window| window.id().ok() == Some(target_id))
+        .ok_or_else(|| "目标窗口已关闭".to_string())?;
+
+    let width = window.width().map_err(|e| e.to_string())?.max(2);
+    let height = window.height().map_err(|e| e.to_string())?.max(2);
+    // 奇数边长会导致 yuv420p 编码失败，向下取偶
+    let width = width & !1;
+    let height = height & !1;
+    let x = window.x().map_err(|e| e.to_string())?;
+    let y = window.y().map_err(|e| e.to_string())?;
+
+    let mut args = vec![
+        "-f".into(),
+        "x11grab".into(),
+        "-framerate".into(),
+        "30".into(),
+        "-video_size".into(),
+        format!("{width}x{height}"),
+        "-i".into(),
+        format!("{display_spec}+{x},{y}"),
+    ];
+    // x11grab 默认带鼠标；关闭时显式关掉，与设置项对齐
+    if !include_cursor {
+        args.extend(["-draw_mouse".into(), "0".into()]);
+    }
+    Ok(args)
+}
+
+/// 停止策略：x11grab 写 `q`；portal rawvideo 靠关闭 stdin EOF。
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum StopKind {
+    FfmpegQuit,
+    StdinEof,
+}
+
+/// portal 路径持有的句柄（停录时 stop + 打断写帧线程）。
+pub struct PortalHandle {
+    video_recorder: xcap::VideoRecorder,
+    stop_flag: Arc<AtomicBool>,
+}
+
+/// 一次已启动的 Linux 录制（ffmpeg 子进程 + 可选 portal）。
+pub struct ActiveRecording {
+    pub child: Child,
+    pub stop_kind: StopKind,
+    pub portal: Option<PortalHandle>,
+}
+
+impl ActiveRecording {
+    /// 优雅停止：portal 先停 PipeWire 泵，再 EOF/quit ffmpeg。
+    pub fn stop(mut self) {
+        if let Some(portal) = self.portal.take() {
+            portal.stop_flag.store(true, Ordering::SeqCst);
+            let _ = portal.video_recorder.stop();
+            // 给写帧线程一点时间关掉 stdin，让 MP4 收尾
+            thread::sleep(Duration::from_millis(200));
+        }
+        match self.stop_kind {
+            StopKind::FfmpegQuit => {
+                if let Some(stdin) = self.child.stdin.as_mut() {
+                    let _ = stdin.write_all(b"q\n");
+                }
+            }
+            StopKind::StdinEof => {
+                // stdin 已交给写帧线程；再保险关一次（若仍在）
+                drop(self.child.stdin.take());
+            }
+        }
+        let _ = self.child.wait();
+    }
+}
+
+/// 启动录制：有 `$DISPLAY` → x11grab；否则 portal ScreenCast。
+///
+/// `target_id` / `include_cursor` 在 x11grab 路径生效。portal 路径由桌面选择器挑源；
+/// `include_cursor` 目前随门户/合成器默认（xcap ScreenCast 未暴露 cursor_mode）。
+pub fn start_recording(
+    target_id: u32,
+    include_cursor: bool,
+    output: &Path,
+) -> Result<ActiveRecording, String> {
+    ensure_ffmpeg()?;
+    if should_use_portal() {
+        return start_portal_recording(include_cursor, output);
+    }
+    start_x11_recording(target_id, include_cursor, output)
+}
+
+fn start_x11_recording(
+    target_id: u32,
+    include_cursor: bool,
+    output: &Path,
+) -> Result<ActiveRecording, String> {
+    let mut command = Command::new("ffmpeg");
+    command.arg("-y");
+    for arg in build_ffmpeg_grab_args(target_id, include_cursor)? {
+        command.arg(arg);
+    }
+    command.args([
+        "-c:v",
+        "libx264",
+        "-preset",
+        "veryfast",
+        "-pix_fmt",
+        "yuv420p",
+        "-crf",
+        "23",
+    ]);
+    command.arg(output);
+    command
+        .stdin(Stdio::piped())
+        .stdout(Stdio::null())
+        .stderr(Stdio::null());
+    let child = command
+        .spawn()
+        .map_err(|_| "未找到 ffmpeg，请安装后将它加入 PATH".to_string())?;
+    Ok(ActiveRecording {
+        child,
+        stop_kind: StopKind::FfmpegQuit,
+        portal: None,
+    })
+}
+
+fn start_portal_recording(
+    include_cursor: bool,
+    output: &Path,
+) -> Result<ActiveRecording, String> {
+    // xcap 的 ScreenCast 未暴露 cursor_mode；保留参数避免调用方分叉，并在能力文案里说明。
+    let _ = include_cursor;
+
+    portal_screencast_available()?;
+
+    let monitor = Monitor::all()
+        .map_err(|error| {
+            format!(
+                "无法列出显示器（ScreenCast）：{error} / cannot list monitors: {error}"
+            )
+        })?
+        .into_iter()
+        .next()
+        .ok_or_else(|| {
+            "没有可用显示器 / no monitor available for ScreenCast".to_string()
+        })?;
+
+    // 此处会触发门户选择器；无图形会话 / 用户取消会失败。
+    let (video_recorder, frame_rx) = monitor.video_recorder().map_err(|error| {
+        format!(
+            "启动 xdg-desktop-portal ScreenCast 失败：{error}。请在图形 Wayland 会话中允许屏幕共享，并确认已安装 xdg-desktop-portal 与桌面后端。 / ScreenCast failed: {error}"
+        )
+    })?;
+
+    video_recorder.start().map_err(|error| {
+        format!("ScreenCast start 失败：{error} / ScreenCast start failed: {error}")
+    })?;
+
+    // 等首帧以确定真实分辨率（门户裁剪/缩放可能与 Monitor 元数据不一致）
+    let first = frame_rx
+        .recv_timeout(Duration::from_secs(90))
+        .map_err(|_| {
+            "等待 ScreenCast 画面超时（请在弹窗中选择屏幕/窗口并允许共享） / timed out waiting for ScreenCast frames — approve the portal dialog".to_string()
+        })?;
+
+    let width = first.width.max(2) & !1;
+    let height = first.height.max(2) & !1;
+    if width < 2 || height < 2 {
+        let _ = video_recorder.stop();
+        return Err("ScreenCast 画面尺寸无效 / invalid ScreenCast frame size".into());
+    }
+
+    let mut command = Command::new("ffmpeg");
+    command.args([
+        "-y",
+        "-f",
+        "rawvideo",
+        "-pix_fmt",
+        "rgba",
+        "-video_size",
+        &format!("{width}x{height}"),
+        "-framerate",
+        "30",
+        "-i",
+        "pipe:0",
+        "-c:v",
+        "libx264",
+        "-preset",
+        "veryfast",
+        "-pix_fmt",
+        "yuv420p",
+        "-crf",
+        "23",
+    ]);
+    command.arg(output);
+    command
+        .stdin(Stdio::piped())
+        .stdout(Stdio::null())
+        .stderr(Stdio::null());
+
+    let mut child = command
+        .spawn()
+        .map_err(|error| format!("启动 ffmpeg 失败：{error}"))?;
+    let mut stdin = child
+        .stdin
+        .take()
+        .ok_or_else(|| "ffmpeg stdin 不可用".to_string())?;
+
+    let stop_flag = Arc::new(AtomicBool::new(false));
+    let flag = Arc::clone(&stop_flag);
+
+    // 先写入首帧，再泵后续帧；尺寸不一致时跳过（避免搞坏 rawvideo）
+    if let Err(error) = write_even_rgba_frame(&mut stdin, &first.raw, first.width, first.height, width, height)
+    {
+        flag.store(true, Ordering::SeqCst);
+        let _ = video_recorder.stop();
+        let _ = child.kill();
+        let _ = child.wait();
+        return Err(format!("写入首帧失败：{error}"));
+    }
+
+    thread::spawn(move || {
+        while !flag.load(Ordering::SeqCst) {
+            match frame_rx.recv_timeout(Duration::from_millis(200)) {
+                Ok(frame) => {
+                    if write_even_rgba_frame(
+                        &mut stdin,
+                        &frame.raw,
+                        frame.width,
+                        frame.height,
+                        width,
+                        height,
+                    )
+                    .is_err()
+                    {
+                        break;
+                    }
+                }
+                Err(std::sync::mpsc::RecvTimeoutError::Timeout) => continue,
+                Err(std::sync::mpsc::RecvTimeoutError::Disconnected) => break,
+            }
+        }
+        // EOF → ffmpeg 收尾 MP4
+        drop(stdin);
+    });
+
+    Ok(ActiveRecording {
+        child,
+        stop_kind: StopKind::StdinEof,
+        portal: Some(PortalHandle {
+            video_recorder,
+            stop_flag,
+        }),
+    })
+}
+
+/// 将 RGBA 帧裁成偶数宽高后写入；尺寸不符预期则跳过（Ok）。
+fn write_even_rgba_frame(
+    stdin: &mut impl Write,
+    raw: &[u8],
+    src_w: u32,
+    src_h: u32,
+    dst_w: u32,
+    dst_h: u32,
+) -> std::io::Result<()> {
+    if src_w == dst_w && src_h == dst_h && raw.len() >= (dst_w * dst_h * 4) as usize {
+        return stdin.write_all(&raw[..(dst_w * dst_h * 4) as usize]);
+    }
+    // 同源分辨率但奇偶裁切
+    if (src_w & !1) == dst_w && (src_h & !1) == dst_h {
+        let mut buf = Vec::with_capacity((dst_w * dst_h * 4) as usize);
+        for y in 0..dst_h {
+            let start = ((y * src_w) * 4) as usize;
+            let end = start + (dst_w * 4) as usize;
+            if end > raw.len() {
+                return Ok(());
+            }
+            buf.extend_from_slice(&raw[start..end]);
+        }
+        return stdin.write_all(&buf);
+    }
+    // 分辨率中途变化：跳过该帧，避免 rawvideo 错位
+    Ok(())
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use std::sync::Mutex;
+
+    // env mutations must be serialized across tests
+    static ENV_LOCK: Mutex<()> = Mutex::new(());
+
+    fn restore_env(old_w: Option<std::ffi::OsString>, old_d: Option<std::ffi::OsString>, old_s: Option<std::ffi::OsString>) {
+        unsafe {
+            match old_w {
+                Some(v) => std::env::set_var("WAYLAND_DISPLAY", v),
+                None => std::env::remove_var("WAYLAND_DISPLAY"),
+            }
+            match old_d {
+                Some(v) => std::env::set_var("DISPLAY", v),
+                None => std::env::remove_var("DISPLAY"),
+            }
+            match old_s {
+                Some(v) => std::env::set_var("XDG_SESSION_TYPE", v),
+                None => std::env::remove_var("XDG_SESSION_TYPE"),
+            }
+        }
+    }
+
+    #[test]
+    fn display_label_prefers_wayland_without_x11() {
+        let _guard = ENV_LOCK.lock().unwrap();
+        let old_w = std::env::var_os("WAYLAND_DISPLAY");
+        let old_d = std::env::var_os("DISPLAY");
+        let old_s = std::env::var_os("XDG_SESSION_TYPE");
+        unsafe {
+            std::env::set_var("WAYLAND_DISPLAY", "wayland-0");
+            std::env::remove_var("DISPLAY");
+        }
+        assert_eq!(display_server_label(), "Wayland");
+        assert!(should_use_portal());
+        restore_env(old_w, old_d, old_s);
+    }
+
+    #[test]
+    fn x11_display_prefers_x11grab_not_portal() {
+        let _guard = ENV_LOCK.lock().unwrap();
+        let old_w = std::env::var_os("WAYLAND_DISPLAY");
+        let old_d = std::env::var_os("DISPLAY");
+        let old_s = std::env::var_os("XDG_SESSION_TYPE");
+        unsafe {
+            std::env::remove_var("WAYLAND_DISPLAY");
+            std::env::set_var("DISPLAY", ":3");
+            std::env::remove_var("XDG_SESSION_TYPE");
+        }
+        assert!(!should_use_portal());
+        assert_eq!(display_server_label(), "X11");
+        restore_env(old_w, old_d, old_s);
+    }
+
+    #[test]
+    fn recording_rejects_missing_display_without_portal_env_gracefully() {
+        let _guard = ENV_LOCK.lock().unwrap();
+        let old_w = std::env::var_os("WAYLAND_DISPLAY");
+        let old_d = std::env::var_os("DISPLAY");
+        let old_s = std::env::var_os("XDG_SESSION_TYPE");
+        unsafe {
+            std::env::set_var("WAYLAND_DISPLAY", "wayland-0");
+            std::env::remove_var("DISPLAY");
+            std::env::set_var("XDG_SESSION_TYPE", "wayland");
+        }
+        // 无真实门户会话时：应得到明确错误（portal 探测或 ffmpeg），而不是 panic
+        let result = recording_available();
+        if let Err(err) = result {
+            assert!(
+                err.contains("DISPLAY")
+                    || err.contains("Wayland")
+                    || err.contains("portal")
+                    || err.contains("ScreenCast")
+                    || err.contains("D-Bus")
+                    || err.contains("ffmpeg"),
+                "unexpected: {err}"
+            );
+        }
+        restore_env(old_w, old_d, old_s);
+    }
+}

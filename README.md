@@ -15,11 +15,11 @@ System capabilities sit behind a shared interface with one adapter per platform,
 | | Windows | macOS | Linux |
 |---|---|---|---|
 | Window capture | xcap | xcap | xcap |
-| Window recording | ffmpeg `gdigrab` | ffmpeg `avfoundation` (main screen, cropped to the window) | ffmpeg `x11grab` |
+| Window recording | ffmpeg `gdigrab` | ffmpeg `avfoundation` (main screen, cropped to the window) | ffmpeg `x11grab` (X11); portal ScreenCast + PipeWire → ffmpeg (pure Wayland) |
 | Text recognition | `Windows.Media.Ocr` | Vision via a `snapshot-ocr` helper | `tesseract` |
 | Snapshot history, companion, prompt polishing | yes | yes | yes |
 
-The Windows adapters, the macOS `snapshot-ocr` helper, and the macOS window adapters (capture, previous-app icon via `NSRunningApplication`, minimized-window restore via the Accessibility API) have been exercised on a real machine. macOS recording is wired via ffmpeg `avfoundation` and compile-tested, but has not been live-tested end to end. The Linux adapter has not been compiled or run yet.
+The Windows adapters, the macOS `snapshot-ocr` helper, and the macOS window adapters (capture, previous-app icon via `NSRunningApplication`, minimized-window restore via the Accessibility API) have been exercised on a real machine. macOS recording is wired via ffmpeg `avfoundation` and compile-tested, but has not been live-tested end to end. The Linux adapters compile and cover X11 recording, portal ScreenCast recording for pure Wayland, `tesseract` OCR, XDG autostart (opt-in) and best-effort app icons; parts have been exercised on a real desktop, and the pure Wayland path still needs an end-to-end pass.
 
 ## Requirements
 
@@ -42,6 +42,30 @@ Production build:
 npm run build          # front end only
 npm run tauri build    # installer
 ```
+
+
+## Linux
+
+```bash
+# Debian / Ubuntu — build + optional runtime deps
+sudo bash scripts/linux/install-deps.sh
+bash scripts/linux/check-env.sh
+
+npm install
+npm run tauri dev            # development
+bash scripts/linux/build.sh  # release binary + deb/AppImage when bundlers succeed
+```
+
+| Optional tool | Feature |
+|---|---|
+| `ffmpeg` | Window recording (`x11grab` when `$DISPLAY` is set; portal path encodes via ffmpeg `rawvideo`) |
+| `tesseract` + language packs | OCR |
+| `xdotool` | Restore a minimized target window before capture |
+| StatusNotifierHost | System tray (KDE native; GNOME needs an AppIndicator extension) |
+
+**Autostart** is opt-in via Settings → 开机静默自启动. It writes `~/.config/autostart/com.appsnapshot.prompt-pet-shortcut.desktop`. An **optional** systemd `--user` unit example lives at `scripts/linux/com.appsnapshot.prompt-pet-shortcut.service.example` (advanced; never enabled by the app).
+
+More detail: [scripts/linux/README.md](scripts/linux/README.md).
 
 ## Shortcuts
 
