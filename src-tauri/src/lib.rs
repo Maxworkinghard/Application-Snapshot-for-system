@@ -11,12 +11,15 @@ use chrono::Local;
 use image::{DynamicImage, ImageFormat, RgbaImage};
 use parking_lot::Mutex;
 use regex::Regex;
+// 只有 macOS 的 recorder sidecar 要按行读子进程输出
+#[cfg(target_os = "macos")]
+use std::io::{BufRead, BufReader};
 use serde::{Deserialize, Serialize};
 use serde_json::{json, Value};
 use std::{
     borrow::Cow,
     fs,
-    io::{BufRead, BufReader, Cursor, Read, Write},
+    io::{Cursor, Read, Write},
     path::{Path, PathBuf},
     process::{Child, Command},
     sync::{
@@ -2133,6 +2136,7 @@ fn refresh_recording_process(recorder: &mut Recorder) {
 }
 
 #[cfg(not(target_os = "linux"))]
+#[cfg(target_os = "macos")]
 fn capture_child_stderr(stderr: Option<std::process::ChildStderr>) -> Arc<Mutex<String>> {
     let diagnostic = Arc::new(Mutex::new(String::new()));
     if let Some(mut stderr) = stderr {
