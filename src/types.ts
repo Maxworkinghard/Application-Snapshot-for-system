@@ -4,6 +4,7 @@ export type ShortcutAction =
   | "fullscreen"
   | "scrolling"
   | "record"
+  | "recordings"
   | "polish"
   | "ocr";
 
@@ -39,6 +40,7 @@ export interface Settings {
   clipboardAutoClear: "30s" | "60s" | "5m" | "never";
   snapshotFormat: "png" | "jpeg" | "webp";
   saveDir: string;
+  recordingDir: string;
   customTheme: string | null;
   shutterSound: "crisp" | "soft" | "none" | "custom";
   customSoundPath: string | null;
