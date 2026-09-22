@@ -124,9 +124,10 @@ export async function captureWindow(id?: number): Promise<string> {
   return invoke<string>("capture_window", { id: id ?? null });
 }
 
-export async function toggleRecording(): Promise<RecordingStatus> {
+/** `targetId` 指定录哪个窗口；不给就沿用「上一个应用」。停止录制时不需要它。 */
+export async function toggleRecording(targetId?: number): Promise<RecordingStatus> {
   if (!inTauri) return { active: false, target: null, startedAt: null };
-  return invoke<RecordingStatus>("toggle_recording");
+  return invoke<RecordingStatus>("toggle_recording", { targetId: targetId ?? null });
 }
 
 export async function getRecordingStatus(): Promise<RecordingStatus> {
