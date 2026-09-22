@@ -928,15 +928,19 @@ fn save_preferences(
     }
     if let Some(value) = prefs.launch_on_boot {
         settings.launch_on_boot = value;
+        // 只在显式改动时写系统启动项，默认不装。
         #[cfg(target_os = "linux")]
         {
-            // 与 Windows「用户勾选才生效」一致：只在显式改动时写 XDG autostart，默认不装。
             linux::apply_launch_on_boot(value)?;
         }
         #[cfg(target_os = "macos")]
         {
             // 同上：勾选才写 LaunchAgent，取消即删除。
             mac_autostart::apply_launch_on_boot(value)?;
+        }
+        #[cfg(target_os = "windows")]
+        {
+            windows_autostart::apply(value)?;
         }
     }
     if let Some(value) = prefs.include_cursor {
@@ -1243,8 +1247,8 @@ fn platform_capabilities() -> PlatformCapabilities {
                 detail: ocr_report.detail,
             },
             autostart: CapabilityStatus {
-                available: false,
-                detail: "设置项已保存；系统自启挂钩尚未接入".into(),
+                available: true,
+                detail: "写入 HKCU\\...\\CurrentVersion\\Run（当前用户，opt-in）".into(),
             },
             scrolling: CapabilityStatus {
                 available: false,
@@ -1252,11 +1256,11 @@ fn platform_capabilities() -> PlatformCapabilities {
             },
             include_cursor: CapabilityStatus {
                 available: true,
-                detail: "录制：gdigrab -draw_mouse；静帧截图目前不合成光标".into(),
+                detail: "录制：gdigrab -draw_mouse；静帧：按热点合成系统光标".into(),
             },
             tray_note: "NotifyIcon：左键/双击打开主窗口；右键菜单打开设置/退出。".into(),
             notes: vec![
-                "开机自启仅保存偏好，尚未挂钩系统启动项".into(),
+                "静帧光标只支持 32 位带 alpha 的现代光标；老式单色光标会跳过合成".into(),
             ],
         };
     }
@@ -1524,11 +1528,21 @@ fn capture_window_image(
             _ => Some(cursor_degrade_note("无法读取窗口几何，已回退无光标截图")),
         };
     }
+    #[cfg(target_os = "windows")]
+    if include_cursor {
+        // 同 macOS：xcap 只给窗口像素，光标要自己画
+        note = match (window.x(), window.y(), window.width()) {
+            (Ok(x), Ok(y), Ok(width)) => windows_cursor::overlay_into(&mut image, (x, y), width)
+                .err()
+                .map(|error| cursor_degrade_note(&error)),
+            _ => Some(cursor_degrade_note("无法读取窗口几何，已回退无光标截图")),
+        };
+    }
     Ok((image, note))
 }
 
 /// 把光标合成失败的原因压成短中文，附在截图成功 toast 后。
-#[cfg(any(target_os = "linux", target_os = "macos"))]
+#[cfg(any(target_os = "linux", target_os = "macos", target_os = "windows"))]
 fn cursor_degrade_note(error: &str) -> String {
     let head = error.split(" / ").next().unwrap_or(error).trim();
     let short: String = head.chars().take(48).collect();
@@ -1634,11 +1648,20 @@ fn save_image_as_dialog(app: &AppHandle, image: &RgbaImage, format_setting: &str
 
 #[cfg(target_os = "windows")]
 fn restore_minimized_window(id: u32) -> Result<(), String> {
-    use windows_sys::Win32::UI::WindowsAndMessaging::{ShowWindow, SW_RESTORE};
+    use windows_sys::Win32::{
+        Foundation::HWND,
+        UI::WindowsAndMessaging::{IsIconic, ShowWindow, SW_RESTORE},
+    };
+    let handle: HWND = id as usize as *mut _;
     unsafe {
-        let _ = ShowWindow(id as usize as *mut _, SW_RESTORE);
+        // ShowWindow 的返回值是「调用前窗口是否可见」，不是成败，据此判断会误报成功。
+        let _ = ShowWindow(handle, SW_RESTORE);
     }
     thread::sleep(Duration::from_millis(220));
+    // 真正的成败只能事后问：仍是最小化就说明系统或目标应用没有接受这次还原。
+    if unsafe { IsIconic(handle) } != 0 {
+        return Err("目标窗口仍处于最小化，未能还原".into());
+    }
     Ok(())
 }
 
@@ -2815,6 +2838,15 @@ fn capture_fullscreen_image(
             _ => Some(cursor_degrade_note("无法读取显示器几何，已回退无光标截图")),
         };
     }
+    #[cfg(target_os = "windows")]
+    if include_cursor {
+        note = match (monitor.x(), monitor.y(), monitor.width()) {
+            (Ok(mx), Ok(my), Ok(mw)) => windows_cursor::overlay_into(&mut image, (mx, my), mw)
+                .err()
+                .map(|error| cursor_degrade_note(&error)),
+            _ => Some(cursor_degrade_note("无法读取显示器几何，已回退无光标截图")),
+        };
+    }
     Ok((image, name, note))
 }
 
@@ -2870,6 +2902,16 @@ fn capture_region_image(
             note = mac_cursor::overlay_into(&mut image, (mx + rel_x as i32, my + rel_y as i32), width)
                 .err()
                 .map(|error| cursor_degrade_note(&error));
+        }
+        #[cfg(target_os = "windows")]
+        if include_cursor {
+            note = windows_cursor::overlay_into(
+                &mut image,
+                (mx + rel_x as i32, my + rel_y as i32),
+                width,
+            )
+            .err()
+            .map(|error| cursor_degrade_note(&error));
         }
         Ok((image, "区域截图".into(), note))
     }
@@ -3183,6 +3225,293 @@ mod mac_icon {
     }
 }
 
+/// Windows 开机自启：在 HKCU 的 Run 键下写一个值。
+/// 不走「启动」文件夹的 .lnk —— 那需要 COM IShellLink，而且用户手动删掉快捷方式后
+/// 设置项仍显示开启，状态会和系统对不上。注册表读写都在当前用户下，无需提权。
+#[cfg(target_os = "windows")]
+mod windows_autostart {
+    use std::{ffi::OsStr, iter::once, os::windows::ffi::OsStrExt};
+    use windows_sys::Win32::System::Registry::{
+        RegDeleteKeyValueW, RegSetKeyValueW, HKEY_CURRENT_USER, REG_SZ,
+    };
+
+    const RUN_KEY: &str = r"Software\Microsoft\Windows\CurrentVersion\Run";
+    /// 注册表值名。改名会在用户机器上留下卸不掉的旧值，所以固定不动。
+    const VALUE_NAME: &str = "AppSnapshot";
+    /// ERROR_FILE_NOT_FOUND：值本来就不存在，删除按成功处理。
+    const ERROR_FILE_NOT_FOUND: u32 = 2;
+
+    fn wide(text: &str) -> Vec<u16> {
+        OsStr::new(text).encode_wide().chain(once(0)).collect()
+    }
+
+    /// 可执行文件路径要带引号：路径含空格时，不加引号会被 Windows 拆成程序名 + 参数。
+    fn command_line() -> Result<Vec<u16>, String> {
+        let exe = std::env::current_exe().map_err(|error| format!("无法定位可执行文件：{error}"))?;
+        Ok(wide(&format!("\"{}\"", exe.display())))
+    }
+
+    pub fn apply(enabled: bool) -> Result<(), String> {
+        let key = wide(RUN_KEY);
+        let name = wide(VALUE_NAME);
+        let status = if enabled {
+            let value = command_line()?;
+            // REG_SZ 的字节数要含结尾的 NUL，少算会让读取方拿到没有终止符的串。
+            let bytes = (value.len() * 2) as u32;
+            unsafe {
+                RegSetKeyValueW(
+                    HKEY_CURRENT_USER,
+                    key.as_ptr(),
+                    name.as_ptr(),
+                    REG_SZ,
+                    value.as_ptr().cast(),
+                    bytes,
+                )
+            }
+        } else {
+            let status =
+                unsafe { RegDeleteKeyValueW(HKEY_CURRENT_USER, key.as_ptr(), name.as_ptr()) };
+            if status == ERROR_FILE_NOT_FOUND {
+                0
+            } else {
+                status
+            }
+        };
+        if status != 0 {
+            let action = if enabled { "写入" } else { "移除" };
+            return Err(format!("无法{action}开机启动项（注册表错误 {status}）"));
+        }
+        Ok(())
+    }
+}
+
+/// Windows 静帧截图的光标合成。
+/// xcap 只给窗口像素、不含光标；录制侧靠 ffmpeg `-draw_mouse`，静帧只能自己画。
+#[cfg(target_os = "windows")]
+mod windows_cursor {
+    use image::{Rgba, RgbaImage};
+    use std::{ffi::c_void, mem::{size_of, zeroed}, ptr::null_mut};
+    use windows_sys::Win32::{
+        Graphics::Gdi::{
+            CreateCompatibleDC, CreateDIBSection, DeleteDC, DeleteObject, GetObjectW, SelectObject,
+            BITMAP, BITMAPINFO, BITMAPINFOHEADER, BI_RGB, DIB_RGB_COLORS,
+        },
+        UI::WindowsAndMessaging::{
+            DrawIconEx, GetCursorInfo, GetIconInfo, CURSORINFO, CURSOR_SHOWING, DI_NORMAL, ICONINFO,
+        },
+    };
+
+    /// 取当前光标的像素、屏幕位置与热点。热点是光标图内对应「尖端」的那个点，
+    /// 贴图时要减掉它，否则光标会整体偏右下。
+    fn cursor_bitmap() -> Option<(RgbaImage, i32, i32, i32, i32)> {
+        unsafe {
+            let mut info: CURSORINFO = zeroed();
+            info.cbSize = size_of::<CURSORINFO>() as u32;
+            if GetCursorInfo(&mut info) == 0
+                || info.flags != CURSOR_SHOWING
+                || info.hCursor.is_null()
+            {
+                return None;
+            }
+            let mut icon: ICONINFO = zeroed();
+            if GetIconInfo(info.hCursor, &mut icon) == 0 {
+                return None;
+            }
+            // 单色光标的掩码位图是上下两段（AND + XOR），高度要折半才是真实尺寸。
+            let mut bitmap: BITMAP = zeroed();
+            let (source, halve) = if icon.hbmColor.is_null() {
+                (icon.hbmMask, true)
+            } else {
+                (icon.hbmColor, false)
+            };
+            let measured = GetObjectW(
+                source,
+                size_of::<BITMAP>() as i32,
+                (&mut bitmap as *mut BITMAP).cast(),
+            );
+            if !icon.hbmMask.is_null() {
+                DeleteObject(icon.hbmMask);
+            }
+            if !icon.hbmColor.is_null() {
+                DeleteObject(icon.hbmColor);
+            }
+            if measured == 0 || bitmap.bmWidth <= 0 || bitmap.bmHeight <= 0 {
+                return None;
+            }
+            let width = bitmap.bmWidth;
+            let height = if halve {
+                bitmap.bmHeight / 2
+            } else {
+                bitmap.bmHeight
+            };
+            if height <= 0 {
+                return None;
+            }
+
+            let dc = CreateCompatibleDC(null_mut());
+            if dc.is_null() {
+                return None;
+            }
+            let mut bitmap_info: BITMAPINFO = zeroed();
+            bitmap_info.bmiHeader.biSize = size_of::<BITMAPINFOHEADER>() as u32;
+            bitmap_info.bmiHeader.biWidth = width;
+            bitmap_info.bmiHeader.biHeight = -height;
+            bitmap_info.bmiHeader.biPlanes = 1;
+            bitmap_info.bmiHeader.biBitCount = 32;
+            bitmap_info.bmiHeader.biCompression = BI_RGB;
+            let mut bits: *mut c_void = null_mut();
+            let dib = CreateDIBSection(dc, &bitmap_info, DIB_RGB_COLORS, &mut bits, null_mut(), 0);
+            if dib.is_null() || bits.is_null() {
+                DeleteDC(dc);
+                return None;
+            }
+            let old = SelectObject(dc, dib);
+            let drawn = DrawIconEx(dc, 0, 0, info.hCursor, width, height, 0, null_mut(), DI_NORMAL);
+            let raw = std::slice::from_raw_parts(bits as *const u8, (width * height * 4) as usize);
+            // 现代 Windows 光标是 32 位带 alpha 的。老式单色光标画出来 alpha 全 0，
+            // 这时宁可不贴，也好过糊一个黑块在截图上。
+            let usable = drawn != 0 && raw.chunks_exact(4).any(|pixel| pixel[3] != 0);
+            let mut image = RgbaImage::new(width as u32, height as u32);
+            if usable {
+                for (index, pixel) in raw.chunks_exact(4).enumerate() {
+                    let x = (index as i32) % width;
+                    let y = (index as i32) / width;
+                    image.put_pixel(
+                        x as u32,
+                        y as u32,
+                        Rgba([pixel[2], pixel[1], pixel[0], pixel[3]]),
+                    );
+                }
+            }
+            SelectObject(dc, old);
+            DeleteObject(dib);
+            DeleteDC(dc);
+            if !usable {
+                return None;
+            }
+            Some((
+                image,
+                info.ptScreenPos.x,
+                info.ptScreenPos.y,
+                icon.xHotspot as i32,
+                icon.yHotspot as i32,
+            ))
+        }
+    }
+
+    /// 截图像素与逻辑点的比例，以及光标贴图的左上角像素坐标。
+    /// 与 mac_cursor 同一套算法：先按缩放把「光标相对窗口的位移」换算成像素，
+    /// 再减掉热点——热点是光标图内对应尖端的那个点，不减会整体偏右下。
+    fn overlay_origin_px(
+        cursor_screen: (i32, i32),
+        hot_spot: (i32, i32),
+        window_origin: (i32, i32),
+        scale: f64,
+    ) -> (i32, i32) {
+        let left = (f64::from(cursor_screen.0 - window_origin.0) * scale).round() as i32 - hot_spot.0;
+        let top = (f64::from(cursor_screen.1 - window_origin.1) * scale).round() as i32 - hot_spot.1;
+        (left, top)
+    }
+
+    /// 把当前光标合成进刚截下来的位图。
+    ///
+    /// `window_origin` / `logical_width` 是 xcap 报的窗口左上角与逻辑宽度，
+    /// 用来换算截图像素与点的比例。失败一律返回 Err，由调用方拼成降级说明，
+    /// 避免用户开了「包含光标」却拿到一张没光标的图而毫不知情。
+    pub fn overlay_into(
+        image: &mut RgbaImage,
+        window_origin: (i32, i32),
+        logical_width: u32,
+    ) -> Result<(), String> {
+        if logical_width == 0 {
+            return Err("窗口逻辑宽度为 0，无法换算缩放".into());
+        }
+        let scale = f64::from(image.width()) / f64::from(logical_width);
+        if !(0.5..=4.0).contains(&scale) {
+            return Err(format!("截图与窗口的缩放比例异常（{scale:.2}）"));
+        }
+        let (cursor, screen_x, screen_y, hot_x, hot_y) =
+            cursor_bitmap().ok_or("取不到当前系统光标位图")?;
+        let (left, top) = overlay_origin_px((screen_x, screen_y), (hot_x, hot_y), window_origin, scale);
+        blend(image, &cursor, left, top);
+        Ok(())
+    }
+
+    /// 按 alpha 把光标叠上去，落在画布外的像素直接丢弃。
+    fn blend(image: &mut RgbaImage, cursor: &RgbaImage, left: i32, top: i32) {
+        for (x, y, pixel) in cursor.enumerate_pixels() {
+            let alpha = pixel[3] as u32;
+            if alpha == 0 {
+                continue;
+            }
+            let target_x = left + x as i32;
+            let target_y = top + y as i32;
+            if target_x < 0
+                || target_y < 0
+                || target_x >= image.width() as i32
+                || target_y >= image.height() as i32
+            {
+                continue;
+            }
+            let base = *image.get_pixel(target_x as u32, target_y as u32);
+            let mix = |over: u8, under: u8| -> u8 {
+                ((over as u32 * alpha + under as u32 * (255 - alpha)) / 255) as u8
+            };
+            image.put_pixel(
+                target_x as u32,
+                target_y as u32,
+                Rgba([
+                    mix(pixel[0], base[0]),
+                    mix(pixel[1], base[1]),
+                    mix(pixel[2], base[2]),
+                    base[3].max(pixel[3]),
+                ]),
+            );
+        }
+    }
+
+    #[cfg(test)]
+    mod tests {
+        use super::*;
+        use image::Rgba;
+
+        #[test]
+        fn origin_subtracts_hot_spot_and_window_offset() {
+            // 光标在 (120,140)，窗口左上角 (100,100)，热点 (4,4)，1x 屏
+            assert_eq!(
+                overlay_origin_px((120, 140), (4, 4), (100, 100), 1.0),
+                (16, 36)
+            );
+        }
+
+        #[test]
+        fn high_dpi_scale_doubles_the_offset() {
+            // 同样的点位，200% 缩放下像素偏移要翻倍；热点是图内坐标，不参与缩放
+            assert_eq!(
+                overlay_origin_px((120, 140), (4, 4), (100, 100), 2.0),
+                (36, 76)
+            );
+        }
+
+        #[test]
+        fn blend_respects_alpha_and_clips_out_of_bounds() {
+            let mut canvas = RgbaImage::from_pixel(4, 4, Rgba([0, 0, 0, 255]));
+            let overlay = RgbaImage::from_pixel(2, 2, Rgba([255, 255, 255, 255]));
+            blend(&mut canvas, &overlay, 3, 3); // 只有左上角那个像素落在画布内
+            assert_eq!(canvas.get_pixel(3, 3).0, [255, 255, 255, 255]);
+            assert_eq!(canvas.get_pixel(0, 0).0, [0, 0, 0, 255]);
+        }
+
+        #[test]
+        fn fully_transparent_cursor_changes_nothing() {
+            let mut canvas = RgbaImage::from_pixel(2, 2, Rgba([10, 20, 30, 255]));
+            let overlay = RgbaImage::from_pixel(2, 2, Rgba([255, 255, 255, 0]));
+            blend(&mut canvas, &overlay, 0, 0);
+            assert_eq!(canvas.get_pixel(0, 0).0, [10, 20, 30, 255]);
+        }
+    }
+}
+
 #[cfg(target_os = "windows")]
 mod windows_icon {
     use image::{Rgba, RgbaImage};
@@ -3348,12 +3677,21 @@ pub fn run() {
             }
             start_tracker(app.handle().clone(), tracker);
 
+            // 配置里若已勾选自启，启动时把系统启动项与设置对齐（不会默认打开）。
+            // 应用被移动过路径时，这一步顺带把启动项里的旧路径刷新掉。
             #[cfg(target_os = "linux")]
             {
-                // 配置里若已勾选自启，启动时把 XDG 条目与设置对齐（不会默认打开）。
                 if settings.launch_on_boot {
                     if let Err(error) = linux::apply_launch_on_boot(true) {
                         eprintln!("snapshot: could not sync XDG autostart: {error}");
+                    }
+                }
+            }
+            #[cfg(target_os = "windows")]
+            {
+                if settings.launch_on_boot {
+                    if let Err(error) = windows_autostart::apply(true) {
+                        eprintln!("snapshot: could not sync Run key: {error}");
                     }
                 }
             }
