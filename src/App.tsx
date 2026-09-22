@@ -1400,6 +1400,26 @@ function ShortcutsPage({
     }
   }
 
+  async function chooseRecordingDir() {
+    try {
+      const selected = await open({ directory: true, multiple: false });
+      if (typeof selected === "string") {
+        await updatePrefs({ recordingDir: selected }, "录制目录已更新");
+      }
+    } catch {
+      notify("当前环境不支持选择目录");
+    }
+  }
+
+  async function revealRecordings() {
+    try {
+      // 目录可能还没建过（一次都没录过），后端会先建再打开
+      await openRecordingsDir();
+    } catch (error) {
+      notify(error instanceof Error ? error.message : String(error));
+    }
+  }
+
 
   const renderRow = (binding: ShortcutBinding) => {
     const isRecording = recording === binding.action;
@@ -1554,6 +1574,31 @@ function ShortcutsPage({
                     <FolderOpen size={12} />
                     更改
                   </button>
+                </div>
+              </div>
+              <div className="pref-item-row folder-row">
+                <span className="pref-title">录制保存目录</span>
+                <div className="folder-picker-box">
+                  <span className="folder-path-text" title={settings.recordingDir || undefined}>
+                    {settings.recordingDir || (settings.saveDir ? "跟随上面的本地保存目录" : "默认下载目录")}
+                  </span>
+                  <button type="button" className="folder-action-btn" onClick={() => void chooseRecordingDir()}>
+                    <FolderOpen size={12} />
+                    更改
+                  </button>
+                  <button type="button" className="folder-action-btn" onClick={() => void revealRecordings()}>
+                    打开
+                  </button>
+                  {settings.recordingDir && (
+                    <button
+                      type="button"
+                      className="folder-action-btn"
+                      onClick={() => void updatePrefs({ recordingDir: "" }, "已恢复默认录制目录")}
+                      title="清除后跟随上面的本地保存目录，没设过则落到下载目录"
+                    >
+                      恢复默认
+                    </button>
+                  )}
                 </div>
               </div>
             </div>
@@ -1964,26 +2009,6 @@ function PreferencesPage({
     }
   }
 
-  async function chooseRecordingDir() {
-    try {
-      const selected = await open({ directory: true, multiple: false });
-      if (typeof selected === "string") {
-        await updatePrefs({ recordingDir: selected }, "录制目录已更新");
-      }
-    } catch {
-      notify("当前环境不支持选择目录");
-    }
-  }
-
-  async function revealRecordings() {
-    try {
-      // 目录可能还没建过（一次都没录过），后端会先建再打开
-      await openRecordingsDir();
-    } catch (error) {
-      notify(error instanceof Error ? error.message : String(error));
-    }
-  }
-
   async function importShutterSound() {
     try {
       const selected = await open({ multiple: false, filters: [{ name: "音效文件", extensions: ["mp3", "wav", "ogg", "m4a"] }] });
@@ -2122,43 +2147,6 @@ function PreferencesPage({
             />
           </div>
         </div>
-        </section>
-
-        <section className="hub-section-block">
-          <div className="section-label-bar">
-            <span className="section-name">录制</span>
-          </div>
-          <div className="preferences-group-card">
-            <div className="pref-item-row folder-row">
-              <span className="pref-title">录制保存目录</span>
-              <div className="folder-picker-box">
-                <span className="folder-path-text" title={settings.recordingDir || undefined}>
-                  {settings.recordingDir || (settings.saveDir ? `跟随截图目录：${settings.saveDir}` : "默认下载目录")}
-                </span>
-                <button type="button" className="folder-action-btn" onClick={() => void chooseRecordingDir()}>
-                  <FolderOpen size={12} />
-                  更改
-                </button>
-                {settings.recordingDir && (
-                  <button
-                    type="button"
-                    className="folder-action-btn"
-                    onClick={() => void updatePrefs({ recordingDir: "" }, "已恢复默认录制目录")}
-                    title="清除后跟随截图目录，没设过则落到下载目录"
-                  >
-                    恢复默认
-                  </button>
-                )}
-              </div>
-            </div>
-            <div className="pref-item-row">
-              <span className="pref-title">打开录制目录</span>
-              <button type="button" className="folder-action-btn" onClick={() => void revealRecordings()}>
-                <FolderOpen size={12} />
-                打开
-              </button>
-            </div>
-          </div>
         </section>
 
       {caps && (
