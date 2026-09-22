@@ -1262,7 +1262,7 @@ fn platform_capabilities() -> PlatformCapabilities {
         let recording = if ffmpeg_on_path() {
             CapabilityStatus {
                 available: true,
-                detail: "ffmpeg avfoundation（主屏整屏后按窗口裁剪；副屏窗口可能越界失败；光标由 -capture_cursor 跟随 include_cursor）".into(),
+                detail: "ffmpeg avfoundation（主屏整屏后按窗口裁剪；副屏/跨屏窗口会在录制前被拒并提示移回主屏；光标由 -capture_cursor 跟随 include_cursor）".into(),
             }
         } else {
             CapabilityStatus {
@@ -1295,7 +1295,7 @@ fn platform_capabilities() -> PlatformCapabilities {
             },
             tray_note: "NSStatusItem：左键打开主窗口；菜单打开设置/退出。".into(),
             notes: vec![
-                "macOS 还原最小化窗口在标题对不上时，可能还原该进程全部最小化窗口".into(),
+                "macOS 还原最小化窗口按 AXTitle 对齐；标题对不上且该应用有多个最小化窗口时，不代劳、提示手动还原".into(),
             ],
         };
     }
@@ -1613,6 +1613,95 @@ fn restore_minimized_window(id: u32) -> Result<(), String> {
     // Dock 还原动画比 Windows 的 SW_RESTORE 慢，多等一会再截
     thread::sleep(Duration::from_millis(400));
     Ok(())
+}
+
+#[cfg(target_os = "macos")]
+mod mac_display {
+    //! 主屏范围（点，全局左上原点——与 xcap 报窗口位置同一个坐标系）。
+    //!
+    //! avfoundation 只能采整块屏幕，录窗口是「采主屏 + crop」。窗口在副屏时 crop 的
+    //! 偏移落在采集画面之外，ffmpeg 只会甩一句用户看不懂的失败，所以录制前先做范围检查。
+
+    #[repr(C)]
+    #[derive(Clone, Copy)]
+    struct CGPoint {
+        x: f64,
+        y: f64,
+    }
+
+    #[repr(C)]
+    #[derive(Clone, Copy)]
+    struct CGSize {
+        width: f64,
+        height: f64,
+    }
+
+    #[repr(C)]
+    #[derive(Clone, Copy)]
+    struct CGRect {
+        origin: CGPoint,
+        size: CGSize,
+    }
+
+    extern "C" {
+        fn CGMainDisplayID() -> u32;
+        fn CGDisplayBounds(display: u32) -> CGRect;
+    }
+
+    /// 主屏尺寸（点）。取不到时返回 None，调用方按「不做检查」处理，不误伤。
+    pub fn main_display_size() -> Option<(f64, f64)> {
+        unsafe {
+            let bounds = CGDisplayBounds(CGMainDisplayID());
+            (bounds.size.width >= 1.0 && bounds.size.height >= 1.0)
+                .then_some((bounds.size.width, bounds.size.height))
+        }
+    }
+
+    /// 窗口矩形是否完整落在主屏内。部分越界也算不合格——crop 出来会缺一块。
+    pub fn window_fits_main_display(
+        origin: (i32, i32),
+        size: (u32, u32),
+        display: (f64, f64),
+    ) -> bool {
+        let (x, y) = (origin.0 as f64, origin.1 as f64);
+        let (w, h) = (size.0 as f64, size.1 as f64);
+        x >= 0.0 && y >= 0.0 && x + w <= display.0 && y + h <= display.1
+    }
+
+    #[cfg(test)]
+    mod tests {
+        use super::*;
+
+        const MAIN: (f64, f64) = (1440.0, 900.0);
+
+        #[test]
+        fn window_inside_main_display_fits() {
+            assert!(window_fits_main_display((100, 100), (800, 600), MAIN));
+        }
+
+        #[test]
+        fn window_on_a_display_to_the_right_does_not_fit() {
+            // 副屏在主屏右侧时，窗口的 x 从主屏宽度之后开始
+            assert!(!window_fits_main_display((1500, 100), (800, 600), MAIN));
+        }
+
+        #[test]
+        fn window_on_a_display_above_does_not_fit() {
+            // 副屏在上方时 y 是负的
+            assert!(!window_fits_main_display((100, -400), (800, 600), MAIN));
+        }
+
+        #[test]
+        fn window_hanging_off_the_right_edge_does_not_fit() {
+            // 跨屏摆放：左半在主屏、右半在副屏，crop 会缺一块
+            assert!(!window_fits_main_display((1200, 100), (800, 600), MAIN));
+        }
+
+        #[test]
+        fn window_exactly_filling_the_display_fits() {
+            assert!(window_fits_main_display((0, 0), (1440, 900), MAIN));
+        }
+    }
 }
 
 #[cfg(target_os = "macos")]
@@ -1981,6 +2070,30 @@ mod mac_ax {
     /// Windows 的 SW_RESTORE 只还原被指向的那一个窗口；AX 这边没有窗口句柄，
     /// 用 xcap 侧的标题去对 AXTitle，尽量只还原被截的那个。
     /// 标题为空或对不上时（个别应用不暴露 AXTitle），退回还原该进程全部最小化窗口。
+    /// 标题对不上时的去向。
+    ///
+    /// 原先是「一律还原该进程全部最小化窗口」——只有一个最小化窗口时这和还原那一个
+    /// 是同一件事，但有好几个时会把用户收起来的窗口一并掀开，而且多半还猜错。
+    /// 所以只在唯一确定时代劳，含糊时交回给用户，向 Windows 的 SW_RESTORE
+    /// 「只动被指向的那一个」靠拢。
+    #[derive(Debug, PartialEq, Eq)]
+    enum Fallback {
+        /// 只有一个最小化窗口，不会猜错
+        RestoreOnly(isize),
+        /// 没有最小化的窗口，无事可做
+        NothingToDo,
+        /// 多个最小化窗口且标题对不上，不替用户决定
+        Ambiguous(usize),
+    }
+
+    fn decide_fallback(minimized: &[isize]) -> Fallback {
+        match minimized {
+            [] => Fallback::NothingToDo,
+            [only] => Fallback::RestoreOnly(*only),
+            many => Fallback::Ambiguous(many.len()),
+        }
+    }
+
     unsafe fn unminimize_app_windows(app: AXUIElementRef, title: &str) -> Result<(), String> {
         let attr_windows = CFString::new("AXWindows");
         let mut raw: *const c_void = ptr::null();
@@ -1989,34 +2102,82 @@ mod mac_ax {
             return Err("无法读取目标应用的窗口列表".into());
         }
         let windows: CFArray<CFType> = CFArray::wrap_under_create_rule(raw as _);
-        let restrict_to_title = !title.is_empty() && (0..windows.len()).any(|index| {
-            windows.get(index)
-                .map(|item| ax_string(item.as_concrete_TypeRef() as AXUIElementRef, "AXTitle"))
-                .is_some_and(|ax_title| ax_title.as_deref() == Some(title))
-        });
         let attr_minimized = CFString::new("AXMinimized");
+
+        // 先扫一遍：标题命中哪些、哪些确实处于最小化
+        let mut title_hits: Vec<isize> = Vec::new();
+        let mut minimized: Vec<isize> = Vec::new();
         for index in 0..windows.len() {
             let Some(item) = windows.get(index) else { continue };
             let element = item.as_concrete_TypeRef() as AXUIElementRef;
-            if restrict_to_title && ax_string(element, "AXTitle").as_deref() != Some(title) {
-                continue;
+            if !title.is_empty() && ax_string(element, "AXTitle").as_deref() == Some(title) {
+                title_hits.push(index);
             }
-            let mut value: *const c_void = ptr::null();
-            if AXUIElementCopyAttributeValue(element, attr_minimized.as_concrete_TypeRef() as *const c_void, &mut value) != 0
-                || value.is_null()
-            {
-                continue;
-            }
-            let minimized = CFBoolean::wrap_under_create_rule(value as _);
-            if minimized == CFBoolean::true_value() {
-                let _ = AXUIElementSetAttributeValue(
-                    element,
-                    attr_minimized.as_concrete_TypeRef() as *const c_void,
-                    CFBoolean::false_value().as_concrete_TypeRef() as *const c_void,
-                );
+            if is_minimized(element, &attr_minimized) {
+                minimized.push(index);
             }
         }
+
+        let targets: Vec<isize> = if title_hits.is_empty() {
+            match decide_fallback(&minimized) {
+                Fallback::NothingToDo => return Ok(()),
+                Fallback::RestoreOnly(index) => vec![index],
+                Fallback::Ambiguous(count) => {
+                    return Err(format!(
+                        "目标窗口已最小化，但该应用有 {count} 个最小化窗口、且系统没有报告可用的窗口标题，\
+                         无法确定是哪一个。请先手动还原目标窗口再截图。"
+                    ))
+                }
+            }
+        } else {
+            // 标题命中的里面只还原确实最小化的那些
+            title_hits
+                .into_iter()
+                .filter(|index| minimized.contains(index))
+                .collect()
+        };
+
+        for index in targets {
+            let Some(item) = windows.get(index) else { continue };
+            let element = item.as_concrete_TypeRef() as AXUIElementRef;
+            let _ = AXUIElementSetAttributeValue(
+                element,
+                attr_minimized.as_concrete_TypeRef() as *const c_void,
+                CFBoolean::false_value().as_concrete_TypeRef() as *const c_void,
+            );
+        }
         Ok(())
+    }
+
+    unsafe fn is_minimized(element: AXUIElementRef, attr_minimized: &CFString) -> bool {
+        let mut value: *const c_void = ptr::null();
+        if AXUIElementCopyAttributeValue(element, attr_minimized.as_concrete_TypeRef() as *const c_void, &mut value) != 0
+            || value.is_null()
+        {
+            return false;
+        }
+        CFBoolean::wrap_under_create_rule(value as _) == CFBoolean::true_value()
+    }
+
+    #[cfg(test)]
+    mod tests {
+        use super::{decide_fallback, Fallback};
+
+        #[test]
+        fn single_minimized_window_is_unambiguous() {
+            assert_eq!(decide_fallback(&[2]), Fallback::RestoreOnly(2));
+        }
+
+        #[test]
+        fn nothing_minimized_is_a_no_op() {
+            assert_eq!(decide_fallback(&[]), Fallback::NothingToDo);
+        }
+
+        #[test]
+        fn several_minimized_windows_are_left_to_the_user() {
+            // 原先这种情况会把三个窗口全掀开
+            assert_eq!(decide_fallback(&[0, 1, 4]), Fallback::Ambiguous(3));
+        }
     }
 
     unsafe fn ax_string(element: AXUIElementRef, attribute: &str) -> Option<String> {
@@ -2192,6 +2353,18 @@ fn build_ffmpeg_command(
             .find(|window| window.id().ok() == Some(target.id)).ok_or_else(|| "目标窗口已关闭".to_string())?;
         let (x, y) = (window.x().map_err(|e| e.to_string())?, window.y().map_err(|e| e.to_string())?);
         let (w, h) = (window.width().map_err(|e| e.to_string())?, window.height().map_err(|e| e.to_string())?);
+        // 副屏 / 跨屏的窗口不在主屏采集范围内，与其让 ffmpeg 甩一句天书，不如提前说清楚
+        if let Some(display) = mac_display::main_display_size() {
+            if !mac_display::window_fits_main_display((x, y), (w, h), display) {
+                return Err(format!(
+                    "目标窗口不在主屏范围内（窗口 {w}×{h} @ {x},{y}，主屏 {}×{}）。\
+                     macOS 录制走 avfoundation 采主屏再裁剪，副屏或跨屏摆放的窗口采不到；\
+                     请把窗口整个移回主屏后重试。",
+                    display.0.round(),
+                    display.1.round()
+                ));
+            }
+        }
         // 用一次试截换算缩放：截出的像素宽 / 点宽。截不了（如屏幕录制权限未授）按 1x 处理
         let scale = window.capture_image().ok()
             .and_then(|image| (w > 0).then(|| image.width() as f64 / w as f64))
