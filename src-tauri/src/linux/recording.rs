@@ -1,5 +1,6 @@
-//! Linux 录制：优先 ffmpeg x11grab；纯 Wayland（无 `$DISPLAY`）走
-//! xdg-desktop-portal ScreenCast（经 xcap）+ PipeWire 帧 → ffmpeg rawvideo。
+//! Linux 录制：Wayland 会话优先 xdg-desktop-portal ScreenCast（经 xcap）+ PipeWire 帧
+//! → ffmpeg rawvideo；X11 会话用 ffmpeg x11grab。Wayland 下门户不可用时才退回 x11grab，
+//! 那条退路只抓得到 XWayland 的画面，由能力文案说明。
 
 use std::env;
 use std::io::Write;
@@ -25,13 +26,50 @@ pub fn display_server_label() -> &'static str {
     }
 }
 
-/// 纯 Wayland、没有可用的 `$DISPLAY` 时走 portal；有 DISPLAY 时继续 x11grab。
-pub fn should_use_portal() -> bool {
-    env::var_os("DISPLAY").is_none()
-        && (env::var_os("WAYLAND_DISPLAY").is_some()
-            || env::var("XDG_SESSION_TYPE")
-                .map(|v| v.eq_ignore_ascii_case("wayland"))
-                .unwrap_or(false))
+/// 当前会话是 Wayland——不管 XWayland 有没有把 `$DISPLAY` 撑起来。
+fn is_wayland_session() -> bool {
+    env::var_os("WAYLAND_DISPLAY").is_some()
+        || env::var("XDG_SESSION_TYPE")
+            .map(|v| v.eq_ignore_ascii_case("wayland"))
+            .unwrap_or(false)
+}
+
+/// 录制后端。
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum RecordingBackend {
+    /// portal ScreenCast + PipeWire → ffmpeg
+    Portal,
+    /// ffmpeg x11grab。`xwayland_only` 表示这是 Wayland 会话里 portal 不可用后的退路，
+    /// 抓到的只是 X server 的画面，原生 Wayland 窗口会是黑的。
+    X11Grab { xwayland_only: bool },
+}
+
+/// Wayland 会话一律**先试 portal**，而不是看 `$DISPLAY` 在不在。
+///
+/// GNOME / KDE 的 Wayland 会话基本都跑着 XWayland，`$DISPLAY` 是有值的。按 DISPLAY
+/// 判断会让这些桌面全部落到 x11grab，而 x11grab 抓不到原生 Wayland 窗口——录出来是
+/// 黑屏，且没有任何失败信号，比直接报错更糟。portal 真的不可用时才退回 x11grab，
+/// 并由能力文案说明这条退路的局限。
+pub fn pick_recording_backend() -> Result<RecordingBackend, String> {
+    if is_wayland_session() {
+        return match portal_screencast_available() {
+            Ok(()) => Ok(RecordingBackend::Portal),
+            Err(_) if env::var_os("DISPLAY").is_some() => {
+                Ok(RecordingBackend::X11Grab { xwayland_only: true })
+            }
+            Err(detail) => Err(format!(
+                "当前是 {} 会话且没有 X11 DISPLAY。门户录制不可用：{detail}",
+                display_server_label()
+            )),
+        };
+    }
+    if env::var_os("DISPLAY").is_some() {
+        return Ok(RecordingBackend::X11Grab { xwayland_only: false });
+    }
+    Err(format!(
+        "当前是 {} 会话且没有 X11 DISPLAY，窗口录制需要 X11/XWayland 或可用的 xdg-desktop-portal ScreenCast / recording needs X11 DISPLAY or ScreenCast portal",
+        display_server_label()
+    ))
 }
 
 fn ensure_ffmpeg() -> Result<(), String> {
@@ -73,33 +111,26 @@ pub fn portal_screencast_available() -> Result<(), String> {
 /// 录制是否可用：X11/`$DISPLAY` 或 portal ScreenCast。
 pub fn recording_available() -> Result<(), String> {
     ensure_ffmpeg()?;
-    if should_use_portal() {
-        return portal_screencast_available().map_err(|detail| {
-            format!(
-                "当前是 {} 会话且没有 X11 DISPLAY。门户录制不可用：{detail}",
-                display_server_label()
-            )
-        });
-    }
-    if env::var_os("DISPLAY").is_none() {
-        return Err(format!(
-            "当前是 {} 会话且没有 X11 DISPLAY，窗口录制需要 X11/XWayland 或可用的 xdg-desktop-portal ScreenCast / recording needs X11 DISPLAY or ScreenCast portal",
-            display_server_label()
-        ));
-    }
-    Ok(())
+    pick_recording_backend().map(|_| ())
 }
 
 /// 能力探测文案（设置 / diagnostics）。
 pub fn recording_capability_detail() -> String {
-    match recording_available() {
-        Ok(()) if should_use_portal() => {
-            format!(
-                "portal ScreenCast + PipeWire → ffmpeg · {}",
-                display_server_label()
-            )
+    if let Err(detail) = ensure_ffmpeg() {
+        return detail;
+    }
+    match pick_recording_backend() {
+        Ok(RecordingBackend::Portal) => format!(
+            "portal ScreenCast + PipeWire → ffmpeg · {}",
+            display_server_label()
+        ),
+        Ok(RecordingBackend::X11Grab { xwayland_only: true }) => format!(
+            "ffmpeg x11grab（门户不可用，只能录到 XWayland 的画面，原生 Wayland 窗口会是黑的）· {}",
+            display_server_label()
+        ),
+        Ok(RecordingBackend::X11Grab { xwayland_only: false }) => {
+            format!("ffmpeg x11grab · {}", display_server_label())
         }
-        Ok(()) => format!("ffmpeg x11grab · {}", display_server_label()),
         Err(detail) => detail,
     }
 }
@@ -199,7 +230,7 @@ impl ActiveRecording {
     }
 }
 
-/// 启动录制：有 `$DISPLAY` → x11grab；否则 portal ScreenCast。
+/// 启动录制：后端由 [`pick_recording_backend`] 决定（Wayland 会话优先 portal）。
 ///
 /// `target_id` / `include_cursor` 在 x11grab 路径生效。portal 路径由桌面选择器挑源；
 /// `include_cursor` 目前随门户/合成器默认（xcap ScreenCast 未暴露 cursor_mode）。
@@ -209,10 +240,10 @@ pub fn start_recording(
     output: &Path,
 ) -> Result<ActiveRecording, String> {
     ensure_ffmpeg()?;
-    if should_use_portal() {
-        return start_portal_recording(include_cursor, output);
+    match pick_recording_backend()? {
+        RecordingBackend::Portal => start_portal_recording(include_cursor, output),
+        RecordingBackend::X11Grab { .. } => start_x11_recording(target_id, include_cursor, output),
     }
-    start_x11_recording(target_id, include_cursor, output)
 }
 
 fn start_x11_recording(
@@ -445,7 +476,7 @@ mod tests {
             std::env::remove_var("DISPLAY");
         }
         assert_eq!(display_server_label(), "Wayland");
-        assert!(should_use_portal());
+        assert!(is_wayland_session());
         restore_env(old_w, old_d, old_s);
     }
 
@@ -460,8 +491,36 @@ mod tests {
             std::env::set_var("DISPLAY", ":3");
             std::env::remove_var("XDG_SESSION_TYPE");
         }
-        assert!(!should_use_portal());
+        assert!(!is_wayland_session());
+        assert_eq!(
+            pick_recording_backend(),
+            Ok(RecordingBackend::X11Grab { xwayland_only: false })
+        );
         assert_eq!(display_server_label(), "X11");
+        restore_env(old_w, old_d, old_s);
+    }
+
+    #[test]
+    fn xwayland_session_is_not_treated_as_plain_x11() {
+        let _guard = ENV_LOCK.lock().unwrap();
+        let old_w = std::env::var_os("WAYLAND_DISPLAY");
+        let old_d = std::env::var_os("DISPLAY");
+        let old_s = std::env::var_os("XDG_SESSION_TYPE");
+        unsafe {
+            std::env::set_var("WAYLAND_DISPLAY", "wayland-0");
+            std::env::set_var("DISPLAY", ":0");
+            std::env::set_var("XDG_SESSION_TYPE", "wayland");
+        }
+        assert!(is_wayland_session());
+        assert_eq!(display_server_label(), "Wayland (XWayland available)");
+        // 有门户就走门户，没门户退回 x11grab 但必须标记成 xwayland_only——
+        // 绝不能等同于普通 X11，否则会静默录出黑屏
+        let backend = pick_recording_backend();
+        assert_ne!(
+            backend,
+            Ok(RecordingBackend::X11Grab { xwayland_only: false }),
+            "Wayland 会话被当成了普通 X11：{backend:?}"
+        );
         restore_env(old_w, old_d, old_s);
     }
 
