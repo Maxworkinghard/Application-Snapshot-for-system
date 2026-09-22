@@ -1,19 +1,11 @@
-/macos/.build/
 /src-tauri/snapshot-ocr/.build/
-/.build/
-# tauri build 前置脚本产出的 sidecar 二进制（按 host triple 命名）
+# tauri build 前置脚本产出的 sidecar 二进制（按目标 triple 命名）
 /src-tauri/snapshot-ocr-*-apple-darwin
 /dist/
 .DS_Store
-/linux/target/
 /node_modules/
 /src-tauri/target/
 /src-tauri/gen/
-/windows/**/bin/
-/windows/bin/
-/windows/**/obj/
-/windows/dist/
-/windows/obj/
 .claude/
 .zcode/
 .workbuddy/
