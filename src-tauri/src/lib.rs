@@ -130,8 +130,6 @@ struct Settings {
     launch_on_boot: bool,
     #[serde(default)]
     include_cursor: bool,
-    #[serde(default = "default_tray_double_click")]
-    tray_double_click: String,
     #[serde(default = "default_after_capture")]
     after_capture: String,
     #[serde(default = "default_true")]
@@ -160,10 +158,6 @@ fn default_snapshot_format() -> String {
 
 fn default_shutter_sound() -> String {
     "crisp".into()
-}
-
-fn default_tray_double_click() -> String {
-    "workbench".into()
 }
 
 fn default_after_capture() -> String {
@@ -210,7 +204,6 @@ impl Default for Settings {
             auto_save_local: true,
             launch_on_boot: false,
             include_cursor: false,
-            tray_double_click: default_tray_double_click(),
             after_capture: default_after_capture(),
             pet_sound_enabled: true,
             pet_sound_volume: default_pet_sound_volume(),
@@ -234,7 +227,6 @@ struct PreferencesPatch {
     auto_save_local: Option<bool>,
     launch_on_boot: Option<bool>,
     include_cursor: Option<bool>,
-    tray_double_click: Option<String>,
     after_capture: Option<String>,
     pet_sound_enabled: Option<bool>,
     pet_sound_volume: Option<u32>,
@@ -611,11 +603,12 @@ fn find_pet_animation_entries(path: &PathBuf) -> Result<Vec<String>, String> {
         let lower = name.to_lowercase();
         let Some((mime, is_motion)) = pet_asset_media(&lower) else { continue };
         // MP4/MOV 只看扩展名不够：mp4v 这类编码能通过扩展名但内置 WebView 解不出来，导入后是一片空白。
-        // WebM 的容器里只会是 VP8/VP9/AV1，都在支持范围内，不必解析。
-        if mime == "video/mp4" {
+        // WebM 同理，VP8/VP9/AV1 能否解随内核不同，得解析 CodecID 再判断。
+        if mime == "video/mp4" || mime == "video/webm" {
             let mut bytes = Vec::with_capacity(entry.size() as usize);
             if entry.read_to_end(&mut bytes).is_ok() {
-                if let Err(codecs) = mp4_playable(&bytes) {
+                let verdict = if mime == "video/mp4" { mp4_playable(&bytes) } else { webm_playable(&bytes) };
+                if let Err(codecs) = verdict {
                     for code in codecs {
                         if !rejected_codecs.contains(&code) {
                             rejected_codecs.push(code);
@@ -645,7 +638,7 @@ fn find_pet_animation_entries(path: &PathBuf) -> Result<Vec<String>, String> {
     // 视频全部因编码被剔掉时，直接报编码问题——退回静态图只会让人以为素材做错了
     if !rejected_codecs.is_empty() {
         return Err(format!(
-            "压缩包内的视频用的是 {} 编码，应用内置的 {WEBVIEW_NAME} 无法解码；请转成 H.264 (avc1) 的 MP4 或 WebM",
+            "压缩包内的视频用的是 {} 编码，应用内置的 {WEBVIEW_NAME} 无法解码；请转成 H.264 (avc1) 的 MP4 再导入",
             rejected_codecs.join("、")
         ));
     }
@@ -668,6 +661,16 @@ const SUPPORTED_VIDEO_CODECS: [&str; 4] = ["avc1", "avc3", "hev1", "hvc1"];
 const WEBVIEW_NAME: &str = "WebView2";
 #[cfg(target_os = "macos")]
 const WEBVIEW_NAME: &str = "WKWebView";
+
+/// WebM (Matroska) 里能被解码的视频轨 CodecID。
+/// Windows 的 WebView2 是 Chromium，VP8/VP9/AV1 都在支持范围内；
+/// 容器规范之外的东西（如 Matroska 装 H.264）按不支持处理，走 MP4 路径。
+#[cfg(not(target_os = "macos"))]
+const SUPPORTED_WEBM_CODECS: [&str; 3] = ["V_VP8", "V_VP9", "V_AV1"];
+/// macOS 的 WKWebView 从 Safari 14.1 起稳定支持 VP8/VP9 的 WebM；
+/// AV1 是否可解取决于系统版本与硬件，保守起见不算作可用。
+#[cfg(target_os = "macos")]
+const SUPPORTED_WEBM_CODECS: [&str; 2] = ["V_VP8", "V_VP9"];
 
 /// 从 ISO-BMFF (MP4 / MOV) 字节里收集所有 sample entry 的 4CC。
 /// 解析不出来就返回空表，调用方按"无法确认"处理，不阻断导入。
@@ -732,6 +735,82 @@ fn mp4_playable(bytes: &[u8]) -> Result<(), Vec<String>> {
         .into_iter()
         .filter(|code| !matches!(code.as_str(), "mp4a" | "ec-3" | "ac-3" | "Opus" | "fLaC" | "sowt" | "twos"))
         .collect();
+    offenders.dedup();
+    if offenders.is_empty() {
+        return Ok(());
+    }
+    Err(offenders)
+}
+
+/// 从 WebM (Matroska/EBML) 字节里收集所有轨道的 CodecID。
+/// 解析不出来就返回空表，调用方按"无法确认"处理，不阻断导入。
+fn webm_sample_codecs(bytes: &[u8]) -> Vec<String> {
+    /// EBML 变长整数：keep_marker 决定读元素 ID（保留标志位）还是读尺寸（去掉标志位）。
+    /// 首字节为 0 是非法编码，返回 None 按解析失败处理。
+    fn read_vint(buf: &[u8], keep_marker: bool) -> Option<(u64, usize)> {
+        let first = *buf.first()?;
+        if first == 0 {
+            return None;
+        }
+        let len = 1 + first.leading_zeros() as usize;
+        if buf.len() < len {
+            return None;
+        }
+        // 8 字节的 vint 首字节只有标志位、没有数值位，mask 会算成 0，得用 u16 防溢出
+        let value_mask: u8 = ((1u16 << (8 - len)) - 1) as u8;
+        let mut value = if keep_marker { first as u64 } else { (first & value_mask) as u64 };
+        for byte in &buf[1..len] {
+            value = (value << 8) | *byte as u64;
+        }
+        Some((value, len))
+    }
+
+    fn walk(buf: &[u8], depth: u8, found: &mut Vec<String>) {
+        if depth > 4 {
+            return;
+        }
+        let mut offset = 0usize;
+        while offset < buf.len() {
+            let Some((id, id_len)) = read_vint(&buf[offset..], true) else { return };
+            let Some((size, size_len)) = read_vint(&buf[offset + id_len..], false) else { return };
+            let header = id_len + size_len;
+            let body = match buf.get(offset + header..) {
+                // 全 1 的尺寸是"未知长度"（流式封装常见），只能吞掉剩余全部
+                Some(rest) if size == (1u64 << (7 * size_len)) - 1 => rest,
+                Some(rest) if (size as usize) <= rest.len() => &rest[..size as usize],
+                _ => return,
+            };
+            match id {
+                // Segment(0x18538067) → Tracks(0x1654AE6B) → TrackEntry(0xAE)
+                0x18538067 | 0x1654AE6B | 0xAE => walk(body, depth + 1, found),
+                // CodecID(0x86)，如 V_VP8 / V_VP9 / V_AV1
+                0x86 => {
+                    if let Ok(code) = std::str::from_utf8(body) {
+                        found.push(code.to_string());
+                    }
+                }
+                _ => {}
+            }
+            offset += header + body.len();
+        }
+    }
+    let mut found = Vec::new();
+    walk(bytes, 0, &mut found);
+    found
+}
+
+/// 判断一段 WebM 字节能否被内置 WebView 播放。返回 Err 时带上实际读到的 CodecID。
+fn webm_playable(bytes: &[u8]) -> Result<(), Vec<String>> {
+    let formats = webm_sample_codecs(bytes);
+    if formats.is_empty() {
+        // 解析失败：不替用户做判断，放行
+        return Ok(());
+    }
+    if formats.iter().any(|code| SUPPORTED_WEBM_CODECS.contains(&code.as_str())) {
+        return Ok(());
+    }
+    // A_ 前缀的是音频轨（A_OPUS/A_VORBIS 之类），不是拒绝原因
+    let mut offenders: Vec<String> = formats.into_iter().filter(|code| !code.starts_with("A_")).collect();
     offenders.dedup();
     if offenders.is_empty() {
         return Ok(());
@@ -818,9 +897,6 @@ fn save_preferences(
     }
     if let Some(value) = prefs.include_cursor {
         settings.include_cursor = value;
-    }
-    if let Some(value) = prefs.tray_double_click {
-        settings.tray_double_click = value;
     }
     if let Some(value) = prefs.after_capture {
         settings.after_capture = value;
@@ -1111,7 +1187,8 @@ fn restore_minimized_window(id: u32) -> Result<(), String> {
 }
 
 /// macOS：用 Accessibility API 还原最小化窗口。
-/// AX 只能按进程操作，所以先由窗口 id 反查 pid，再把该进程所有最小化窗口还原。
+/// AX 没有 Windows hwnd 那样的窗口句柄，只能按进程 + 标题对齐，
+/// 详见 mac_ax::unminimize_window。
 #[cfg(target_os = "macos")]
 fn restore_minimized_window(id: u32) -> Result<(), String> {
     mac_ax::unminimize_window(id)?;
@@ -1141,27 +1218,31 @@ mod mac_ax {
     }
 
     pub fn unminimize_window(window_id: u32) -> Result<(), String> {
-        let pid = xcap::Window::all()
+        let target = xcap::Window::all()
             .map_err(|error| error.to_string())?
             .into_iter()
             .find(|window| window.id().ok() == Some(window_id))
-            .and_then(|window| window.pid().ok())
             .ok_or_else(|| "目标窗口已关闭".to_string())?;
+        let pid = target.pid().map_err(|error| error.to_string())?;
+        let title = target.title().unwrap_or_default();
         unsafe {
             if !AXIsProcessTrusted() {
                 return Err("还原最小化窗口需要「辅助功能」权限，请在系统设置 → 隐私与安全性中授权后重试".into());
             }
             let app = AXUIElementCreateApplication(pid as c_int);
             if app.is_null() {
-                return Err("无法访问目标应用".into());
+                return Err("无法访问目标应用".to_string());
             }
-            let result = unminimize_app_windows(app);
+            let result = unminimize_app_windows(app, &title);
             CFRelease(app);
             result
         }
     }
 
-    unsafe fn unminimize_app_windows(app: AXUIElementRef) -> Result<(), String> {
+    /// Windows 的 SW_RESTORE 只还原被指向的那一个窗口；AX 这边没有窗口句柄，
+    /// 用 xcap 侧的标题去对 AXTitle，尽量只还原被截的那个。
+    /// 标题为空或对不上时（个别应用不暴露 AXTitle），退回还原该进程全部最小化窗口。
+    unsafe fn unminimize_app_windows(app: AXUIElementRef, title: &str) -> Result<(), String> {
         let attr_windows = CFString::new("AXWindows");
         let mut raw: *const c_void = ptr::null();
         let err = AXUIElementCopyAttributeValue(app, attr_windows.as_concrete_TypeRef() as *const c_void, &mut raw);
@@ -1169,10 +1250,18 @@ mod mac_ax {
             return Err("无法读取目标应用的窗口列表".into());
         }
         let windows: CFArray<CFType> = CFArray::wrap_under_create_rule(raw as _);
+        let restrict_to_title = !title.is_empty() && (0..windows.len()).any(|index| {
+            windows.get(index)
+                .map(|item| ax_string(item.as_concrete_TypeRef() as AXUIElementRef, "AXTitle"))
+                .is_some_and(|ax_title| ax_title.as_deref() == Some(title))
+        });
         let attr_minimized = CFString::new("AXMinimized");
         for index in 0..windows.len() {
             let Some(item) = windows.get(index) else { continue };
             let element = item.as_concrete_TypeRef() as AXUIElementRef;
+            if restrict_to_title && ax_string(element, "AXTitle").as_deref() != Some(title) {
+                continue;
+            }
             let mut value: *const c_void = ptr::null();
             if AXUIElementCopyAttributeValue(element, attr_minimized.as_concrete_TypeRef() as *const c_void, &mut value) != 0
                 || value.is_null()
@@ -1189,6 +1278,17 @@ mod mac_ax {
             }
         }
         Ok(())
+    }
+
+    unsafe fn ax_string(element: AXUIElementRef, attribute: &str) -> Option<String> {
+        let name = CFString::new(attribute);
+        let mut raw: *const c_void = ptr::null();
+        if AXUIElementCopyAttributeValue(element, name.as_concrete_TypeRef() as *const c_void, &mut raw) != 0
+            || raw.is_null()
+        {
+            return None;
+        }
+        Some(CFString::wrap_under_create_rule(raw as _).to_string())
     }
 }
 
@@ -1635,20 +1735,49 @@ fn app_icon_data_url(_pid: u32) -> Option<String> {
 #[cfg(target_os = "macos")]
 mod mac_icon {
     use base64::{engine::general_purpose::STANDARD as BASE64, Engine as _};
-    use objc2_app_kit::{NSBitmapImageFileType, NSBitmapImageRep, NSRunningApplication};
-    use objc2_foundation::{NSDictionary, NSSize};
+    use objc2::AnyThread;
+    use objc2_app_kit::{
+        NSBitmapImageFileType, NSBitmapImageRep, NSDeviceRGBColorSpace, NSGraphicsContext,
+        NSImage, NSRunningApplication,
+    };
+    use objc2_foundation::{NSDictionary, NSPoint, NSRect, NSSize};
 
     pub fn png_data_url_for_pid(pid: u32) -> Option<String> {
         unsafe {
             let app = NSRunningApplication::runningApplicationWithProcessIdentifier(pid as i32)?;
             let icon = app.icon()?;
-            // 不压尺寸的话 TIFF 会带 1024×1024 原图，白白膨胀 base64
-            icon.setSize(NSSize::new(64.0, 64.0));
-            let tiff = icon.TIFFRepresentation()?;
-            let rep = NSBitmapImageRep::imageRepWithData(&tiff)?;
-            let png = rep.representationUsingType_properties(NSBitmapImageFileType::PNG, &NSDictionary::new())?;
-            Some(format!("data:image/png;base64,{}", BASE64.encode(png.to_vec())))
+            let png = downscale_to_png(&icon)?;
+            Some(format!("data:image/png;base64,{}", BASE64.encode(png)))
         }
+    }
+
+    /// 图标的 TIFF 里带全套尺寸（最大 1024×1024）；setSize 只改逻辑尺寸、
+    /// 动不了 TIFFRepresentation 里的像素。要真压到 64×64，得把它画进
+    /// 一个新的 64×64 bitmap rep 再导出。
+    unsafe fn downscale_to_png(icon: &NSImage) -> Option<Vec<u8>> {
+        let rep = NSBitmapImageRep::initWithBitmapDataPlanes_pixelsWide_pixelsHigh_bitsPerSample_samplesPerPixel_hasAlpha_isPlanar_colorSpaceName_bytesPerRow_bitsPerPixel(
+            NSBitmapImageRep::alloc(),
+            std::ptr::null_mut(),
+            64,
+            64,
+            8,
+            4,
+            true,
+            false,
+            NSDeviceRGBColorSpace,
+            0,
+            0,
+        )?;
+        let context = NSGraphicsContext::graphicsContextWithBitmapImageRep(&rep)?;
+        NSGraphicsContext::saveGraphicsState_class();
+        NSGraphicsContext::setCurrentContext(Some(&context));
+        icon.drawInRect(NSRect::new(NSPoint::new(0.0, 0.0), NSSize::new(64.0, 64.0)));
+        NSGraphicsContext::restoreGraphicsState_class();
+        let png = rep.representationUsingType_properties(
+            NSBitmapImageFileType::PNG,
+            &NSDictionary::new(),
+        )?;
+        Some(png.to_vec())
     }
 }
 
@@ -1889,13 +2018,95 @@ pub fn run() {
 
 #[cfg(all(test, target_os = "macos"))]
 mod mac_icon_tests {
+    use base64::{engine::general_purpose::STANDARD as BASE64, Engine as _};
+
     #[test]
-    fn finder_icon_encodes_as_png() {
+    fn finder_icon_encodes_as_64px_png() {
         let Ok(output) = std::process::Command::new("pgrep").args(["-x", "Finder"]).output() else { return };
         let text = String::from_utf8_lossy(&output.stdout);
         let Some(pid) = text.lines().next().and_then(|line| line.trim().parse::<u32>().ok()) else { return };
         let url = crate::mac_icon::png_data_url_for_pid(pid).expect("Finder 应当能取到图标");
         assert!(url.starts_with("data:image/png;base64,"), "应返回 PNG data URL");
+        let png = BASE64.decode(url.trim_start_matches("data:image/png;base64,")).expect("data URL 应为合法 base64");
+        // 图标 TIFF 里有 1024×1024 原图；不真压尺寸的话这里会得到六百 KB 的大图
+        let decoded = image::load_from_memory(&png).expect("导出的应为合法 PNG");
+        assert_eq!((decoded.width(), decoded.height()), (64, 64), "图标应压到 64×64");
+        assert!(png.len() < 20 * 1024, "64×64 图标 PNG 应远小于 20KB，实际 {} 字节", png.len());
+        // drawInRect 必须真的把图标画进去，而不是导出一张空白图
+        let opaque = decoded.to_rgba8().pixels().filter(|pixel| pixel[3] > 0).count();
+        assert!(opaque > 64, "64×64 图标应有可见内容，实际只有 {opaque} 个非透明像素");
+    }
+}
+
+#[cfg(test)]
+mod webm_codec_tests {
+    use super::*;
+
+    /// 拼一个只含轨道声明的最小 WebM；payload 须在 127 字节以内
+    fn elem(id: &[u8], payload: &[u8]) -> Vec<u8> {
+        assert!(payload.len() < 128);
+        let mut out = id.to_vec();
+        out.push(0x80 | payload.len() as u8);
+        out.extend_from_slice(payload);
+        out
+    }
+
+    fn webm_with_codec(codec: &str) -> Vec<u8> {
+        let codec_id = elem(&[0x86], codec.as_bytes());
+        let track_entry = elem(&[0xAE], &codec_id);
+        let tracks = elem(&[0x16, 0x54, 0xAE, 0x6B], &track_entry);
+        let segment = elem(&[0x18, 0x53, 0x80, 0x67], &tracks);
+        let header = elem(&[0x1A, 0x45, 0xDF, 0xA3], &[]);
+        [header, segment].concat()
+    }
+
+    #[test]
+    fn collects_codec_id_from_tracks() {
+        let bytes = webm_with_codec("V_VP9");
+        assert_eq!(webm_sample_codecs(&bytes), vec!["V_VP9".to_string()]);
+        assert!(webm_playable(&bytes).is_ok(), "VP9 在两个平台的白名单里");
+    }
+
+    #[test]
+    fn av1_rejected_only_where_unsupported() {
+        let bytes = webm_with_codec("V_AV1");
+        let playable = webm_playable(&bytes).is_ok();
+        assert_eq!(playable, SUPPORTED_WEBM_CODECS.contains(&"V_AV1"), "AV1 的去留应与白名单一致");
+    }
+
+    #[test]
+    fn audio_tracks_are_not_rejection_reasons() {
+        let bytes = webm_with_codec("A_OPUS");
+        assert_eq!(webm_sample_codecs(&bytes), vec!["A_OPUS".to_string()]);
+        assert!(webm_playable(&bytes).is_ok(), "纯音频轨不该被当成视频编码问题");
+    }
+
+    #[test]
+    fn unparseable_bytes_are_allowed() {
+        assert!(webm_sample_codecs(b"not a webm at all").is_empty());
+        assert!(webm_playable(b"not a webm at all").is_ok(), "解析失败按无法确认放行");
+    }
+
+    #[test]
+    fn truncated_elements_do_not_panic() {
+        // 损坏的压缩包是真实场景：任意位置截断都不能 panic
+        let full = webm_with_codec("V_VP9");
+        for cut in 0..full.len() {
+            let _ = webm_sample_codecs(&full[..cut]);
+        }
+        assert_eq!(webm_sample_codecs(&full), vec!["V_VP9".to_string()]);
+    }
+
+    #[test]
+    fn unknown_length_segment_is_consumed() {
+        // 流式封装的 Segment 常写"未知长度"（全 1 尺寸），得能吞掉剩余全部
+        let codec_id = elem(&[0x86], b"V_VP8");
+        let track_entry = elem(&[0xAE], &codec_id);
+        let tracks = elem(&[0x16, 0x54, 0xAE, 0x6B], &track_entry);
+        let mut bytes = elem(&[0x1A, 0x45, 0xDF, 0xA3], &[]);
+        bytes.extend_from_slice(&[0x18, 0x53, 0x80, 0x67, 0x01, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF]);
+        bytes.extend_from_slice(&tracks);
+        assert_eq!(webm_sample_codecs(&bytes), vec!["V_VP8".to_string()]);
     }
 }
 

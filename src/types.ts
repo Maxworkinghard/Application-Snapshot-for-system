@@ -48,7 +48,6 @@ export interface Settings {
   autoSaveLocal: boolean;
   launchOnBoot: boolean;
   includeCursor: boolean;
-  trayDoubleClick: "workbench" | "snapshot" | "dock";
   afterCapture: "clipboard" | "annotate" | "saveas";
   petSoundEnabled: boolean;
   petSoundVolume: number;

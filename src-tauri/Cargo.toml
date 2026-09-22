@@ -37,7 +37,8 @@ zip = { version = "6", default-features = false, features = ["deflate"] }
 core-foundation = "0.10"
 # NSRunningApplication.icon 用于「上一个应用」图标
 objc2 = "0.6"
-objc2-app-kit = { version = "0.3", features = ["NSBitmapImageRep", "NSImage", "NSRunningApplication"] }
+# NSGraphics/NSGraphicsContext/NSImageRep：把图标画进 64×64 的 NSBitmapImageRep 再导出 PNG
+objc2-app-kit = { version = "0.3", features = ["NSBitmapImageRep", "NSGraphics", "NSGraphicsContext", "NSImageRep", "NSImage", "NSRunningApplication"] }
 objc2-foundation = { version = "0.3", features = ["NSData", "NSDictionary"] }
 
 [target.'cfg(windows)'.dependencies]

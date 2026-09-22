@@ -135,7 +135,6 @@ const initialSettings: Settings = {
   autoSaveLocal: true,
   launchOnBoot: false,
   includeCursor: false,
-  trayDoubleClick: "workbench",
   afterCapture: "clipboard",
   petSoundEnabled: true,
   petSoundVolume: 65,
@@ -1432,73 +1431,75 @@ function ShortcutsPage({
         </div>
 
         <div className="hub-preferences-col">
-          <div className="preferences-group-card">
+          <section className="hub-section-block">
             <div className="section-label-bar">
               <span className="section-name">剪贴板与保存</span>
             </div>
-            <div className="pref-item-row">
-              <span className="pref-title">自动清空剪贴板</span>
-              <SegGroup
-                ariaLabel="自动清空剪贴板"
-                value={settings.clipboardAutoClear}
-                onChange={(value) => void updatePrefs({ clipboardAutoClear: value })}
-                options={[
-                  { value: "30s", label: "30秒" },
-                  { value: "60s", label: "60秒" },
-                  { value: "5m", label: "5分钟" },
-                  { value: "never", label: "不清除" },
-                ]}
-              />
-            </div>
-            <div className="pref-item-row">
-              <span className="pref-title">快照图像格式</span>
-              <SegGroup
-                ariaLabel="快照图像格式"
-                value={settings.snapshotFormat}
-                onChange={(value) => void updatePrefs({ snapshotFormat: value })}
-                options={[
-                  { value: "png", label: "PNG 无损" },
-                  { value: "jpeg", label: "JPEG" },
-                  { value: "webp", label: "WebP" },
-                ]}
-              />
-            </div>
-            <div className="pref-item-row folder-row">
-              <span className="pref-title">本地保存目录</span>
-              <div className="folder-picker-box">
-                <span className="folder-path-text" title={settings.saveDir || undefined}>
-                  {settings.saveDir || "默认图片目录"}
-                </span>
-                <button type="button" className="folder-action-btn" onClick={() => void chooseSaveDir()}>
-                  <FolderOpen size={12} />
-                  更改
-                </button>
+            <div className="preferences-group-card">
+              <div className="pref-item-row">
+                <span className="pref-title">自动清空剪贴板</span>
+                <SegGroup
+                  ariaLabel="自动清空剪贴板"
+                  value={settings.clipboardAutoClear}
+                  onChange={(value) => void updatePrefs({ clipboardAutoClear: value })}
+                  options={[
+                    { value: "30s", label: "30秒" },
+                    { value: "60s", label: "60秒" },
+                    { value: "5m", label: "5分钟" },
+                    { value: "never", label: "不清除" },
+                  ]}
+                />
               </div>
-            </div>
-            <div className="pref-item-row folder-row">
-              <span className="pref-title">界面主题</span>
-              <div className="folder-picker-box">
-                <span className="folder-path-text" title={settings.customTheme ?? undefined}>
-                  {settings.customTheme ? fileNameOf(settings.customTheme) : "默认主题"}
-                </span>
-                <button type="button" className="folder-action-btn" onClick={() => void importTheme()}>
-                  <Palette size={12} />
-                  导入主题
-                </button>
-                {settings.customTheme && (
-                  <button
-                    type="button"
-                    className="folder-action-btn"
-                    onClick={() => void updatePrefs({ customTheme: null }, "已恢复默认主题")}
-                  >
-                    恢复默认
+              <div className="pref-item-row">
+                <span className="pref-title">快照图像格式</span>
+                <SegGroup
+                  ariaLabel="快照图像格式"
+                  value={settings.snapshotFormat}
+                  onChange={(value) => void updatePrefs({ snapshotFormat: value })}
+                  options={[
+                    { value: "png", label: "PNG 无损" },
+                    { value: "jpeg", label: "JPEG" },
+                    { value: "webp", label: "WebP" },
+                  ]}
+                />
+              </div>
+              <div className="pref-item-row folder-row">
+                <span className="pref-title">本地保存目录</span>
+                <div className="folder-picker-box">
+                  <span className="folder-path-text" title={settings.saveDir || undefined}>
+                    {settings.saveDir || "默认图片目录"}
+                  </span>
+                  <button type="button" className="folder-action-btn" onClick={() => void chooseSaveDir()}>
+                    <FolderOpen size={12} />
+                    更改
                   </button>
-                )}
+                </div>
+              </div>
+              <div className="pref-item-row folder-row">
+                <span className="pref-title">界面主题</span>
+                <div className="folder-picker-box">
+                  <span className="folder-path-text" title={settings.customTheme ?? undefined}>
+                    {settings.customTheme ? fileNameOf(settings.customTheme) : "默认主题"}
+                  </span>
+                  <button type="button" className="folder-action-btn" onClick={() => void importTheme()}>
+                    <Palette size={12} />
+                    导入主题
+                  </button>
+                  {settings.customTheme && (
+                    <button
+                      type="button"
+                      className="folder-action-btn"
+                      onClick={() => void updatePrefs({ customTheme: null }, "已恢复默认主题")}
+                    >
+                      恢复默认
+                    </button>
+                  )}
+                </div>
               </div>
             </div>
-          </div>
+          </section>
 
-          <div className="preferences-group-card">
+          <section className="hub-section-block">
             <div className="section-label-bar">
               <span className="section-name">更多偏好设置</span>
               <button
@@ -1515,7 +1516,7 @@ function ShortcutsPage({
               </button>
             </div>
             {showMorePrefs && (
-              <>
+              <div className="preferences-group-card">
                 <div className="pref-item-row">
                   <span className="pref-title">截屏音效</span>
                   <SegGroup
@@ -1606,19 +1607,6 @@ function ShortcutsPage({
                   />
                 </div>
                 <div className="pref-item-row">
-                  <span className="pref-title">双击托盘图标</span>
-                  <SegGroup
-                    ariaLabel="双击托盘图标"
-                    value={settings.trayDoubleClick}
-                    onChange={(value) => void updatePrefs({ trayDoubleClick: value })}
-                    options={[
-                      { value: "workbench", label: "打开工作台" },
-                      { value: "snapshot", label: "立即快照" },
-                      { value: "dock", label: "灵动坞" },
-                    ]}
-                  />
-                </div>
-                <div className="pref-item-row">
                   <span className="pref-title">截图完成后动作</span>
                   <SegGroup
                     ariaLabel="截图完成后动作"
@@ -1631,9 +1619,9 @@ function ShortcutsPage({
                     ]}
                   />
                 </div>
-              </>
+              </div>
             )}
-          </div>
+          </section>
         </div>
       </div>
 
