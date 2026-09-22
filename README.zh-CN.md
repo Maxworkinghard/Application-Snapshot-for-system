@@ -38,6 +38,7 @@
 ## 依赖
 
 - **录制**：Windows 走系统自带的 Windows.Graphics.Capture 与 Media Foundation，不需要 ffmpeg；macOS 使用随应用打包的 ScreenCaptureKit sidecar，不依赖外部 ffmpeg；Linux 需要 `ffmpeg` 在 `PATH` 中。Linux 上「截屏包含鼠标光标」的静帧也会优先走 ffmpeg `x11grab`（失败则回退为无光标截图）；OCR、润色不需要 ffmpeg。
+- **录制最小化的窗口**：最小化后系统不再为窗口合成画面，录不到任何内容。Windows 上会先把它还原再开录（与截图一致）；还原不了则明确报错，不会留下一个打不开的空文件。
 - **macOS 权限**：窗口截图与录制需要「屏幕录制」权限；还原已最小化的窗口再截图需要「辅助功能」权限。
 - **Linux 的 OCR** 需要 `tesseract` 及至少一个语言包（`apt install tesseract-ocr tesseract-ocr-chi-sim`）。
 - **macOS sidecar**：Vision OCR 由 [src-tauri/snapshot-ocr/](src-tauri/snapshot-ocr/) 提供；ScreenCaptureKit 录制由 [src-tauri/snapshot-recorder/](src-tauri/snapshot-recorder/) 提供。`npm run tauri dev` 和 `npm run tauri build` 都会自动准备二者，正式包内位于 `Contents/MacOS/` 主程序旁边。
