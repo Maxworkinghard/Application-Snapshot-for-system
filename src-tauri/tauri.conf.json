@@ -51,6 +51,34 @@
         "skipTaskbar": true,
         "shadow": false,
         "visible": false
+      },
+      {
+        "label": "region-picker",
+        "title": "区域截图",
+        "width": 800,
+        "height": 600,
+        "resizable": false,
+        "decorations": false,
+        "transparent": true,
+        "alwaysOnTop": true,
+        "skipTaskbar": true,
+        "shadow": false,
+        "fullscreen": true,
+        "visible": false
+      },
+      {
+        "label": "annotate",
+        "title": "标注截图",
+        "width": 960,
+        "height": 640,
+        "minWidth": 480,
+        "minHeight": 360,
+        "resizable": true,
+        "decorations": true,
+        "alwaysOnTop": true,
+        "skipTaskbar": false,
+        "visible": false,
+        "center": true
       }
     ],
     "security": {
@@ -76,6 +104,19 @@
       }
     },
     "shortDescription": "应用快照、Prompt 润色、桌宠和快捷键",
-    "longDescription": "将应用快照、窗口录制、Prompt 润色、桌宠和全局快捷键统一在一个 Tauri 桌面端。"
+    "longDescription": "将应用快照、窗口录制、Prompt 润色、桌宠和全局快捷键统一在一个 Tauri 桌面端。",
+    "linux": {
+      "deb": {
+        "depends": [
+          "libwebkit2gtk-4.1-0",
+          "libgtk-3-0",
+          "libayatana-appindicator3-1",
+          "librsvg2-2"
+        ]
+      },
+      "appimage": {
+        "bundleMediaFramework": false
+      }
+    }
   }
 }
