@@ -6,14 +6,16 @@ import { PetWindow } from "./windows/PetWindow";
 import { QuickMenuWindow } from "./windows/QuickMenuWindow";
 import { RegionPickerWindow } from "./windows/RegionPickerWindow";
 import { AnnotateWindow } from "./windows/AnnotateWindow";
-import { applyTheme, readTheme } from "./lib/theme";
+import { applyTheme, listenThemeChanges, readTheme } from "./lib/theme";
 import "./styles/variables.css";
 import "./styles/prototype-port.css";
 import "./styles.css";
 import "./styles/responsive.css";
 
-// 三个 WebView 各自独立，每个都要在首帧前套上主题，避免浅色闪一下
+// 各个 WebView 独立，每个都要在首帧前套上主题，避免浅色闪一下
 applyTheme(readTheme());
+// 设置页改了主题后，其余窗口靠这条广播当场跟上，不必重开
+listenThemeChanges(applyTheme);
 
 const label = "__TAURI_INTERNALS__" in window ? getCurrentWindow().label : "main";
 const usesTransparentSurface = label === "pet" || label === "quick-menu" || label === "region-picker";
