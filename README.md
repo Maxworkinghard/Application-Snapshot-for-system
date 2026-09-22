@@ -15,7 +15,7 @@ System capabilities sit behind a shared interface with one adapter per platform,
 | | Windows | macOS | Linux |
 |---|---|---|---|
 | Window capture | xcap | xcap | xcap |
-| Window recording | ffmpeg `gdigrab` | ffmpeg `avfoundation` (main screen, cropped to the window) | ffmpeg `x11grab` (X11); portal ScreenCast + PipeWire → ffmpeg (pure Wayland) |
+| Window recording | ffmpeg `gdigrab` | ffmpeg `avfoundation` (main screen, cropped to the window) | portal ScreenCast + PipeWire → ffmpeg (Wayland); ffmpeg `x11grab` (X11) |
 | Text recognition | `Windows.Media.Ocr` | Vision via a `snapshot-ocr` helper | `tesseract` |
 | Snapshot history, companion, prompt polishing | yes | yes | yes |
 
@@ -63,7 +63,7 @@ bash scripts/linux/build.sh  # release binary + deb/AppImage when bundlers succe
 | `xdotool` | Restore a minimized target window before capture |
 | StatusNotifierHost | System tray (KDE native; GNOME needs an AppIndicator extension) |
 
-Recording picks its backend from the environment: the portal ScreenCast path is only used when there is no `$DISPLAY` at all. A Wayland session that also runs XWayland does have `$DISPLAY`, so recording stays on `x11grab` there — which captures the X server's view, not native Wayland windows.
+Recording picks its backend from the session, not from `$DISPLAY`: a Wayland session always tries portal ScreenCast first, because XWayland leaves `$DISPLAY` set and `x11grab` cannot see native Wayland windows. Only when the portal is unavailable does it fall back to `x11grab`, and the capability line then says that the fallback records the X server's view only. An X11 session goes straight to `x11grab`.
 
 **Autostart** is opt-in via Settings → 开机静默自启动. It writes `~/.config/autostart/com.appsnapshot.prompt-pet-shortcut.desktop`. An **optional** systemd `--user` unit example lives at `scripts/linux/com.appsnapshot.prompt-pet-shortcut.service.example` (advanced; never enabled by the app).
 

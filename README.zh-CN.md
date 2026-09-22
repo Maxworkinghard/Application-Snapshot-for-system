@@ -17,7 +17,7 @@
 | | Windows | macOS | Linux |
 |---|---|---|---|
 | 窗口截图 | xcap | xcap | xcap |
-| 窗口录制 | ffmpeg `gdigrab` | ffmpeg `avfoundation`（采主屏整屏后按窗口裁剪） | ffmpeg `x11grab`（X11）；纯 Wayland 走 portal ScreenCast + PipeWire → ffmpeg |
+| 窗口录制 | ffmpeg `gdigrab` | ffmpeg `avfoundation`（采主屏整屏后按窗口裁剪） | Wayland 走 portal ScreenCast + PipeWire → ffmpeg；X11 走 ffmpeg `x11grab` |
 | 文字识别 | `Windows.Media.Ocr` | Vision（经 `snapshot-ocr` 桥） | `tesseract` |
 | 快照历史、桌面伴侣、Prompt 润色 | 有 | 有 | 有 |
 
@@ -65,7 +65,7 @@ bash scripts/linux/build.sh  # 正式二进制；bundler 成功时还有 deb / A
 | `xdotool` | 截图前还原已最小化的目标窗口 |
 | StatusNotifierHost | 系统托盘（KDE 原生；GNOME 需 AppIndicator 扩展） |
 
-录制后端按环境变量选：只有在**完全没有** `$DISPLAY` 时才走 portal ScreenCast。跑着 XWayland 的 Wayland 会话是有 `$DISPLAY` 的，因此那里仍然走 `x11grab`——抓到的是 X server 的画面，不含原生 Wayland 窗口。
+录制后端按**会话类型**选，不看 `$DISPLAY`：Wayland 会话一律先试 portal ScreenCast——因为 XWayland 会让 `$DISPLAY` 有值，而 `x11grab` 看不到原生 Wayland 窗口。只有门户不可用时才退回 `x11grab`，此时能力文案会明说这条退路只能录到 X server 的画面。X11 会话直接走 `x11grab`。
 
 **开机自启**需在「设置 → 开机静默自启动」中勾选，才会写入 `~/.config/autostart/…desktop`（这是受支持的主路径）。可选的 systemd `--user` 单元示例见 `scripts/linux/com.appsnapshot.prompt-pet-shortcut.service.example`（高级；应用不会替你 enable）。
 
