@@ -223,12 +223,24 @@ export function App() {
     };
   }, []);
 
+  // 按值比较而不是数组引用：改任意一项偏好都会换来一份新的 settings，
+  // 里面的 shortcuts 数组是新对象但内容没变，按引用依赖会白白重注册一轮
+  const shortcutFingerprint = settings.shortcuts
+    .map((item) => `${item.action}:${item.accelerator ?? ""}`)
+    .join("|");
   useEffect(() => {
     if (loading) return;
-    void applyGlobalShortcuts(settings.shortcuts).catch(() => {
-      notify("有快捷键已被其他应用占用，请重新设置");
+    void applyGlobalShortcuts(settings.shortcuts).catch((error) => {
+      const conflicted = error instanceof Error ? error.message : "";
+      notify(
+        conflicted
+          ? `这些快捷键没能注册，可能已被其他程序占用：${conflicted}`
+          : "快捷键注册失败，请换一组试试",
+      );
     });
-  }, [loading, settings.shortcuts]);
+    // settings.shortcuts 的内容由 shortcutFingerprint 代表
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [loading, shortcutFingerprint]);
 
   useEffect(() => {
     if (page === shownPage) {
