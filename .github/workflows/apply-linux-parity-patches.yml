@@ -1,0 +1,31 @@
+name: Apply linux parity patches
+on:
+  workflow_dispatch:
+jobs:
+  apply:
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+    steps:
+      - name: Checkout branch
+        uses: actions/checkout@v4
+        with:
+          ref: adapt/linux-parity
+          fetch-depth: 0
+      - name: Apply patches
+        run: |
+          set -euo pipefail
+          cat patches/linux-parity/lib.rs.part* > /tmp/lib.rs.patch
+          git apply --verbose patches/linux-parity/styles.css.patch
+          git apply --verbose patches/linux-parity/App.tsx.patch
+          git apply --verbose patches/linux-parity/Cargo.lock.patch
+          git apply --verbose /tmp/lib.rs.patch
+      - name: Commit and push
+        run: |
+          set -euo pipefail
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git add src/styles.css src/App.tsx src-tauri/Cargo.lock src-tauri/src/lib.rs
+          git status
+          git commit -m "feat: apply remaining linux parity sources (styles, App, lib, Cargo.lock)"
+          git push origin HEAD:adapt/linux-parity
