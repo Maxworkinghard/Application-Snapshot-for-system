@@ -1,6 +1,16 @@
-import { useEffect, useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import { getCurrentWindow } from "@tauri-apps/api/window";
-import { Camera, ChevronLeft, CircleStop, TextCursorInput, Video, X } from "lucide-react";
+import {
+  Camera,
+  CheckCircle2,
+  ChevronLeft,
+  CircleStop,
+  Loader2,
+  TextCursorInput,
+  Video,
+  X,
+  XCircle,
+} from "lucide-react";
 import {
   captureWindow,
   getRecordingStatus,
@@ -12,19 +22,25 @@ import {
 } from "../lib/backend";
 import type { CapturableWindow, RecordingStatus } from "../types";
 
+type QuickStatus = { kind: "info" | "busy" | "ok" | "error"; text: string };
+
+/** 成功提示停留多久后自动收起菜单 */
+const OK_HIDE_DELAY_MS = 900;
+
 export function QuickMenuWindow() {
   const [page, setPage] = useState<"menu" | "windows">("menu");
   const [windows, setWindows] = useState<CapturableWindow[]>([]);
   const [loading, setLoading] = useState(false);
-  const [status, setStatus] = useState("");
+  const [status, setStatus] = useState<QuickStatus | null>(null);
   const [recording, setRecording] = useState<RecordingStatus>({ active: false, target: null, startedAt: null });
+  const hideTimer = useRef<number | null>(null);
 
   useEffect(() => {
     void getRecordingStatus().then(setRecording);
     const pending = getCurrentWindow().onFocusChanged(({ payload }) => {
       if (payload) {
         setPage("menu");
-        setStatus("");
+        setStatus(null);
         void setQuickMenuExpanded(false);
       } else {
         void hideQuickMenu();
@@ -35,15 +51,28 @@ export function QuickMenuWindow() {
     };
   }, []);
 
+  function showStatus(next: QuickStatus) {
+    if (hideTimer.current !== null) {
+      window.clearTimeout(hideTimer.current);
+      hideTimer.current = null;
+    }
+    setStatus(next);
+  }
+
+  /** 成功类提示短暂展示后自动收起；失败/进行中提示留在原地由用户处理 */
+  function scheduleHideAfterOk() {
+    hideTimer.current = window.setTimeout(() => void hideQuickMenu(), OK_HIDE_DELAY_MS);
+  }
+
   async function openWindows() {
     setLoading(true);
-    setStatus("");
+    showStatus({ kind: "info", text: "" });
     setPage("windows");
     void setQuickMenuExpanded(true);
     try {
       setWindows(await listWindows());
     } catch (error) {
-      setStatus(error instanceof Error ? error.message : String(error));
+      showStatus({ kind: "error", text: error instanceof Error ? error.message : String(error) });
     } finally {
       setLoading(false);
     }
@@ -51,40 +80,56 @@ export function QuickMenuWindow() {
 
   function returnToMenu() {
     setPage("menu");
-    setStatus("");
+    showStatus({ kind: "info", text: "" });
     void setQuickMenuExpanded(false);
   }
 
   async function capture(id: number) {
-    setStatus("正在截取…");
+    showStatus({ kind: "busy", text: "正在截取…" });
     try {
-      setStatus(await captureWindow(id));
-      window.setTimeout(() => void hideQuickMenu(), 700);
+      showStatus({ kind: "ok", text: await captureWindow(id) });
+      scheduleHideAfterOk();
     } catch (error) {
-      setStatus(error instanceof Error ? error.message : String(error));
+      showStatus({ kind: "error", text: error instanceof Error ? error.message : String(error) });
     }
   }
 
   async function record() {
+    const wasActive = recording.active;
+    showStatus(wasActive ? { kind: "busy", text: "正在停止并保存录制…" } : { kind: "busy", text: "正在启动录制…" });
     try {
       const next = await toggleRecording();
       setRecording(next);
-      setStatus(next.active ? `正在录制 ${next.target ?? "应用窗口"}` : "录制已保存");
-      if (!next.active) window.setTimeout(() => void hideQuickMenu(), 700);
+      if (next.active) {
+        // 录制进行中菜单不自动收起，方便随时回来点“停止”
+        showStatus({ kind: "ok", text: "已开始录制 " + (next.target ?? "应用窗口") });
+      } else {
+        showStatus({ kind: "ok", text: wasActive ? "录制已保存" : "录制已停止" });
+        scheduleHideAfterOk();
+      }
     } catch (error) {
-      setStatus(error instanceof Error ? error.message : String(error));
+      showStatus({ kind: "error", text: error instanceof Error ? error.message : String(error) });
     }
   }
 
   async function polish() {
-    setStatus("正在润色剪贴板…");
+    showStatus({ kind: "busy", text: "正在润色剪贴板，最长等待 180 秒…" });
     try {
-      setStatus(await polishClipboard());
-      window.setTimeout(() => void hideQuickMenu(), 900);
+      showStatus({ kind: "ok", text: await polishClipboard() });
+      scheduleHideAfterOk();
     } catch (error) {
-      setStatus(error instanceof Error ? error.message : String(error));
+      showStatus({ kind: "error", text: error instanceof Error ? error.message : String(error) });
     }
   }
+
+  const statusIcon =
+    status?.kind === "busy" ? (
+      <Loader2 size={13} className="spin" />
+    ) : status?.kind === "ok" ? (
+      <CheckCircle2 size={13} />
+    ) : status?.kind === "error" ? (
+      <XCircle size={13} />
+    ) : null;
 
   return (
     <div className="quick-menu">
@@ -124,7 +169,12 @@ export function QuickMenuWindow() {
         </div>
       )}
 
-      {status && page === "windows" && <div className="quick-status">{status}</div>}
+      {status && status.text && (
+        <div className={"quick-status " + status.kind} role="status">
+          {statusIcon}
+          <span>{status.text}</span>
+        </div>
+      )}
     </div>
   );
 }
