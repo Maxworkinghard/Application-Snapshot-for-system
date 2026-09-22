@@ -1,4 +1,5 @@
 import { useEffect, useMemo, useRef, useState } from "react";
+import { createPortal } from "react-dom";
 import { open } from "@tauri-apps/plugin-dialog";
 import { convertFileSrc } from "@tauri-apps/api/core";
 import { getCurrentWindow } from "@tauri-apps/api/window";
@@ -108,7 +109,6 @@ const navGroups: Array<{ title: string; items: NavEntry[] }> = [
       { id: "prefs", label: "偏好设置", icon: SlidersHorizontal },
       { id: "theme", label: "界面主题", icon: Palette },
       { id: "ocr", label: "文字识别", icon: Cpu },
-      { id: "models", label: "模型设置", icon: HardDrive },
     ],
   },
 ];
@@ -265,9 +265,6 @@ export function App() {
     if (shownPage === "prompt") {
       return <PromptPage settings={settings} onSaved={setSettings} notify={notify} />;
     }
-    if (shownPage === "models") {
-      return <ModelsPage settings={settings} onSaved={setSettings} notify={notify} />;
-    }
     if (shownPage === "pet") {
       return <PetPage settings={settings} onSaved={setSettings} notify={notify} />;
     }
@@ -397,14 +394,16 @@ export function App() {
   );
 }
 
-function ModelsPage({
+function ModelSettingsDialog({
   settings,
   onSaved,
   notify,
+  onClose,
 }: {
   settings: Settings;
   onSaved: (value: Settings) => void;
   notify: (message: string) => void;
+  onClose: () => void;
 }) {
   const [baseUrl, setBaseUrl] = useState(settings.baseUrl);
   const [model, setModel] = useState(settings.model);
@@ -417,6 +416,14 @@ function ModelsPage({
     setBaseUrl(settings.baseUrl);
     setModel(settings.model);
   }, [settings]);
+
+  useEffect(() => {
+    const closeOnEscape = (event: KeyboardEvent) => {
+      if (event.key === "Escape") onClose();
+    };
+    window.addEventListener("keydown", closeOnEscape);
+    return () => window.removeEventListener("keydown", closeOnEscape);
+  }, [onClose]);
 
   const serviceReady = Boolean(settings.baseUrl && settings.model);
 
@@ -452,6 +459,7 @@ function ModelsPage({
       onSaved(next);
       setApiKey("");
       notify("模型设置已保存");
+      onClose();
     } catch (error) {
       notify(error instanceof Error ? error.message : String(error));
     } finally {
@@ -459,20 +467,30 @@ function ModelsPage({
     }
   }
 
-  return (
-    <div className="prompt-lab-workspace-container">
-      <div className="prompt-endpoint-drawer" role="region" aria-label="模型与端点设置">
-        <div className="drawer-header-row">
-          <div className="drawer-title-group">
-            <span className="drawer-title">模型端点与凭证</span>
-            <span className="honest-hint-tag">
-              {serviceReady ? "已配置" : "未配置"} · API Key 存于系统凭据管理器
-            </span>
+  return createPortal(
+    <div
+      className="snapshot-lightbox-backdrop"
+      role="dialog"
+      aria-modal="true"
+      aria-labelledby="model-settings-title"
+      onClick={onClose}
+    >
+      <div className="model-settings-dialog-panel" onClick={(event) => event.stopPropagation()}>
+        <div className="model-settings-dialog-header">
+          <div className="model-settings-dialog-heading">
+            <div className="model-settings-dialog-title-row">
+              <h2 className="model-settings-dialog-title" id="model-settings-title">编辑模型</h2>
+              <span className="honest-hint-tag">{serviceReady ? "已配置" : "未配置"}</span>
+            </div>
+            <p className="model-settings-dialog-subtitle">配置模型端点与凭证，API Key 将保存到系统凭据管理器。</p>
           </div>
+          <button className="lightbox-close-btn" onClick={onClose} title="关闭 (Esc)" aria-label="关闭模型编辑弹窗">
+            <X size={16} />
+          </button>
         </div>
 
-        <div className="drawer-inputs-grid">
-          <div className="drawer-input-item">
+        <div className="model-settings-fields">
+          <label className="model-settings-field is-wide">
             <span className="drawer-input-label">接口端点 (Base URL)</span>
             <input
               type="text"
@@ -481,9 +499,9 @@ function ModelsPage({
               onChange={(event) => setBaseUrl(event.target.value)}
               placeholder="https://api.example.com/v1"
             />
-          </div>
+          </label>
 
-          <div className="drawer-input-item">
+          <label className="model-settings-field">
             <span className="drawer-input-label">访问密钥 (API Key)</span>
             <input
               type="password"
@@ -492,9 +510,9 @@ function ModelsPage({
               onChange={(event) => setApiKey(event.target.value)}
               placeholder={settings.hasApiKey ? "已保存，留空保持不变" : "可选"}
             />
-          </div>
+          </label>
 
-          <div className="drawer-input-item">
+          <label className="model-settings-field">
             <span className="drawer-input-label">目标模型</span>
             <input
               type="text"
@@ -507,10 +525,10 @@ function ModelsPage({
             <datalist id="available-models">
               {availableModels.map((item) => <option key={item} value={item} />)}
             </datalist>
-          </div>
+          </label>
         </div>
 
-        <div className="drawer-footer-row">
+        <div className="model-settings-dialog-footer">
           <span className="drawer-footer-tip">
             {serviceReady ? `当前生效：${settings.model}` : "填好端点与模型后，润色功能才可用"}
           </span>
@@ -526,7 +544,8 @@ function ModelsPage({
           </div>
         </div>
       </div>
-    </div>
+    </div>,
+    document.body,
   );
 }
 
@@ -799,7 +818,7 @@ function PromptPage({
               ) : serviceReady ? (
                 <>按 <kbd>Ctrl</kbd> + <kbd>Enter</kbd> 触发生成</>
               ) : (
-                "请先到「模型设置」填写 Base URL 与模型"
+                "请先到「偏好设置」编辑模型"
               )}
             </span>
             <div className="pane-action-buttons">
@@ -1915,6 +1934,7 @@ function PreferencesPage({
   notify: (message: string) => void;
 }) {
   const [caps, setCaps] = useState<PlatformCapabilities | null>(null);
+  const [showModelSettings, setShowModelSettings] = useState(false);
   useEffect(() => {
     void platformCapabilities()
       .then(setCaps)
@@ -1940,6 +1960,14 @@ function PreferencesPage({
       notify("当前环境不支持选择文件");
     }
   }
+
+  const localCapabilities = caps
+    ? [
+        { label: "录制", ...caps.recording },
+        { label: "OCR", ...caps.ocr },
+        ...(caps.scrolling ? [{ label: "滚动长截图", ...caps.scrolling }] : []),
+      ]
+    : [];
 
   return (
     <div className="hub-preferences-page">
@@ -2028,38 +2056,23 @@ function PreferencesPage({
               onChange={(value) => void updatePrefs({ autoSaveLocal: value })}
             />
           </div>
-          <div className="pref-item-row" style={{ flexDirection: "column", alignItems: "stretch", gap: 6 }}>
-            <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", gap: 12 }}>
-              <span className="pref-title">开机静默自启动</span>
-              <PrefToggle
-                label="开机静默自启动"
-                value={settings.launchOnBoot}
-                disabled={caps ? !caps.autostart.available : false}
-                onChange={(value) => void updatePrefs({ launchOnBoot: value })}
-              />
-            </div>
-            {caps && !caps.autostart.available && (
-              <span className="history-sub">
-                {caps.autostart.detail || "仅保存偏好，尚未挂钩系统自启"}
-              </span>
-            )}
-            {caps?.autostart.available && caps.autostart.detail && (
-              <span className="history-sub">{caps.autostart.detail}</span>
-            )}
+          <div className="pref-item-row">
+            <span className="pref-title">开机静默自启动</span>
+            <PrefToggle
+              label="开机静默自启动"
+              value={settings.launchOnBoot}
+              disabled={caps ? !caps.autostart.available : false}
+              onChange={(value) => void updatePrefs({ launchOnBoot: value })}
+            />
           </div>
-          <div className="pref-item-row" style={{ flexDirection: "column", alignItems: "stretch", gap: 6 }}>
-            <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", gap: 12 }}>
-              <span className="pref-title">截屏包含鼠标光标</span>
-              <PrefToggle
-                label="截屏包含鼠标光标"
-                value={settings.includeCursor}
-                disabled={caps ? !caps.includeCursor.available : false}
-                onChange={(value) => void updatePrefs({ includeCursor: value })}
-              />
-            </div>
-            {caps?.includeCursor.detail && (
-              <span className="history-sub">{caps.includeCursor.detail}</span>
-            )}
+          <div className="pref-item-row">
+            <span className="pref-title">截屏包含鼠标光标</span>
+            <PrefToggle
+              label="截屏包含鼠标光标"
+              value={settings.includeCursor}
+              disabled={caps ? !caps.includeCursor.available : false}
+              onChange={(value) => void updatePrefs({ includeCursor: value })}
+            />
           </div>
           <div className="pref-item-row">
             <span className="pref-title">截图完成后动作</span>
@@ -2082,25 +2095,45 @@ function PreferencesPage({
           <div className="section-label-bar">
             <span className="section-name">本机能力</span>
           </div>
-          <div className="preferences-group-card">
-            <div className="pref-item-row" style={{ flexDirection: "column", alignItems: "stretch", gap: 4 }}>
-              <span className="pref-title">
-                {caps.os} · {caps.displayServer}
-              </span>
-              <span className="history-sub">录制：{caps.recording.available ? "可用" : "不可用"} — {caps.recording.detail}</span>
-              <span className="history-sub">OCR：{caps.ocr.available ? "可用" : "不可用"} — {caps.ocr.detail}</span>
-              {caps.scrolling && (
-                <span className="history-sub">滚动长截图：{caps.scrolling.available ? "可用" : "不可用"} — {caps.scrolling.detail}</span>
-              )}
-              {caps.trayNote ? <span className="history-sub">托盘：{caps.trayNote}</span> : null}
-              {caps.notes.map((note) => (
-                <span key={note} className="history-sub">· {note}</span>
+          <div className="local-capabilities-card">
+            <div className="capability-platform-row">
+              <span className="capability-platform-name">{caps.os}</span>
+              <span className="capability-platform-separator" aria-hidden="true">·</span>
+              <span className="capability-platform-name">{caps.displayServer}</span>
+            </div>
+            <div className="capability-list">
+              {localCapabilities.map((capability) => (
+                <div className="capability-row" key={capability.label}>
+                  <span className="capability-name">{capability.label}</span>
+                  <span className={`capability-status ${capability.available ? "is-available" : "is-unavailable"}`}>
+                    <span className="capability-status-dot" aria-hidden="true" />
+                    {capability.available ? "可用" : "不可用"}
+                  </span>
+                  <span className="capability-detail">{capability.detail}</span>
+                </div>
               ))}
+              <div className="capability-model-row">
+                <span className="capability-name">模型</span>
+                <span className={`capability-model-name ${settings.model ? "" : "is-empty"}`} title={settings.model || "未配置模型"}>
+                  {settings.model || "未配置模型"}
+                </span>
+                <button className="capability-edit-btn" type="button" onClick={() => setShowModelSettings(true)}>
+                  编辑
+                </button>
+              </div>
             </div>
           </div>
         </section>
       )}
       </div>
+      {showModelSettings && (
+        <ModelSettingsDialog
+          settings={settings}
+          onSaved={onSaved}
+          notify={notify}
+          onClose={() => setShowModelSettings(false)}
+        />
+      )}
     </div>
   );
 }
