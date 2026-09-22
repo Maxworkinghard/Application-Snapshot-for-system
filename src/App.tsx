@@ -64,7 +64,7 @@ import {
   saveShortcuts,
   selectPetAppearance,
 } from "./lib/backend";
-import { applyGlobalShortcuts } from "./lib/shortcuts";
+import { applyGlobalShortcuts, platformSupports } from "./lib/shortcuts";
 import { renderPetMedia } from "./windows/PetWindow";
 import { KbdBadge } from "./components/ui/KbdBadge";
 import { applyTheme, persistTheme, readTheme, type ThemeMode } from "./lib/theme";
@@ -110,6 +110,10 @@ const actionLabels: Record<ShortcutAction, { name: string; tag?: string }> = {
   ocr: { name: "提取文字 (OCR)", tag: "离线识别" },
 };
 
+// 滚动长截图仅在 Linux/X11 实现；Win/mac 不展示、不注册、不迁移。
+// 标签表保留该项，真正的开关是下面默认绑定里的这一行。
+const SCROLLING_SUPPORTED = platformSupports("scrolling");
+
 const initialSettings: Settings = {
   baseUrl: "",
   model: "",
@@ -122,7 +126,7 @@ const initialSettings: Settings = {
     { action: "snapshot", accelerator: "Alt+Shift+2" },
     { action: "region", accelerator: "Alt+Shift+A" },
     { action: "fullscreen", accelerator: "Alt+Shift+F" },
-    { action: "scrolling", accelerator: null },
+    ...(SCROLLING_SUPPORTED ? [{ action: "scrolling" as const, accelerator: null }] : []),
     { action: "record", accelerator: null },
     { action: "polish", accelerator: "Alt+Shift+P" },
     { action: "ocr", accelerator: "Alt+Shift+O" },
@@ -1293,10 +1297,6 @@ function ShortcutsPage({
   function captureShortcut(action: ShortcutAction, event: React.KeyboardEvent<HTMLDivElement>) {
     event.preventDefault();
     event.stopPropagation();
-    if (event.key === "Escape") {
-      setRecording(null);
-      return;
-    }
     if (["Control", "Shift", "Alt", "Meta"].includes(event.key)) return;
     const parts: string[] = [];
     if (event.ctrlKey || event.metaKey) parts.push("CommandOrControl");
@@ -1375,7 +1375,8 @@ function ShortcutsPage({
         aria-label={`快捷键：${actionLabels[binding.action].name}，当前按键：${binding.accelerator || "未设置"}`}
         className={`shortcut-interactive-row compact-row ${isRecording ? "is-recording-mode" : ""}`}
         onClick={() => {
-          setRecording(binding.action);
+          // 这一行是"录制快捷键"的选中态，不是执行功能：点它=选中开始录制，再点一次=取消选中
+          setRecording(isRecording ? null : binding.action);
         }}
         onKeyDown={(event) => {
           if (isRecording) {
@@ -1400,9 +1401,6 @@ function ShortcutsPage({
           {actionLabels[binding.action].tag && (
             <span className="action-tag">{actionLabels[binding.action].tag}</span>
           )}
-          {binding.action === "scrolling" && caps && !caps.scrolling.available && (
-            <span className="action-tag" title={caps.scrolling.detail}>仅 Linux/X11</span>
-          )}
           {binding.action === "record" && caps && !caps.recording.available && (
             <span className="action-tag" title={caps.recording.detail}>录制不可用</span>
           )}
@@ -1413,13 +1411,6 @@ function ShortcutsPage({
             <div className="recording-active-capsule">
               <span className="pulse-dot-recording" />
               <span className="recording-prompt-text">按下新组合键…</span>
-              <button
-                className="cancel-record-pill-btn"
-                onClick={(event) => { event.stopPropagation(); setRecording(null); }}
-                title="取消录制"
-              >
-                Esc 取消
-              </button>
             </div>
           ) : (
             <>
@@ -1443,8 +1434,18 @@ function ShortcutsPage({
     );
   };
 
+  // 老配置里可能残留本平台不支持的动作（后端迁移只补不删），别渲染成点了没反应的死行
+  const visibleShortcuts = shortcuts.filter((item) => platformSupports(item.action));
+
+  // 录制态下点击页面空白处（非快捷键行）也算取消选中
+  function onPageClick(event: React.MouseEvent<HTMLDivElement>) {
+    if (!recording) return;
+    if ((event.target as HTMLElement).closest(".shortcut-interactive-row")) return;
+    setRecording(null);
+  }
+
   return (
-    <div className="shortcut-hub-unified-layout">
+    <div className="shortcut-hub-unified-layout" onClick={onPageClick}>
       <header className="hub-top-strip">
         <div className="hub-title-line">
           <h1 className="hub-heading">快捷操作</h1>
@@ -1466,10 +1467,10 @@ function ShortcutsPage({
           <section className="hub-section-block">
             <div className="section-label-bar">
               <span className="section-name">全局快捷键</span>
-              <span className="section-count tabular-nums">{shortcuts.length} 项</span>
+              <span className="section-count tabular-nums">{visibleShortcuts.length} 项</span>
             </div>
             <div className="shortcuts-list-table">
-              {shortcuts.map(renderRow)}
+              {visibleShortcuts.map(renderRow)}
             </div>
           </section>
         </div>
@@ -1686,7 +1687,9 @@ function ShortcutsPage({
                   </span>
                   <span className="history-sub">录制：{caps.recording.available ? "可用" : "不可用"} — {caps.recording.detail}</span>
                   <span className="history-sub">OCR：{caps.ocr.available ? "可用" : "不可用"} — {caps.ocr.detail}</span>
-                  <span className="history-sub">滚动长截图：{caps.scrolling.available ? "可用" : "不可用"} — {caps.scrolling.detail}</span>
+                  {caps.scrolling && (
+                    <span className="history-sub">滚动长截图：{caps.scrolling.available ? "可用" : "不可用"} — {caps.scrolling.detail}</span>
+                  )}
                   {caps.trayNote ? <span className="history-sub">托盘：{caps.trayNote}</span> : null}
                   {caps.notes.map((note) => (
                     <span key={note} className="history-sub">· {note}</span>

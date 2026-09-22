@@ -103,7 +103,8 @@ export interface PlatformCapabilities {
   recording: CapabilityStatus;
   ocr: CapabilityStatus;
   autostart: CapabilityStatus;
-  scrolling: CapabilityStatus;
+  /** 仅 Linux 下发：其余平台没有滚动长截图 */
+  scrolling?: CapabilityStatus;
   includeCursor: CapabilityStatus;
   trayNote: string;
   notes: string[];
