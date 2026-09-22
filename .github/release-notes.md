@@ -9,23 +9,21 @@
 | macOS（Apple Silicon 或 Intel） | `Application-Snapshot-{{VERSION}}-macos-universal.zip` |
 | Windows x64（Intel / AMD） | `Application-Snapshot-{{VERSION}}-windows-x64.exe` |
 | Windows ARM64（骁龙本等） | `Application-Snapshot-{{VERSION}}-windows-arm64.exe` |
-| Linux x86_64 | `Application-Snapshot-{{VERSION}}-linux-x86_64.tar.gz` |
-| Linux aarch64 | `Application-Snapshot-{{VERSION}}-linux-aarch64.tar.gz` |
 
 没有 32 位 Windows 包。Mac 两种芯片是**同一份** zip，不要找第二个 Mac 包。
+
+Linux 这一版不发附件，请从源码构建（见仓库 README）。
 
 校验：`SHA256SUMS.txt`。
 
 ## 安装
 
-- **macOS**：解压后把「应用快照.app」拖到「应用程序」。当前构建是 ad-hoc 签名、未公证；若系统提示无法验证开发者，按住 Control 点击 → 打开。第一次截图会要屏幕录制权限。
-- **Windows**：运行对应架构的 exe，不必安装 .NET。未用 Trusted Root 代码签名证书签过名时，Smart App Control / SmartScreen 可能拦截。
-- **Linux**：解压后把 `windowsnap` 放到 `~/.local/bin/`。可选：把 `windowsnap.service` 装到 `~/.config/systemd/user/`。Linux 端未在真实桌面验证。
+- **macOS**：解压后把 `snapshot.app` 拖到「应用程序」。当前构建是 ad-hoc 签名、未公证；若系统提示无法验证开发者，按住 Control 点击 → 打开。第一次截图会要屏幕录制权限。
+- **Windows**：运行对应架构的安装程序。需要 Microsoft Edge WebView2 运行时，Windows 11 自带，Windows 10 上安装程序会按需下载。未用 Trusted Root 代码签名证书签过名时，Smart App Control / SmartScreen 可能拦截。
 
-桌宠素材不包含在发行包里。放好后再到设置里切换桌面形式。
+录制功能需要 `ffmpeg` 在 `PATH` 上，截图、OCR、润色不需要。桌宠素材不包含在发行包里，放好后再到设置里切换桌面形式。
 
 ## 系统要求
 
 - macOS 14+
 - Windows 10 或 Windows 11
-- Linux：X11 或 Wayland（功能覆盖见仓库 README）

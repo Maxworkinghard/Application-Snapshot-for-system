@@ -1,6 +1,8 @@
-# 推送 v* tag（或手工 workflow_dispatch）后，为每种芯片打一份原生附件，
+# 推送 v* tag（或手工 workflow_dispatch）后，用 Tauri 为 macOS / Windows 各打一份附件，
 # 合成 SHA256SUMS.txt，并创建 **draft + pre-release**。不会直接公开。
 # 人工检查附件与说明后再在 GitHub 上点 Publish。
+#
+# Linux 暂不发附件：Tauri 端的 Linux 适配器还没在真实桌面验证过，只能从源码构建。
 name: Release
 
 on:
@@ -28,9 +30,11 @@ jobs:
       tag: ${{ steps.pick.outputs.tag }}
       version: ${{ steps.pick.outputs.version }}
     steps:
+      - uses: actions/checkout@v4
       - id: pick
         shell: bash
         run: |
+          set -euo pipefail
           if [ "${{ github.event_name }}" = "workflow_dispatch" ]; then
             TAG="${{ inputs.tag }}"
           else
@@ -42,6 +46,13 @@ jobs:
             echo "error: version '$VERSION' is not like 0.1.0" >&2
             exit 1
           fi
+          # 附件名取自 tag，但包内版本号来自 tauri.conf.json，两边不一致会发出对不上号的包
+          CONF_VERSION="$(jq -r .version src-tauri/tauri.conf.json)"
+          FILE_VERSION="$(tr -d ' \n\r' < VERSION)"
+          if [ "$CONF_VERSION" != "$VERSION" ] || [ "$FILE_VERSION" != "$VERSION" ]; then
+            echo "error: tag $VERSION != tauri.conf.json $CONF_VERSION != VERSION $FILE_VERSION" >&2
+            exit 1
+          fi
           echo "tag=$TAG" >> "$GITHUB_OUTPUT"
           echo "version=$VERSION" >> "$GITHUB_OUTPUT"
 
@@ -49,31 +60,71 @@ jobs:
     needs: version
     runs-on: macos-latest
     env:
-      RELEASE_VERSION: ${{ needs.version.outputs.version }}
+      VERSION: ${{ needs.version.outputs.version }}
       MACOSX_DEPLOYMENT_TARGET: "14.0"
     steps:
       - uses: actions/checkout@v4
-      - name: Package universal 2 zip
-        run: bash macos/scripts/package-macos.sh
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "22"
+          cache: npm
+      - uses: dtolnay/rust-toolchain@stable
+        with:
+          targets: aarch64-apple-darwin,x86_64-apple-darwin
+      - run: npm ci
+      # beforeBuildCommand 会顺带把 snapshot-ocr 编成 universal sidecar
+      - name: Build universal app bundle
+        run: npm run tauri build -- --target universal-apple-darwin --bundles app
+      - name: Verify slices and pack zip
+        run: |
+          set -euo pipefail
+          APP="src-tauri/target/universal-apple-darwin/release/bundle/macos/snapshot.app"
+          test -d "$APP" || { echo "error: missing $APP" >&2; exit 1; }
+          # 主程序和 OCR sidecar 都必须是双切片，少一个就不是 universal 包
+          for bin in "$APP/Contents/MacOS/snapshot" "$APP/Contents/MacOS/snapshot-ocr"; do
+            ARCHS="$(lipo -archs "$bin")"
+            echo "$bin: $ARCHS"
+            case "$ARCHS" in *arm64*) ;; *) echo "error: $bin 缺 arm64 切片" >&2; exit 1 ;; esac
+            case "$ARCHS" in *x86_64*) ;; *) echo "error: $bin 缺 x86_64 切片" >&2; exit 1 ;; esac
+          done
+          mkdir -p dist/release
+          ditto -c -k --keepParent "$APP" "dist/release/Application-Snapshot-${VERSION}-macos-universal.zip"
       - uses: actions/upload-artifact@v4
         with:
           name: macos
-          path: dist/release/Application-Snapshot-*.zip
+          path: dist/release/Application-Snapshot-*-macos-universal.zip
           if-no-files-found: error
 
   windows:
     needs: version
     runs-on: windows-latest
     env:
-      RELEASE_VERSION: ${{ needs.version.outputs.version }}
+      VERSION: ${{ needs.version.outputs.version }}
     steps:
       - uses: actions/checkout@v4
-      - uses: actions/setup-dotnet@v4
+      - uses: actions/setup-node@v4
         with:
-          dotnet-version: "10.0.x"
-      - name: Package x64 and ARM64
-        shell: pwsh
-        run: ./windows/scripts/package-release.ps1
+          node-version: "22"
+          cache: npm
+      - uses: dtolnay/rust-toolchain@stable
+        with:
+          targets: x86_64-pc-windows-msvc,aarch64-pc-windows-msvc
+      - run: npm ci
+      - name: Build x64 installer
+        run: npm run tauri build -- --target x86_64-pc-windows-msvc --bundles nsis
+      - name: Build ARM64 installer
+        run: npm run tauri build -- --target aarch64-pc-windows-msvc --bundles nsis
+      - name: Collect installers
+        shell: bash
+        run: |
+          set -euo pipefail
+          mkdir -p dist/release
+          for pair in "x86_64-pc-windows-msvc x64" "aarch64-pc-windows-msvc arm64"; do
+            set -- $pair
+            SRC="src-tauri/target/$1/release/bundle/nsis/snapshot_${VERSION}_$2-setup.exe"
+            test -f "$SRC" || { echo "error: missing $SRC" >&2; ls -la "src-tauri/target/$1/release/bundle/nsis" || true; exit 1; }
+            cp "$SRC" "dist/release/Application-Snapshot-${VERSION}-windows-$2.exe"
+          done
       - uses: actions/upload-artifact@v4
         with:
           name: windows
@@ -82,28 +133,8 @@ jobs:
             dist/release/Application-Snapshot-*-windows-arm64.exe
           if-no-files-found: error
 
-  linux:
-    needs: version
-    runs-on: ubuntu-24.04
-    env:
-      RELEASE_VERSION: ${{ needs.version.outputs.version }}
-    steps:
-      - uses: actions/checkout@v4
-      - uses: dtolnay/rust-toolchain@stable
-        with:
-          targets: x86_64-unknown-linux-gnu,aarch64-unknown-linux-gnu
-      - name: Cross linker for aarch64
-        run: sudo apt-get update && sudo apt-get install -y gcc-aarch64-linux-gnu
-      - name: Package x86_64 and aarch64
-        run: chmod +x linux/scripts/package-release.sh && linux/scripts/package-release.sh
-      - uses: actions/upload-artifact@v4
-        with:
-          name: linux
-          path: dist/release/Application-Snapshot-*-linux-*.tar.gz
-          if-no-files-found: error
-
   publish:
-    needs: [version, macos, windows, linux]
+    needs: [version, macos, windows]
     runs-on: ubuntu-24.04
     env:
       TAG: ${{ needs.version.outputs.tag }}
@@ -122,16 +153,10 @@ jobs:
             "Application-Snapshot-${VERSION}-macos-universal.zip"
             "Application-Snapshot-${VERSION}-windows-x64.exe"
             "Application-Snapshot-${VERSION}-windows-arm64.exe"
-            "Application-Snapshot-${VERSION}-linux-x86_64.tar.gz"
-            "Application-Snapshot-${VERSION}-linux-aarch64.tar.gz"
           )
           for f in "${expected[@]}"; do
             test -f "$f" || { echo "missing $f" >&2; ls -la; exit 1; }
           done
-          if ls -1 Application-Snapshot-*-windows-x86.exe >/dev/null 2>&1; then
-            echo "error: 32-bit Windows asset must not be shipped" >&2
-            exit 1
-          fi
           sha256sum "${expected[@]}" | tee SHA256SUMS.txt
       - name: Render notes
         run: |
@@ -140,13 +165,10 @@ jobs:
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         run: |
-          shopt -s nullglob
           assets=(
             dist/release/Application-Snapshot-${VERSION}-macos-universal.zip
             dist/release/Application-Snapshot-${VERSION}-windows-x64.exe
             dist/release/Application-Snapshot-${VERSION}-windows-arm64.exe
-            dist/release/Application-Snapshot-${VERSION}-linux-x86_64.tar.gz
-            dist/release/Application-Snapshot-${VERSION}-linux-aarch64.tar.gz
             dist/release/SHA256SUMS.txt
           )
           gh release create "$TAG" "${assets[@]}" \

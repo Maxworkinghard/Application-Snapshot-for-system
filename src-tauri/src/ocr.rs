@@ -125,8 +125,8 @@ impl OcrAdapter for PlatformOcr {
 // ===========================================================================
 //
 // Vision 没有系统自带的命令行入口，Rust 侧直接 FFI 到 Vision 需要一整套
-// objc 互操作。这里改用 sidecar：macos/ 目录下已有成熟的 Swift 工程，
-// 由它编出一个只做 OCR 的小可执行文件，Rust 侧按约定调用：
+// objc 互操作。这里改用 sidecar：src-tauri/snapshot-ocr/ 是一个只做 OCR 的
+// Swift 小工程，编出一个小可执行文件，Rust 侧按约定调用：
 //
 //     snapshot-ocr            # stdin 收 PNG，stdout 出文本，逐行
 //     snapshot-ocr --probe    # 探测可用性，stdout 出识别语言

@@ -2,15 +2,13 @@
 
 **简体中文** · [English](README.md)
 
-界面与 macOS .app 显示名为「应用快照」。
+界面里显示的名字是「应用快照」；打包产物按 Tauri 的 `productName` 命名，macOS 上是 `snapshot.app`。
 
 截取当前应用窗口到剪贴板并留存本地历史，通过 OpenAI 兼容接口润色 Prompt，调用系统 OCR 提取文字，并在桌面上放一只会动的伴侣。
 
 ## 仓库结构
 
-**仓库根目录的 Tauri 2 工程是主线**，一套代码覆盖三端：前端 React 在 [src/](src/)，原生侧在 [src-tauri/](src-tauri/)。
-
-[macos/](macos/)（Swift）、[windows/](windows/)（C#）、[linux/](linux/)（Rust）是更早的三套独立实现，**仅作参考保留**，不再承载新功能。凡是它们已经封装好的成熟系统能力，主线通过平台 adapter 直接调用，不为了语言统一重写一遍。
+**仓库根目录的 Tauri 2 工程就是整个应用**，一套代码覆盖三端：前端 React 在 [src/](src/)，原生侧在 [src-tauri/](src-tauri/)。更早的三套独立实现（Swift / C# / Rust）在主线覆盖之后已经删除，需要时从 git 历史里取。
 
 ## 各平台能力
 
@@ -30,7 +28,7 @@
 - **录制**需要 `ffmpeg` 且在 `PATH` 中。截图、OCR、润色都不需要。
 - **macOS 权限**：窗口截图与录制需要「屏幕录制」权限；还原已最小化的窗口再截图需要「辅助功能」权限。
 - **Linux 的 OCR** 需要 `tesseract` 及至少一个语言包（`apt install tesseract-ocr tesseract-ocr-chi-sim`）。
-- **macOS 的 OCR** 需要 `snapshot-ocr`。Vision 没有系统自带的命令行入口，主线改为调用一个 Swift 小桥（[src-tauri/snapshot-ocr/](src-tauri/snapshot-ocr/)）：stdin 收 PNG，stdout 每行输出一行识别结果；`--probe` 报告识别语言。`npm run tauri build` 会自动构建并以 Tauri sidecar 形式打进包（`bundle.externalBin`，落在 `Contents/MacOS/` 主程序旁边）；单独构建用 `bash scripts/build-ocr-sidecar.sh`。从源码运行时：`cd src-tauri/snapshot-ocr && swift build -c release`，把产物拷到 `PATH` 内任意目录（如 `~/.local/bin`）——应用优先用与自己同目录的 sidecar，找不到才回退 `PATH`。
+- **macOS 的 OCR** 需要 `snapshot-ocr`。Vision 没有系统自带的命令行入口，主线改为调用一个 Swift 小桥（[src-tauri/snapshot-ocr/](src-tauri/snapshot-ocr/)）：stdin 收 PNG，stdout 每行输出一行识别结果；`--probe` 报告识别语言。`npm run tauri build` 会自动构建并以 Tauri sidecar 形式打进包（`bundle.externalBin` 写在 [src-tauri/tauri.macos.conf.json](src-tauri/tauri.macos.conf.json) 里，免得 Windows / Linux 构建去找一个只有 macOS 才有的二进制；产物落在 `Contents/MacOS/` 主程序旁边）；单独构建用 `bash scripts/build-ocr-sidecar.sh`。从源码运行时：`cd src-tauri/snapshot-ocr && swift build -c release`，把产物拷到 `PATH` 内任意目录（如 `~/.local/bin`）——应用优先用与自己同目录的 sidecar，找不到才回退 `PATH`。
 - **Prompt 润色**需要一个 OpenAI 兼容端点，在「模型设置」里填写。API Key 存入系统钥匙串，不写进配置文件。
 
 ## 从源码运行
@@ -47,14 +45,6 @@ npm run build          # 仅前端
 npm run tauri build    # 安装包
 ```
 
-三套参考实现各自独立构建：
-
-```bash
-./macos/scripts/build-app.sh
-powershell.exe -NoProfile -ExecutionPolicy Bypass -File .\windows\scripts\build.ps1
-cd linux && ./scripts/build-linux.sh
-```
-
 ## 快捷键
 
 默认不绑定任何键。应用快照、录制、润色 Prompt、提取文字都可以在「快捷操作」页各绑一个全局快捷键，窗口最小化时同样触发。
@@ -69,6 +59,6 @@ cd linux && ./scripts/build-linux.sh
 
 ## 发布
 
-推 `v*` tag 会在三系统打包并生成 `SHA256SUMS.txt`，创建 draft + pre-release。当前无签名、无公证。
+推 `v*` tag 会打出 macOS universal 包（zip）和 Windows 两个架构的安装程序，生成 `SHA256SUMS.txt`，创建 draft + pre-release。当前无签名、无公证。Linux 暂时没有发行附件——它的 adapter 还没在真实桌面上跑过，只能从源码构建。
 
 仓库没有 `LICENSE` 文件。尚未添加许可证，默认保留版权。

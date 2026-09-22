@@ -6,9 +6,7 @@ Captures the current application window to the clipboard, keeps a local snapshot
 
 ## Repository layout
 
-The **Tauri 2 app at the repository root is the mainline**. It is one codebase for all three platforms: React front end in [src/](src/), native side in [src-tauri/](src-tauri/).
-
-[macos/](macos/) (Swift), [windows/](windows/) (C#) and [linux/](linux/) (Rust) are the earlier per-platform implementations. They are **kept as reference only** and no longer receive new features. Where they already wrap a mature system capability, the mainline calls that capability through a platform adapter rather than rewriting it in Rust.
+The **Tauri 2 app at the repository root is the whole application**. It is one codebase for all three platforms: React front end in [src/](src/), native side in [src-tauri/](src-tauri/). The earlier per-platform implementations (Swift, C#, Rust) were removed once the mainline covered them; they are still in the git history.
 
 ## Platform capabilities
 
@@ -28,7 +26,7 @@ The Windows adapters, the macOS `snapshot-ocr` helper, and the macOS window adap
 - **Recording** needs `ffmpeg` on `PATH`. Capture, OCR and polishing do not.
 - **macOS permissions**: window capture and recording need Screen Recording permission; restoring a minimized window before capturing it needs Accessibility permission.
 - **Linux OCR** needs `tesseract` plus at least one language pack (`apt install tesseract-ocr tesseract-ocr-chi-sim`).
-- **macOS OCR** needs a `snapshot-ocr` helper. Vision has no built-in command line entry point, so the mainline shells out to a small Swift bridge ([src-tauri/snapshot-ocr/](src-tauri/snapshot-ocr/)): reads a PNG on stdin and writes one line of text per recognised line to stdout; `--probe` reports the recognition language. `npm run tauri build` builds it automatically and bundles it as a Tauri sidecar (`bundle.externalBin`, placed next to the main executable inside `Contents/MacOS/`); run `bash scripts/build-ocr-sidecar.sh` to build it on its own. For source runs, build with `cd src-tauri/snapshot-ocr && swift build -c release` and copy the binary onto `PATH` (e.g. `~/.local/bin`) — the app prefers a sidecar next to its own executable and falls back to `PATH`.
+- **macOS OCR** needs a `snapshot-ocr` helper. Vision has no built-in command line entry point, so the mainline shells out to a small Swift bridge ([src-tauri/snapshot-ocr/](src-tauri/snapshot-ocr/)): reads a PNG on stdin and writes one line of text per recognised line to stdout; `--probe` reports the recognition language. `npm run tauri build` builds it automatically and bundles it as a Tauri sidecar (`bundle.externalBin`, declared in [src-tauri/tauri.macos.conf.json](src-tauri/tauri.macos.conf.json) so that Windows and Linux builds do not look for a macOS-only binary; placed next to the main executable inside `Contents/MacOS/`); run `bash scripts/build-ocr-sidecar.sh` to build it on its own. For source runs, build with `cd src-tauri/snapshot-ocr && swift build -c release` and copy the binary onto `PATH` (e.g. `~/.local/bin`) — the app prefers a sidecar next to its own executable and falls back to `PATH`.
 - **Prompt polishing** needs an OpenAI-compatible endpoint, configured under Settings. The API key goes to the OS keychain, never to a config file.
 
 ## Run from source
@@ -45,14 +43,6 @@ npm run build          # front end only
 npm run tauri build    # installer
 ```
 
-The reference implementations build on their own:
-
-```bash
-./macos/scripts/build-app.sh
-powershell.exe -NoProfile -ExecutionPolicy Bypass -File .\windows\scripts\build.ps1
-cd linux && ./scripts/build-linux.sh
-```
-
 ## Shortcuts
 
 Nothing is bound by default. Snapshot, recording, prompt polishing and text extraction can each be given a global shortcut on the Shortcuts page; they fire while the window is minimised.
@@ -67,6 +57,6 @@ One file per action; a file name containing `idle` becomes the default pose. The
 
 ## Release
 
-Pushing a `v*` tag packages on the three systems, writes `SHA256SUMS.txt`, and creates a draft + pre-release. There is no signing and no notarization.
+Pushing a `v*` tag builds the macOS universal app bundle (zipped) and the two Windows installers, writes `SHA256SUMS.txt`, and creates a draft + pre-release. There is no signing and no notarization. Linux has no release asset yet — its adapter has never been exercised on a real desktop, so it is source-build only.
 
 There is no `LICENSE` file. No license has been added; copyright is reserved by default.

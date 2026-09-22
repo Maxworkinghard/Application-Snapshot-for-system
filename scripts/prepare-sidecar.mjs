@@ -9,4 +9,11 @@ if (process.platform !== "darwin") {
 }
 
 const root = dirname(dirname(fileURLToPath(import.meta.url)));
-execFileSync("bash", [join(root, "scripts/build-ocr-sidecar.sh")], { stdio: "inherit" });
+// sidecar 的文件名必须带上本次构建的目标 triple（universal 包要的是 -universal-apple-darwin），
+// tauri build 会把目标写进 TAURI_ENV_TARGET_TRIPLE；手工跑本脚本时交给脚本退回 host triple。
+const target = process.env.TAURI_ENV_TARGET_TRIPLE;
+const args = [join(root, "scripts/build-ocr-sidecar.sh")];
+if (target) {
+  args.push(target);
+}
+execFileSync("bash", args, { stdio: "inherit" });
