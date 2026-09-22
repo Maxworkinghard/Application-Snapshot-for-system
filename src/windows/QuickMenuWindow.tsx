@@ -29,6 +29,8 @@ const OK_HIDE_DELAY_MS = 900;
 
 export function QuickMenuWindow() {
   const [page, setPage] = useState<"menu" | "windows">("menu");
+  /// 列表页是给截图用还是给录制用——决定点一行之后做什么
+  const [pickerMode, setPickerMode] = useState<"capture" | "record">("capture");
   const [windows, setWindows] = useState<CapturableWindow[]>([]);
   const [loading, setLoading] = useState(false);
   const [status, setStatus] = useState<QuickStatus | null>(null);
@@ -64,9 +66,10 @@ export function QuickMenuWindow() {
     hideTimer.current = window.setTimeout(() => void hideQuickMenu(), OK_HIDE_DELAY_MS);
   }
 
-  async function openWindows() {
+  async function openWindows(mode: "capture" | "record") {
     setLoading(true);
     showStatus({ kind: "info", text: "" });
+    setPickerMode(mode);
     setPage("windows");
     void setQuickMenuExpanded(true);
     try {
@@ -96,12 +99,20 @@ export function QuickMenuWindow() {
 
   async function record(targetId?: number) {
     const wasActive = recording.active;
+    // 没在录、也没指定窗口，就先去选一个——与应用快照同样的流程
+    if (!wasActive && targetId === undefined) {
+      void openWindows("record");
+      return;
+    }
     showStatus(wasActive ? { kind: "busy", text: "正在停止并保存录制…" } : { kind: "busy", text: "正在启动录制…" });
     try {
       // 停止时不传目标；开始时传了就录指定窗口
       const next = await toggleRecording(wasActive ? undefined : targetId);
       setRecording(next);
       if (next.active) {
+        // 从列表页开录的要退回主菜单，否则看不到那个停止键
+        setPage("menu");
+        void setQuickMenuExpanded(false);
         // 录制进行中菜单不自动收起，方便随时回来点“停止”
         // Linux portal 会带回 message（须重新选窗/屏）；否则用默认文案
         showStatus({
@@ -142,14 +153,14 @@ export function QuickMenuWindow() {
       {page === "windows" && (
         <header className="quick-header">
           <button onClick={returnToMenu}><ChevronLeft size={17} /></button>
-          <strong>选择应用窗口</strong>
+          <strong>{pickerMode === "record" ? "选择要录制的窗口" : "选择要截取的窗口"}</strong>
           <button onClick={() => void hideQuickMenu()}><X size={16} /></button>
         </header>
       )}
 
       {page === "menu" ? (
         <div className="quick-actions menu-only">
-          <button onClick={() => void openWindows()}>
+          <button onClick={() => void openWindows("capture")}>
             <span className="quick-action-icon violet"><Camera size={16} /></span>
             <strong>应用快照</strong>
           </button>
@@ -165,22 +176,28 @@ export function QuickMenuWindow() {
       ) : (
         <div className="window-picker">
           {loading && <p className="quick-empty">正在读取窗口…</p>}
-          {!loading && windows.length === 0 && <p className="quick-empty">没有找到可截取的窗口</p>}
+          {!loading && windows.length === 0 && (
+            <p className="quick-empty">
+              {pickerMode === "record" ? "没有找到可录制的窗口" : "没有找到可截取的窗口"}
+            </p>
+          )}
           {windows.map((item) => (
-            <div className="window-picker-row" key={item.id}>
-              <button className="window-pick-main" onClick={() => void capture(item.id)} title="截取这个窗口">
-                <span className="window-icon">{item.iconDataUrl ? <img src={item.iconDataUrl} alt="" /> : <Camera size={17} />}</span>
-                <span><strong>{item.appName}</strong><small>{item.title}</small></span>
-              </button>
-              <button
-                className="window-pick-record"
-                onClick={() => void record(item.id)}
-                disabled={recording.active}
-                title={recording.active ? "正在录制，先停止当前录制" : "录制这个窗口"}
-              >
-                <Video size={15} />
-              </button>
-            </div>
+            <button
+              key={item.id}
+              onClick={() => void (pickerMode === "record" ? record(item.id) : capture(item.id))}
+              title={pickerMode === "record" ? "录制这个窗口" : "截取这个窗口"}
+            >
+              <span className="window-icon">
+                {item.iconDataUrl ? (
+                  <img src={item.iconDataUrl} alt="" />
+                ) : pickerMode === "record" ? (
+                  <Video size={17} />
+                ) : (
+                  <Camera size={17} />
+                )}
+              </span>
+              <span><strong>{item.appName}</strong><small>{item.title}</small></span>
+            </button>
           ))}
         </div>
       )}
