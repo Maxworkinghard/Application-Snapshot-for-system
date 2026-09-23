@@ -183,7 +183,7 @@ fn find_overlap(prev: &RgbaImage, next: &RgbaImage) -> u32 {
             }
             row = row.saturating_add(sample_step);
         }
-        let normalized = if samples == 0 { u64::MAX } else { score / samples };
+        let normalized = score.checked_div(samples).unwrap_or(u64::MAX);
         if normalized < best_score {
             best_score = normalized;
             best_overlap = overlap;
