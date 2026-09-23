@@ -15,7 +15,7 @@ pub fn icon_for_process(pid: u32) -> Option<RgbaImage> {
         .trim_end_matches(".bin")
         .to_string();
 
-    let icon_name = find_desktop_icon(&stem).or_else(|| Some(stem))?;
+    let icon_name = find_desktop_icon(&stem).unwrap_or(stem);
     load_icon_file(&icon_name).or_else(|| load_named_icon(&icon_name))
 }
 

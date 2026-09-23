@@ -287,6 +287,7 @@ struct TrackerState {
     previous_view: PreviousApp,
 }
 
+#[derive(Default)]
 struct Recorder {
     child: Option<Child>,
     target: Option<String>,
@@ -304,22 +305,6 @@ struct Recorder {
     windows_active: Option<windows_recorder::ActiveRecording>,
 }
 
-impl Default for Recorder {
-    fn default() -> Self {
-        Self {
-            child: None,
-            #[cfg(target_os = "windows")]
-            windows_active: None,
-            target: None,
-            started_at: None,
-            output_path: None,
-            diagnostic: None,
-            last_message: None,
-            #[cfg(target_os = "linux")]
-            linux_active: None,
-        }
-    }
-}
 
 #[derive(Clone, Debug, Serialize)]
 #[serde(rename_all = "camelCase")]
@@ -1058,6 +1043,8 @@ fn macos_recorder_capability() -> Result<(), String> {
     }
 }
 
+// 每个平台的 cfg 块独立返回；显式 return 避免函数结果依赖当前被编译的分支。
+#[allow(clippy::needless_return)]
 #[tauri::command]
 fn platform_capabilities() -> PlatformCapabilities {
     #[cfg(target_os = "linux")]
@@ -1459,7 +1446,7 @@ fn finalize_capture(
     }
 
     if annotate {
-        open_annotate_window(app, &state, &image, app_name)?;
+        open_annotate_window(app, state, &image, app_name)?;
     } else {
         copy_image_to_clipboard(image, clipboard_clear_delay(&settings.clipboard_auto_clear))?;
     }
@@ -1518,7 +1505,7 @@ fn save_image_as_dialog(app: &AppHandle, image: &RgbaImage, format_setting: &str
         ImageFormat::Jpeg => dynamic.to_rgb8().save_with_format(&path, ImageFormat::Jpeg),
         other => {
             // 若用户改了扩展名，按路径猜测；失败再回退偏好格式
-            if let Some(guessed) = ImageFormat::from_path(&path).ok() {
+            if let Ok(guessed) = ImageFormat::from_path(&path) {
                 if guessed == ImageFormat::Jpeg {
                     dynamic.to_rgb8().save_with_format(&path, ImageFormat::Jpeg)
                 } else {
@@ -2017,6 +2004,17 @@ mod mac_ax {
         CFBoolean::wrap_under_create_rule(value as _) == CFBoolean::true_value()
     }
 
+    unsafe fn ax_string(element: AXUIElementRef, attribute: &str) -> Option<String> {
+        let name = CFString::new(attribute);
+        let mut raw: *const c_void = ptr::null();
+        if AXUIElementCopyAttributeValue(element, name.as_concrete_TypeRef() as *const c_void, &mut raw) != 0
+            || raw.is_null()
+        {
+            return None;
+        }
+        Some(CFString::wrap_under_create_rule(raw as _).to_string())
+    }
+
     #[cfg(test)]
     mod tests {
         use super::{decide_fallback, Fallback};
@@ -2036,17 +2034,6 @@ mod mac_ax {
             // 原先这种情况会把三个窗口全掀开
             assert_eq!(decide_fallback(&[0, 1, 4]), Fallback::Ambiguous(3));
         }
-    }
-
-    unsafe fn ax_string(element: AXUIElementRef, attribute: &str) -> Option<String> {
-        let name = CFString::new(attribute);
-        let mut raw: *const c_void = ptr::null();
-        if AXUIElementCopyAttributeValue(element, name.as_concrete_TypeRef() as *const c_void, &mut raw) != 0
-            || raw.is_null()
-        {
-            return None;
-        }
-        Some(CFString::wrap_under_create_rule(raw as _).to_string())
     }
 }
 #[cfg(target_os = "linux")]
@@ -2267,6 +2254,8 @@ fn open_recordings_dir(state: State<'_, AppState>) -> Result<String, String> {
     Ok(path.to_string_lossy().to_string())
 }
 
+// 录制启动的 cfg 分支各自返回；保留显式 return，避免平台分支间形成隐式尾表达式。
+#[allow(clippy::needless_return)]
 #[tauri::command]
 fn toggle_recording(
     state: State<'_, AppState>,
@@ -2611,8 +2600,8 @@ fn open_annotate_window(
         .get_webview_window("annotate")
         .ok_or_else(|| "标注窗口不存在".to_string())?;
     // 按图幅大致缩放窗口，避免小图撑满或大图溢出
-    let w = (image.width().max(480).min(1280)) as f64;
-    let h = (image.height().max(360).min(900) + 56) as f64;
+    let w = image.width().clamp(480, 1280) as f64;
+    let h = (image.height().clamp(360, 900) + 56) as f64;
     let _ = window.set_size(LogicalSize::new(w, h));
     let _ = window.center();
     window.show().map_err(|error| error.to_string())?;
@@ -3103,10 +3092,11 @@ mod windows_cursor {
             let raw = std::slice::from_raw_parts(bits as *const u8, (width * height * 4) as usize);
             // 现代 Windows 光标是 32 位带 alpha 的。老式单色光标画出来 alpha 全 0，
             // 这时宁可不贴，也好过糊一个黑块在截图上。
-            let usable = drawn != 0 && raw.chunks_exact(4).any(|pixel| pixel[3] != 0);
+            let pixels = raw.as_chunks::<4>().0;
+            let usable = drawn != 0 && pixels.iter().any(|pixel| pixel[3] != 0);
             let mut image = RgbaImage::new(width as u32, height as u32);
             if usable {
-                for (index, pixel) in raw.chunks_exact(4).enumerate() {
+                for (index, pixel) in pixels.iter().enumerate() {
                     let x = (index as i32) % width;
                     let y = (index as i32) / width;
                     image.put_pixel(
@@ -3320,8 +3310,9 @@ mod windows_icon {
             let _ = DrawIconEx(dc, 0, 0, icon, SIZE, SIZE, 0, null_mut(), DI_NORMAL);
             let raw = std::slice::from_raw_parts(bits as *const u8, (SIZE * SIZE * 4) as usize);
             let mut image = RgbaImage::new(SIZE as u32, SIZE as u32);
-            let has_alpha = raw.chunks_exact(4).any(|pixel| pixel[3] != 0);
-            for (index, pixel) in raw.chunks_exact(4).enumerate() {
+            let pixels = raw.as_chunks::<4>().0;
+            let has_alpha = pixels.iter().any(|pixel| pixel[3] != 0);
+            for (index, pixel) in pixels.iter().enumerate() {
                 let alpha = if has_alpha { pixel[3] } else if pixel[0] == 0 && pixel[1] == 0 && pixel[2] == 0 { 0 } else { 255 };
                 let x = (index as u32) % SIZE as u32;
                 let y = (index as u32) / SIZE as u32;
