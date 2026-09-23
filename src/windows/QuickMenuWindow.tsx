@@ -20,6 +20,8 @@ import {
   setQuickMenuExpanded,
   toggleRecording,
 } from "../lib/backend";
+import { iconUrl } from "../lib/media";
+import { MediaImage } from "../components/MediaImage";
 import type { CapturableWindow, RecordingStatus } from "../types";
 
 type QuickStatus = { kind: "info" | "busy" | "ok" | "error"; text: string };
@@ -194,13 +196,10 @@ export function QuickMenuWindow() {
               title={pickerMode === "record" ? "录制这个窗口" : "截取这个窗口"}
             >
               <span className="window-icon">
-                {item.iconDataUrl ? (
-                  <img src={item.iconDataUrl} alt="" />
-                ) : pickerMode === "record" ? (
-                  <Video size={17} />
-                ) : (
-                  <Camera size={17} />
-                )}
+                <MediaImage
+                  src={iconUrl(item.pid, 24)}
+                  fallback={pickerMode === "record" ? <Video size={17} /> : <Camera size={17} />}
+                />
               </span>
               <span><strong>{item.appName}</strong><small>{item.title}</small></span>
             </button>

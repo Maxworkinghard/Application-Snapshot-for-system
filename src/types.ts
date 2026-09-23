@@ -53,18 +53,19 @@ export interface Settings {
   afterCapture: "clipboard" | "annotate" | "saveas";
 }
 
+/** 图标不随数据下发，按 pid 经 media:// 协议现取（见 lib/media.ts） */
 export interface PreviousApp {
   id: number | null;
+  pid: number | null;
   name: string;
   title: string;
-  iconDataUrl: string | null;
 }
 
 export interface CapturableWindow {
   id: number;
+  pid: number;
   appName: string;
   title: string;
-  iconDataUrl: string | null;
 }
 
 export interface RecordingStatus {

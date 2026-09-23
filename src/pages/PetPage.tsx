@@ -4,11 +4,11 @@ import { open } from "@tauri-apps/plugin-dialog";
 import {
   addPetAsset,
   deletePetAsset,
-  getPetAssetDataUrl,
   savePreferences,
   selectPetAppearance,
 } from "../lib/backend";
-import { renderPetMedia } from "../windows/PetWindow";
+import { petUrl } from "../lib/media";
+import { MediaImage } from "../components/MediaImage";
 import type { Settings } from "../types";
 
 export function PetPage({
@@ -20,48 +20,16 @@ export function PetPage({
   onSaved: (value: Settings) => void;
   notify: (message: string) => void;
 }) {
-  const [previews, setPreviews] = useState<Record<string, string>>({});
-  const [stageMedia, setStageMedia] = useState<string>("");
   const [activeEntry, setActiveEntry] = useState<string | null>(null);
   const [importing, setImporting] = useState(false);
 
   const selectedId = settings.selectedAppearanceId;
   const selectedAsset = settings.petAssets.find((item) => item.id === selectedId) ?? null;
 
-  // 形态列表缩略图
-  useEffect(() => {
-    let active = true;
-    void Promise.all(
-      settings.petAssets.map(async (asset) => {
-        try {
-          return [asset.id, await getPetAssetDataUrl(asset.id)] as const;
-        } catch {
-          return [asset.id, ""] as const;
-        }
-      }),
-    ).then((entries) => {
-      if (active) setPreviews(Object.fromEntries(entries));
-    });
-    return () => { active = false; };
-  }, [settings.petAssets]);
-
   // 切换形态时重置到该素材包的首个动作
   useEffect(() => {
     setActiveEntry(selectedAsset?.entry || selectedAsset?.animations[0] || null);
   }, [selectedId, selectedAsset?.entry]);
-
-  // 展台预览：按当前选中的动作单独取一次
-  useEffect(() => {
-    let active = true;
-    if (!selectedAsset) {
-      setStageMedia("");
-      return () => { active = false; };
-    }
-    void getPetAssetDataUrl(selectedAsset.id, activeEntry)
-      .then((value) => { if (active) setStageMedia(value); })
-      .catch(() => { if (active) setStageMedia(""); });
-    return () => { active = false; };
-  }, [selectedAsset?.id, activeEntry]);
 
   async function choose(id: string) {
     try {
@@ -225,8 +193,12 @@ export function PetPage({
           <div className="viewport-avatar-center">
             <div className="cat-stage-orb">
               {selectedAsset ? (
-                stageMedia ? renderPetMedia(stageMedia, "stage-image-element")
-                            : <div className="polish-placeholder"><span className="inline-spinner" />读取素材…</div>
+                <MediaImage
+                  key={`${selectedAsset.id}/${activeEntry ?? ""}`}
+                  className="stage-image-element"
+                  src={petUrl(selectedAsset.id, activeEntry)}
+                  fallback={<div className="polish-placeholder">素材读取失败，原文件可能已被移走</div>}
+                />
               ) : (
                 <div className="pixel-stage-orb">
                   <AppWindow size={40} />
@@ -289,10 +261,12 @@ export function PetPage({
                 <div className="avatar-thumbnail-wrap">
                   {row.builtin ? (
                     <div className="thumbnail-app-icon"><AppWindow size={16} /></div>
-                  ) : previews[row.id] ? (
-                    renderPetMedia(previews[row.id], "thumbnail-img")
                   ) : (
-                    <div className="thumbnail-app-icon"><PawPrint size={16} /></div>
+                    <MediaImage
+                      className="thumbnail-img"
+                      src={petUrl(row.id)}
+                      fallback={<div className="thumbnail-app-icon"><PawPrint size={16} /></div>}
+                    />
                   )}
                 </div>
 

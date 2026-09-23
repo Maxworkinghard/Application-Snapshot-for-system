@@ -408,11 +408,10 @@ pub(crate) mod mac_autostart {
     }
 }
 
-/// macOS：NSRunningApplication.icon → 64×64 PNG data URL。
-/// 拿到的是 PNG 字节，直接 base64，不必像 Windows 那样走 RgbaImage。
+/// macOS：NSRunningApplication.icon → 指定边长的 PNG。
+/// 拿到的直接就是 PNG 字节，不必像 Windows 那样走 RgbaImage。
 #[cfg(target_os = "macos")]
 pub(crate) mod mac_icon {
-    use base64::{engine::general_purpose::STANDARD as BASE64, Engine as _};
     use objc2::AnyThread;
     use objc2_app_kit::{
         NSBitmapImageFileType, NSBitmapImageRep, NSDeviceRGBColorSpace, NSGraphicsContext, NSImage,
@@ -420,24 +419,23 @@ pub(crate) mod mac_icon {
     };
     use objc2_foundation::{NSDictionary, NSPoint, NSRect, NSSize};
 
-    pub fn png_data_url_for_pid(pid: u32) -> Option<String> {
+    pub fn png_for_pid(pid: u32, size: u32) -> Option<Vec<u8>> {
         unsafe {
             let app = NSRunningApplication::runningApplicationWithProcessIdentifier(pid as i32)?;
             let icon = app.icon()?;
-            let png = downscale_to_png(&icon)?;
-            Some(format!("data:image/png;base64,{}", BASE64.encode(png)))
+            downscale_to_png(&icon, size)
         }
     }
 
     /// 图标的 TIFF 里带全套尺寸（最大 1024×1024）；setSize 只改逻辑尺寸、
-    /// 动不了 TIFFRepresentation 里的像素。要真压到 64×64，得把它画进
-    /// 一个新的 64×64 bitmap rep 再导出。
-    unsafe fn downscale_to_png(icon: &NSImage) -> Option<Vec<u8>> {
+    /// 动不了 TIFFRepresentation 里的像素。要真压到目标边长，得把它画进
+    /// 一个新的同尺寸 bitmap rep 再导出。
+    unsafe fn downscale_to_png(icon: &NSImage, size: u32) -> Option<Vec<u8>> {
         let rep = NSBitmapImageRep::initWithBitmapDataPlanes_pixelsWide_pixelsHigh_bitsPerSample_samplesPerPixel_hasAlpha_isPlanar_colorSpaceName_bytesPerRow_bitsPerPixel(
             NSBitmapImageRep::alloc(),
             std::ptr::null_mut(),
-            64,
-            64,
+            size as isize,
+            size as isize,
             8,
             4,
             true,
@@ -449,7 +447,8 @@ pub(crate) mod mac_icon {
         let context = NSGraphicsContext::graphicsContextWithBitmapImageRep(&rep)?;
         NSGraphicsContext::saveGraphicsState_class();
         NSGraphicsContext::setCurrentContext(Some(&context));
-        icon.drawInRect(NSRect::new(NSPoint::new(0.0, 0.0), NSSize::new(64.0, 64.0)));
+        let edge = f64::from(size);
+        icon.drawInRect(NSRect::new(NSPoint::new(0.0, 0.0), NSSize::new(edge, edge)));
         NSGraphicsContext::restoreGraphicsState_class();
         let png = rep
             .representationUsingType_properties(NSBitmapImageFileType::PNG, &NSDictionary::new())?;
@@ -542,7 +541,9 @@ pub(crate) mod windows_icon {
         },
     };
 
-    pub fn icon_for_process(pid: u32) -> Option<RgbaImage> {
+    /// `size` 是想要的像素边长：窗口列表只显示 24px，桌宠最大 68px，没必要按 256px 取。
+    pub fn icon_for_process(pid: u32, size: u32) -> Option<RgbaImage> {
+        let size = size as i32;
         unsafe {
             let process: HANDLE = OpenProcess(PROCESS_QUERY_LIMITED_INFORMATION, 0, pid);
             if process.is_null() {
@@ -558,14 +559,13 @@ pub(crate) mod windows_icon {
             path.truncate(len as usize);
             path.push(0);
 
-            const SIZE: i32 = 256;
             let mut extracted_icon = null_mut();
             let mut icon_id = 0u32;
             let extracted = PrivateExtractIconsW(
                 path.as_ptr(),
                 0,
-                SIZE,
-                SIZE,
+                size,
+                size,
                 &mut extracted_icon,
                 &mut icon_id,
                 1,
@@ -595,8 +595,8 @@ pub(crate) mod windows_icon {
             }
             let mut bitmap_info: BITMAPINFO = zeroed();
             bitmap_info.bmiHeader.biSize = size_of::<BITMAPINFOHEADER>() as u32;
-            bitmap_info.bmiHeader.biWidth = SIZE;
-            bitmap_info.bmiHeader.biHeight = -SIZE;
+            bitmap_info.bmiHeader.biWidth = size;
+            bitmap_info.bmiHeader.biHeight = -size;
             bitmap_info.bmiHeader.biPlanes = 1;
             bitmap_info.bmiHeader.biBitCount = 32;
             bitmap_info.bmiHeader.biCompression = BI_RGB;
@@ -609,9 +609,9 @@ pub(crate) mod windows_icon {
                 return None;
             }
             let old = SelectObject(dc, bitmap);
-            let _ = DrawIconEx(dc, 0, 0, icon, SIZE, SIZE, 0, null_mut(), DI_NORMAL);
-            let raw = std::slice::from_raw_parts(bits as *const u8, (SIZE * SIZE * 4) as usize);
-            let mut image = RgbaImage::new(SIZE as u32, SIZE as u32);
+            let _ = DrawIconEx(dc, 0, 0, icon, size, size, 0, null_mut(), DI_NORMAL);
+            let raw = std::slice::from_raw_parts(bits as *const u8, (size * size * 4) as usize);
+            let mut image = RgbaImage::new(size as u32, size as u32);
             let pixels = raw.as_chunks::<4>().0;
             let has_alpha = pixels.iter().any(|pixel| pixel[3] != 0);
             for (index, pixel) in pixels.iter().enumerate() {
@@ -622,8 +622,8 @@ pub(crate) mod windows_icon {
                 } else {
                     255
                 };
-                let x = (index as u32) % SIZE as u32;
-                let y = (index as u32) / SIZE as u32;
+                let x = (index as u32) % size as u32;
+                let y = (index as u32) / size as u32;
                 image.put_pixel(x, y, Rgba([pixel[2], pixel[1], pixel[0], alpha]));
             }
             SelectObject(dc, old);
