@@ -1202,7 +1202,7 @@ function PetPage({
   );
 }
 
-/** 偏好设置共用的开关控件，样式来自 prototype-port 的 toggle-switch-btn */
+/** 偏好设置共用的开关控件，样式来自 app.css 的 toggle-switch-btn */
 function PrefToggle({
   value,
   onChange,
@@ -1232,7 +1232,7 @@ function PrefToggle({
   );
 }
 
-/** 偏好设置共用的分段选择器，样式来自 prototype-port 的 segmented-track */
+/** 偏好设置共用的分段选择器，样式来自 app.css 的 segmented-track */
 function SegGroup<T extends string>({
   value,
   options,

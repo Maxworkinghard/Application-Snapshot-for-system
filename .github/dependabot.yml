@@ -1,0 +1,33 @@
+# 依赖更新此前全靠手动。这里只订三样东西，且刻意收窄频率与数量——
+# 一个每天被十几个 PR 淹没的仓库，和没有依赖更新是一样的效果。
+version: 2
+updates:
+  - package-ecosystem: npm
+    directory: /
+    schedule:
+      interval: monthly
+    open-pull-requests-limit: 3
+    groups:
+      # React / Tauri / Vite 各自成组，一次一个 PR，省得逐包点
+      tauri:
+        patterns: ["@tauri-apps/*"]
+      react:
+        patterns: ["react", "react-dom", "@types/react", "@types/react-dom"]
+      build:
+        patterns: ["vite", "@vitejs/*", "typescript"]
+
+  - package-ecosystem: cargo
+    directory: /src-tauri
+    schedule:
+      interval: monthly
+    open-pull-requests-limit: 3
+    groups:
+      windows-crates:
+        patterns: ["windows", "windows-sys"]
+
+  # Actions 的版本最容易被忘掉，而过期的 action 会在某天突然被平台下线
+  - package-ecosystem: github-actions
+    directory: /
+    schedule:
+      interval: monthly
+    open-pull-requests-limit: 2
