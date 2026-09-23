@@ -66,8 +66,10 @@ jobs:
         with:
           node-version: "22"
           cache: npm
-      - uses: dtolnay/rust-toolchain@stable
+      # Keep in sync with rust-toolchain.toml.
+      - uses: dtolnay/rust-toolchain@master
         with:
+          toolchain: 1.98.1
           targets: aarch64-apple-darwin,x86_64-apple-darwin
       - run: npm ci
       # beforeBuildCommand 会顺带把 OCR 与 ScreenCaptureKit 录制桥编成 universal sidecar
@@ -104,8 +106,10 @@ jobs:
         with:
           node-version: "22"
           cache: npm
-      - uses: dtolnay/rust-toolchain@stable
+      # Keep in sync with rust-toolchain.toml.
+      - uses: dtolnay/rust-toolchain@master
         with:
+          toolchain: 1.98.1
           targets: x86_64-pc-windows-msvc,aarch64-pc-windows-msvc
       - run: npm ci
       - name: Build x64 installer
@@ -155,7 +159,10 @@ jobs:
         with:
           node-version: "22"
           cache: npm
-      - uses: dtolnay/rust-toolchain@stable
+      # Keep in sync with rust-toolchain.toml.
+      - uses: dtolnay/rust-toolchain@master
+        with:
+          toolchain: 1.98.1
       # 直接用仓库里给 Linux 用户的那份依赖脚本，顺带保证它在干净机器上是有效的
       - name: System deps
         run: bash scripts/linux/install-deps.sh
