@@ -28,7 +28,6 @@ let settings: Settings = {
   shortcuts: [
     { action: "snapshot", accelerator: null },
     { action: "fullscreen", accelerator: null },
-    { action: "scrolling", accelerator: null },
     { action: "record", accelerator: null },
     { action: "polish", accelerator: null },
     { action: "ocr", accelerator: null },
@@ -121,6 +120,7 @@ async function handle(command: string, payload?: InvokeArgs): Promise<unknown> {
       return noFileManager;
     case "list_snapshots":
     case "list_capturable_windows":
+    case "get_shortcut_conflicts":
     case "delete_snapshot":
     case "clear_snapshots":
       return [];

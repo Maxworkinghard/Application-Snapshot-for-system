@@ -211,6 +211,12 @@ fn default_shortcut_bindings() -> Vec<ShortcutBinding> {
     bindings
 }
 
+fn is_supported_action(action: &str) -> bool {
+    default_shortcut_bindings()
+        .iter()
+        .any(|binding| binding.action == action)
+}
+
 /// 偏好设置的增量补丁：None 表示未发送，可空字段用 Value 区分"没传"和"显式置空"
 #[derive(Clone, Debug, Deserialize)]
 #[serde(rename_all = "camelCase")]
@@ -278,10 +284,11 @@ pub(crate) fn read_settings(path: &PathBuf) -> Settings {
         settings.templates = Settings::default().templates;
         settings.active_template_id = "builtin-default".into();
     }
-    // 移除旧版「打开录制目录」快捷键；录制设置里的打开按钮仍可使用。
+    // 只保留本平台支持的动作：旧版的「打开录制目录」、Win/mac 上残留的滚动长截图都在这里
+    // 去掉。前端直接渲染这份列表，不必再自己猜平台。
     settings
         .shortcuts
-        .retain(|item| item.action != "recordings");
+        .retain(|item| is_supported_action(&item.action));
     // 老配置里没有后来新增的动作（如 ocr）。其余已有绑定原样保留，
     // 缺的追加到末尾；平台不支持的动作（如 Win/mac 的 scrolling）不补。
     for fallback in default_shortcut_bindings() {
@@ -442,16 +449,17 @@ pub(crate) fn save_shortcuts(
 ) -> Result<Settings, String> {
     let shortcuts = shortcuts
         .into_iter()
-        .filter(|item| item.action != "recordings")
+        .filter(|item| is_supported_action(&item.action))
         .collect::<Vec<_>>();
-    let mut values = shortcuts
-        .iter()
-        .filter_map(|item| item.accelerator.as_ref())
-        .collect::<Vec<_>>();
-    values.sort();
-    if values.windows(2).any(|pair| pair[0] == pair[1]) {
-        return Err("快捷键不能重复".into());
+    super::shortcuts::validate(&shortcuts)?;
+    let failed = super::shortcuts::register_all(&app, &shortcuts);
+    if !failed.is_empty() {
+        // 存下来的必须就是生效的：有键注册不上，就整组退回旧绑定，不落盘
+        let previous = state.settings.lock().shortcuts.clone();
+        *state.shortcut_conflicts.lock() = super::shortcuts::register_all(&app, &previous);
+        return Err(super::shortcuts::conflict_message(&failed));
     }
+    state.shortcut_conflicts.lock().clear();
     let mut settings = state.settings.lock();
     settings.shortcuts = shortcuts;
     persist_settings(&state.settings_path, &settings)?;

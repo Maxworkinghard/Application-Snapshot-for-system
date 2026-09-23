@@ -14,10 +14,6 @@
     "core:window:allow-toggle-maximize",
     "core:window:allow-close",
     "dialog:allow-open",
-    "dialog:allow-save",
-    "global-shortcut:allow-is-registered",
-    "global-shortcut:allow-register",
-    "global-shortcut:allow-unregister",
-    "global-shortcut:allow-unregister-all"
+    "dialog:allow-save"
   ]
 }
