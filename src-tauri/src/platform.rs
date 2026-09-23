@@ -397,7 +397,6 @@ pub(crate) mod mac_icon {
 /// Windows 开机自启：在 HKCU 的 Run 键下写一个值。
 /// 不走「启动」文件夹的 .lnk —— 那需要 COM IShellLink，而且用户手动删掉快捷方式后
 /// 设置项仍显示开启，状态会和系统对不上。注册表读写都在当前用户下，无需提权。
-
 #[cfg(target_os = "windows")]
 pub(crate) mod windows_autostart {
     use std::{ffi::OsStr, iter::once, os::windows::ffi::OsStrExt};
@@ -456,9 +455,7 @@ pub(crate) mod windows_autostart {
     }
 }
 
-/// Windows 静帧截图的光标合成。
-/// xcap 只给窗口像素、不含光标；录制侧靠 ffmpeg `-draw_mouse`，静帧只能自己画。
-
+/// Windows 可执行文件图标提取，用于窗口列表和上一应用显示。
 #[cfg(target_os = "windows")]
 pub(crate) mod windows_icon {
     use image::{Rgba, RgbaImage};
