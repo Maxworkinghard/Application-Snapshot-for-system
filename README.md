@@ -1,5 +1,7 @@
 # Application Snapshot
 
+[![Check](https://github.com/Maxworkinghard/Application-Snapshot-for-system/actions/workflows/check.yml/badge.svg)](https://github.com/Maxworkinghard/Application-Snapshot-for-system/actions/workflows/check.yml)
+
 [简体中文](README.zh-CN.md) · **English**
 
 Captures the current application window to the clipboard, keeps a local snapshot history, polishes prompts through an OpenAI-compatible endpoint, extracts text with the system OCR engine, and puts an animated companion on the desktop.
@@ -41,6 +43,23 @@ Only the parts that do not depend on system capabilities are shared: settings, s
 - **Linux OCR** needs `tesseract` plus at least one language pack (`apt install tesseract-ocr tesseract-ocr-chi-sim`).
 - **macOS sidecars**: Vision OCR is provided by [src-tauri/snapshot-ocr/](src-tauri/snapshot-ocr/); ScreenCaptureKit recording is provided by [src-tauri/snapshot-recorder/](src-tauri/snapshot-recorder/). Both `npm run tauri dev` and `npm run tauri build` prepare them automatically, and packaged builds place them next to the main executable in `Contents/MacOS/`.
 - **Prompt polishing** needs an OpenAI-compatible endpoint, configured under Settings. The API key goes to the OS keychain, never to a config file.
+
+## About the names
+
+The same thing goes by different names in a few places. Noted here so nobody
+"unifies" them later:
+
+| Where | Name |
+|---|---|
+| Repository | `Application-Snapshot-for-system` |
+| UI and macOS .app | 应用快照 (Application Snapshot) |
+| Executable (`productName`) | `snapshot` |
+| Bundle identifier | `com.appsnapshot.prompt-pet-shortcut` |
+
+The `prompt-pet-shortcut` in that last one is an early project name. **It must
+not change**: the identifier is the key the OS uses to find the config directory
+and keychain entries, so changing it would orphan every installed user's
+settings and API key. It stays on purpose, not by oversight.
 
 ## Run from source
 

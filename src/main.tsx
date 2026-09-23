@@ -7,7 +7,7 @@ import { QuickMenuWindow } from "./windows/QuickMenuWindow";
 import { AnnotateWindow } from "./windows/AnnotateWindow";
 import { applyTheme, listenThemeChanges, readTheme } from "./lib/theme";
 import "./styles/variables.css";
-import "./styles/prototype-port.css";
+import "./styles/app.css";
 import "./styles.css";
 import "./styles/responsive.css";
 

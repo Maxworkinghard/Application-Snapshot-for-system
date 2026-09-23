@@ -1,5 +1,7 @@
 # Application Snapshot
 
+[![Check](https://github.com/Maxworkinghard/Application-Snapshot-for-system/actions/workflows/check.yml/badge.svg)](https://github.com/Maxworkinghard/Application-Snapshot-for-system/actions/workflows/check.yml)
+
 **简体中文** · [English](README.md)
 
 界面里显示的名字是「应用快照」；打包产物按 Tauri 的 `productName` 命名，macOS 上是 `snapshot.app`。
@@ -43,6 +45,21 @@
 - **Linux 的 OCR** 需要 `tesseract` 及至少一个语言包（`apt install tesseract-ocr tesseract-ocr-chi-sim`）。
 - **macOS sidecar**：Vision OCR 由 [src-tauri/snapshot-ocr/](src-tauri/snapshot-ocr/) 提供；ScreenCaptureKit 录制由 [src-tauri/snapshot-recorder/](src-tauri/snapshot-recorder/) 提供。`npm run tauri dev` 和 `npm run tauri build` 都会自动准备二者，正式包内位于 `Contents/MacOS/` 主程序旁边。
 - **Prompt 润色**需要一个 OpenAI 兼容端点，在「模型设置」里填写。API Key 存入系统钥匙串，不写进配置文件。
+
+## 名字的来历
+
+同一个东西在几处叫法不同，记在这里免得下次有人去「统一」：
+
+| 出现的地方 | 名字 |
+|---|---|
+| 仓库 | `Application-Snapshot-for-system` |
+| 界面与 macOS .app | 应用快照 |
+| 可执行文件（`productName`） | `snapshot` |
+| Bundle identifier | `com.appsnapshot.prompt-pet-shortcut` |
+
+最后那个里的 `prompt-pet-shortcut` 是项目早期的名字。**它不能改**——
+identifier 是系统用来认配置目录与钥匙串条目的键，改了等于让已安装用户的
+设置和 API Key 全部失联。留着它是有意为之，不是漏改。
 
 ## 从源码运行
 
