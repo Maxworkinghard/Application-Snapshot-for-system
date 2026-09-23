@@ -112,7 +112,7 @@ fn capture_child_stderr(stderr: Option<std::process::ChildStderr>) -> Arc<Mutex<
 
 #[cfg(target_os = "macos")]
 fn spawn_macos_recorder(
-    target: &TrackedWindow,
+    target: &tracker::TrackedWindow,
     output: &PathBuf,
     include_cursor: bool,
 ) -> Result<(Child, Arc<Mutex<String>>), String> {
@@ -191,13 +191,13 @@ fn spawn_macos_recorder(
 
 /// 按窗口 id 取一份录制目标。窗口在点选之后、开录之前被关掉是常事，
 /// 所以这里要报「已关闭」而不是沉默地退回「上一个应用」。
-fn list_tracked_window(id: u32) -> Result<TrackedWindow, String> {
+fn list_tracked_window(id: u32) -> Result<tracker::TrackedWindow, String> {
     let window = Window::all()
         .map_err(|error| error.to_string())?
         .into_iter()
         .find(|window| window.id().ok() == Some(id))
         .ok_or_else(|| "目标窗口已关闭".to_string())?;
-    Ok(TrackedWindow {
+    Ok(tracker::TrackedWindow {
         id,
         pid: window.pid().unwrap_or_default(),
         app_name: window.app_name().unwrap_or_else(|_| "应用".into()),
