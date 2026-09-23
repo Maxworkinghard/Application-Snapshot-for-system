@@ -1048,7 +1048,7 @@ mod decode_tests {
 
         let output = std::env::temp_dir().join("snapshot-wgc-orient.mp4");
         let _ = std::fs::remove_file(&output);
-        let active = start(hwnd, false, &output).expect("启动录制失败");
+        let active = start(hwnd, false, false, false, &output).expect("启动录制失败");
         // 解出来的是首帧，实拍也要尽早抓，否则期间内容变了会污染比对
         std::thread::sleep(std::time::Duration::from_millis(250));
         let truth = window.capture_image().expect("实拍失败");
@@ -1114,7 +1114,7 @@ mod frame_yield_tests {
 
             let output = std::env::temp_dir().join(format!("snapshot-yield-{id}.mp4"));
             let _ = std::fs::remove_file(&output);
-            match start(id as isize, false, &output) {
+            match start(id as isize, false, false, false, &output) {
                 Ok(active) => {
                     std::thread::sleep(std::time::Duration::from_millis(1500));
                     let (path, frames) = active.stop();
@@ -1194,7 +1194,7 @@ mod minimized_tests {
     fn record_and_count(hwnd: isize, tag: &str) -> u64 {
         let output = std::env::temp_dir().join(format!("snapshot-min-{tag}.mp4"));
         let _ = std::fs::remove_file(&output);
-        match start(hwnd, false, &output) {
+        match start(hwnd, false, false, false, &output) {
             Ok(active) => {
                 std::thread::sleep(std::time::Duration::from_millis(1500));
                 let (path, frames) = active.stop();
