@@ -294,7 +294,7 @@ pub(crate) fn toggle_recording(
         // 最小化的窗口 DWM 不再合成，WGC 一帧也拿不到。与截图一致：先还原再录。
         // 不能无条件 SW_RESTORE——那会把最大化的窗口一并还原掉。
         if windows_recorder::is_minimized(target.id as isize) {
-            restore_minimized_window(target.id)
+            capture::restore_minimized_window(target.id)
                 .map_err(|error| format!("目标窗口已最小化，且无法还原：{error}"))?;
         }
         let active = windows_recorder::start(target.id as isize, settings.include_cursor, &output)?;

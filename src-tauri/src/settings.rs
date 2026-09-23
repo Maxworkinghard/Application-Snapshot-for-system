@@ -8,7 +8,7 @@ use tauri::{AppHandle, Emitter, Runtime, State};
 #[cfg(target_os = "linux")]
 use super::linux;
 #[cfg(target_os = "macos")]
-use super::mac_autostart;
+use super::platform::mac_autostart;
 #[cfg(target_os = "windows")]
 use super::windows_autostart;
 
