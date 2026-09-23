@@ -20,7 +20,7 @@ import {
   onSettingsChanged,
   onCaptureFeedback,
 } from "./lib/backend";
-import { applyGlobalShortcuts, platformSupports } from "./lib/shortcuts";
+import { applyGlobalShortcuts } from "./lib/shortcuts";
 import { previewHintSound } from "./lib/sound";
 import { ThemePage } from "./pages/ThemePage";
 import { OcrPage } from "./pages/OcrPage";
@@ -67,43 +67,6 @@ const navGroups: Array<{ title: string; items: NavEntry[] }> = [
   },
 ];
 
-// 滚动长截图仅在 Linux/X11 实现；Win/mac 不展示、不注册、不迁移。
-// 标签表保留该项，真正的开关是下面默认绑定里的这一行。
-const SCROLLING_SUPPORTED = platformSupports("scrolling");
-
-const initialSettings: Settings = {
-  baseUrl: "",
-  model: "",
-  hasApiKey: false,
-  templates: [],
-  activeTemplateId: "builtin-default",
-  selectedAppearanceId: "app-icon",
-  petAssets: [],
-  shortcuts: [
-    { action: "snapshot", accelerator: "Alt+Shift+2" },
-    { action: "fullscreen", accelerator: "Alt+Shift+F" },
-    ...(SCROLLING_SUPPORTED ? [{ action: "scrolling" as const, accelerator: null }] : []),
-    { action: "record", accelerator: null },
-    { action: "polish", accelerator: "Alt+Shift+P" },
-    { action: "ocr", accelerator: "Alt+Shift+O" },
-  ],
-  clipboardAutoClear: "60s",
-  snapshotFormat: "png",
-  saveDir: "",
-  recordingDir: "",
-  customTheme: null,
-  shutterSound: "crisp",
-  customSoundPath: null,
-  flashOnCapture: true,
-  hideAfterCopy: false,
-  autoSaveLocal: true,
-  launchOnBoot: false,
-  includeCursor: false,
-  recordSystemAudio: false,
-  recordMicrophone: false,
-  afterCapture: "clipboard",
-};
-
 /** 旧页面淡出的时长，必须和 styles 里 page-leave 的 animation-duration 对齐 */
 const PAGE_EXIT_MS = 120;
 
@@ -113,8 +76,8 @@ export function App() {
   const [shownPage, setShownPage] = useState<NavPage>("shortcuts");
   const [isLeaving, setIsLeaving] = useState(false);
   const canvasRef = useRef<HTMLElement | null>(null);
-  const [settings, setSettings] = useState<Settings>(initialSettings);
-  const [loading, setLoading] = useState(true);
+  // 默认值只在后端有一份；拿到之前显示加载态，不在前端再抄一份默认设置
+  const [settings, setSettings] = useState<Settings | null>(null);
   const [toast, setToast] = useState<string | null>(null);
   const [themePreference, setThemePreference] = useState<ThemePreference>(() => readThemePreference());
   const [theme, setTheme] = useState<ThemeMode>(() => resolveTheme(readThemePreference()));
@@ -143,7 +106,7 @@ export function App() {
   useEffect(() => {
     loadSettings()
       .then(setSettings)
-      .finally(() => setLoading(false));
+      .catch((error) => notify(`读取设置失败：${error instanceof Error ? error.message : String(error)}`));
     const pending = onSettingsChanged(setSettings);
     return () => {
       void pending.then((unlisten) => unlisten());
@@ -171,11 +134,11 @@ export function App() {
 
   // 按值比较而不是数组引用：改任意一项偏好都会换来一份新的 settings，
   // 里面的 shortcuts 数组是新对象但内容没变，按引用依赖会白白重注册一轮
-  const shortcutFingerprint = settings.shortcuts
+  const shortcutFingerprint = settings?.shortcuts
     .map((item) => `${item.action}:${item.accelerator ?? ""}`)
     .join("|");
   useEffect(() => {
-    if (loading) return;
+    if (!settings) return;
     void applyGlobalShortcuts(settings.shortcuts).catch((error) => {
       const conflicted = error instanceof Error ? error.message : "";
       notify(
@@ -186,7 +149,7 @@ export function App() {
     });
     // settings.shortcuts 的内容由 shortcutFingerprint 代表
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [loading, shortcutFingerprint]);
+  }, [shortcutFingerprint]);
 
   useEffect(() => {
     if (page === shownPage) {
@@ -210,6 +173,9 @@ export function App() {
   }
 
   const content = useMemo(() => {
+    if (!settings) {
+      return <LoadingState />;
+    }
     if (shownPage === "prompt") {
       return <PromptPage settings={settings} onSaved={setSettings} notify={notify} />;
     }
@@ -231,12 +197,11 @@ export function App() {
     return <ShortcutsPage settings={settings} onSaved={setSettings} notify={notify} />;
   }, [shownPage, settings, themePreference, theme]);
 
-  const appWindow = "__TAURI_INTERNALS__" in window ? getCurrentWindow() : null;
+  const appWindow = getCurrentWindow();
 
   // 窗口操作要 capability 里显式放行，缺权限时 promise 会被拒。
   // 原先一律 void 掉，表现就是「点了没反应」且不留痕迹——必须让它说话。
-  function runWindowAction(action: (() => Promise<unknown>) | undefined, label: string) {
-    if (!action) return;
+  function runWindowAction(action: () => Promise<unknown>, label: string) {
     void action().catch((error) => {
       notify(`${label}失败：${error instanceof Error ? error.message : String(error)}`);
     });
@@ -247,7 +212,7 @@ export function App() {
       <div
         className="window-titlebar"
         data-tauri-drag-region
-        onDoubleClick={() => runWindowAction(appWindow?.toggleMaximize.bind(appWindow), "最大化")}
+        onDoubleClick={() => runWindowAction(() => appWindow.toggleMaximize(), "最大化")}
       >
         <div className="titlebar-left">
           <div className="window-title-chip">
@@ -259,7 +224,7 @@ export function App() {
           <div className="window-controls">
             <button
               className="window-control-btn"
-              onClick={() => runWindowAction(appWindow?.minimize.bind(appWindow), "最小化")}
+              onClick={() => runWindowAction(() => appWindow.minimize(), "最小化")}
               title="最小化"
               aria-label="最小化"
             >
@@ -267,7 +232,7 @@ export function App() {
             </button>
             <button
               className="window-control-btn"
-              onClick={() => runWindowAction(appWindow?.toggleMaximize.bind(appWindow), "最大化")}
+              onClick={() => runWindowAction(() => appWindow.toggleMaximize(), "最大化")}
               title="最大化 / 还原"
               aria-label="最大化或还原"
             >
@@ -275,7 +240,7 @@ export function App() {
             </button>
             <button
               className="window-control-btn is-close"
-              onClick={() => runWindowAction(appWindow?.close.bind(appWindow), "关闭")}
+              onClick={() => runWindowAction(() => appWindow.close(), "关闭")}
               title="关闭"
               aria-label="关闭"
             >
@@ -328,7 +293,7 @@ export function App() {
             key={shownPage}
             className={`page-transition-layer ${isLeaving ? "is-leaving" : "is-entering"} ${shownPage === "prompt" || shownPage === "ocr" ? "is-fullheight-page" : ""}`}
           >
-            {loading ? <LoadingState /> : content}
+            {content}
           </div>
         </main>
       </div>

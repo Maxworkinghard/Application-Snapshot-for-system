@@ -12,7 +12,7 @@ pub(crate) struct OcrCapability {
 /// 走 PNG 而不是直接构造 SoftwareBitmap，是为了绕开 IBufferByteAccess 那套 COM 互操作。
 fn encode_png(image: &RgbaImage) -> Result<Vec<u8>, String> {
     let mut bytes = Vec::new();
-    DynamicImage::ImageRgba8(image.clone())
+    image
         .write_to(&mut Cursor::new(&mut bytes), ImageFormat::Png)
         .map_err(|error| format!("编码图像失败：{error}"))?;
     Ok(bytes)
@@ -243,24 +243,17 @@ fn save_image_as_dialog(
         return Ok(()); // 用户取消另存，不视为错误
     };
     let path = file_path.into_path().map_err(|error| error.to_string())?;
-    let dynamic = DynamicImage::ImageRgba8(image.clone());
-    let result = match format {
-        ImageFormat::Jpeg => dynamic.to_rgb8().save_with_format(&path, ImageFormat::Jpeg),
-        other => {
-            // 若用户改了扩展名，按路径猜测；失败再回退偏好格式
-            if let Ok(guessed) = ImageFormat::from_path(&path) {
-                if guessed == ImageFormat::Jpeg {
-                    dynamic.to_rgb8().save_with_format(&path, ImageFormat::Jpeg)
-                } else {
-                    dynamic.save_with_format(&path, guessed)
-                }
-            } else {
-                dynamic.save_with_format(&path, other)
-            }
-        }
-    };
-    result.map_err(|error| format!("另存为失败：{error}"))?;
-    Ok(())
+    // 用户在对话框里改了扩展名就按扩展名存；认不出或不支持的扩展名才回退偏好格式
+    let format = ImageFormat::from_path(&path)
+        .ok()
+        .filter(|guessed| {
+            matches!(
+                guessed,
+                ImageFormat::Png | ImageFormat::Jpeg | ImageFormat::WebP
+            )
+        })
+        .unwrap_or(format);
+    snapshots::write_image(image, &path, format).map_err(|error| format!("另存为失败：{error}"))
 }
 
 #[cfg(target_os = "windows")]
@@ -719,12 +712,14 @@ fn copy_image_to_clipboard(image: RgbaImage, clear_after: Option<Duration>) -> R
 
     if let Some(delay) = clear_after {
         thread::spawn(move || {
+            // 到点前要确认剪贴板里还是这张图（用户可能已经复制了别的）。只留指纹不留原图：
+            // 4K 截图一份约 33MB，没必要在内存里攥满整个清空时限。
+            let expected = image_fingerprint(width, height, &bytes);
+            drop(bytes);
             thread::sleep(delay);
             if let Ok(mut clipboard) = Clipboard::new() {
                 if let Ok(current) = clipboard.get_image() {
-                    if current.width == width
-                        && current.height == height
-                        && current.bytes.as_ref() == bytes.as_slice()
+                    if image_fingerprint(current.width, current.height, &current.bytes) == expected
                     {
                         let _ = clipboard.clear();
                     }
@@ -733,6 +728,13 @@ fn copy_image_to_clipboard(image: RgbaImage, clear_after: Option<Duration>) -> R
         });
     }
     Ok(())
+}
+
+fn image_fingerprint(width: usize, height: usize, bytes: &[u8]) -> u64 {
+    use std::hash::{DefaultHasher, Hash, Hasher};
+    let mut hasher = DefaultHasher::new();
+    (width, height, bytes).hash(&mut hasher);
+    hasher.finish()
 }
 
 fn open_annotate_window(

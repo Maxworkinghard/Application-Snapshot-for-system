@@ -28,7 +28,6 @@ tauri = { version = "2", features = ["macos-private-api", "tray-icon"] }
 tauri-plugin-global-shortcut = "2"
 tauri-plugin-dialog = "2"
 tauri-plugin-single-instance = "2"
-thiserror = "2"
 xcap = "0.9.8"
 zip = { version = "6", default-features = false, features = ["deflate"] }
 
