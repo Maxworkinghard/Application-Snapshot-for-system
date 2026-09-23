@@ -1143,7 +1143,7 @@ fn platform_capabilities() -> PlatformCapabilities {
             },
             include_cursor: CapabilityStatus {
                 available: true,
-                detail: "录制：gdigrab -draw_mouse；静帧：按热点合成系统光标".into(),
+                detail: "录制：WGC SetIsCursorCaptureEnabled；静帧：按热点合成系统光标".into(),
             },
             tray_note: "NotifyIcon：左键/双击打开主窗口；右键菜单打开设置/退出。".into(),
             notes: vec![
