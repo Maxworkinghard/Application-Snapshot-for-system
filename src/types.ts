@@ -4,7 +4,6 @@ export type ShortcutAction =
   | "fullscreen"
   | "scrolling"
   | "record"
-  | "recordings"
   | "polish"
   | "ocr";
 
@@ -49,6 +48,8 @@ export interface Settings {
   autoSaveLocal: boolean;
   launchOnBoot: boolean;
   includeCursor: boolean;
+  recordSystemAudio: boolean;
+  recordMicrophone: boolean;
   afterCapture: "clipboard" | "annotate" | "saveas";
 }
 
@@ -99,6 +100,8 @@ export interface PlatformCapabilities {
   os: string;
   displayServer: string;
   recording: CapabilityStatus;
+  recordingSystemAudio: CapabilityStatus;
+  recordingMicrophone: CapabilityStatus;
   ocr: CapabilityStatus;
   autostart: CapabilityStatus;
   /** 仅 Linux 下发：其余平台没有滚动长截图 */

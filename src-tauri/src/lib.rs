@@ -144,6 +144,10 @@ struct Settings {
     launch_on_boot: bool,
     #[serde(default)]
     include_cursor: bool,
+    #[serde(default)]
+    record_system_audio: bool,
+    #[serde(default)]
+    record_microphone: bool,
     #[serde(default = "default_after_capture")]
     after_capture: String,
 }
@@ -201,6 +205,8 @@ impl Default for Settings {
             auto_save_local: true,
             launch_on_boot: false,
             include_cursor: false,
+            record_system_audio: false,
+            record_microphone: false,
             after_capture: default_after_capture(),
         }
     }
@@ -222,10 +228,6 @@ fn default_shortcut_bindings() -> Vec<ShortcutBinding> {
         },
         ShortcutBinding {
             action: "record".into(),
-            accelerator: None,
-        },
-        ShortcutBinding {
-            action: "recordings".into(),
             accelerator: None,
         },
         ShortcutBinding {
@@ -264,6 +266,8 @@ struct PreferencesPatch {
     auto_save_local: Option<bool>,
     launch_on_boot: Option<bool>,
     include_cursor: Option<bool>,
+    record_system_audio: Option<bool>,
+    record_microphone: Option<bool>,
     after_capture: Option<String>,
 }
 
@@ -399,7 +403,11 @@ fn read_settings(path: &PathBuf) -> Settings {
         settings.templates = Settings::default().templates;
         settings.active_template_id = "builtin-default".into();
     }
-    // 老配置里没有后来新增的动作（如 ocr）。只补不删：已有绑定原样保留，
+    // 移除旧版「打开录制目录」快捷键；录制设置里的打开按钮仍可使用。
+    settings
+        .shortcuts
+        .retain(|item| item.action != "recordings");
+    // 老配置里没有后来新增的动作（如 ocr）。其余已有绑定原样保留，
     // 缺的追加到末尾；平台不支持的动作（如 Win/mac 的 scrolling）不补。
     for fallback in default_shortcut_bindings() {
         if !settings
@@ -781,6 +789,10 @@ fn save_shortcuts(
     state: State<'_, AppState>,
     shortcuts: Vec<ShortcutBinding>,
 ) -> Result<Settings, String> {
+    let shortcuts = shortcuts
+        .into_iter()
+        .filter(|item| item.action != "recordings")
+        .collect::<Vec<_>>();
     let mut values = shortcuts
         .iter()
         .filter_map(|item| item.accelerator.as_ref())
@@ -853,6 +865,12 @@ fn save_preferences(
     }
     if let Some(value) = prefs.include_cursor {
         settings.include_cursor = value;
+    }
+    if let Some(value) = prefs.record_system_audio {
+        settings.record_system_audio = value;
+    }
+    if let Some(value) = prefs.record_microphone {
+        settings.record_microphone = value;
     }
     if let Some(value) = prefs.after_capture {
         settings.after_capture = value;
@@ -1066,6 +1084,8 @@ struct PlatformCapabilities {
     os: String,
     display_server: String,
     recording: CapabilityStatus,
+    recording_system_audio: CapabilityStatus,
+    recording_microphone: CapabilityStatus,
     ocr: CapabilityStatus,
     autostart: CapabilityStatus,
     /// 滚动长截图只有 Linux/X11 实现，其余平台不暴露这一项
@@ -1123,6 +1143,24 @@ fn macos_recorder_capability() -> Result<(), String> {
     }
 }
 
+#[cfg(target_os = "macos")]
+fn macos_major_version() -> Option<u32> {
+    let output = Command::new("sw_vers")
+        .arg("-productVersion")
+        .output()
+        .ok()?;
+    if !output.status.success() {
+        return None;
+    }
+    String::from_utf8(output.stdout)
+        .ok()?
+        .trim()
+        .split('.')
+        .next()?
+        .parse()
+        .ok()
+}
+
 // 每个平台的 cfg 块独立返回；显式 return 避免函数结果依赖当前被编译的分支。
 #[allow(clippy::needless_return)]
 #[tauri::command]
@@ -1169,10 +1207,14 @@ fn platform_capabilities() -> PlatformCapabilities {
             available: true,
             detail: "静帧：ffmpeg x11grab 带光标（失败则回退无光标并在成功提示中说明）；录制：x11grab 尊重开关，portal 路径忽略".into(),
         };
+        let recording_system_audio = linux::system_audio_capability();
+        let recording_microphone = linux::microphone_capability();
         return PlatformCapabilities {
             os: "linux".into(),
             display_server: linux::display_server_label().into(),
             recording,
+            recording_system_audio,
+            recording_microphone,
             ocr,
             autostart,
             scrolling,
@@ -1198,6 +1240,14 @@ fn platform_capabilities() -> PlatformCapabilities {
             os: "windows".into(),
             display_server: "Win32".into(),
             recording,
+            recording_system_audio: CapabilityStatus {
+                available: true,
+                detail: "WASAPI loopback：录制当前默认播放设备的系统混音".into(),
+            },
+            recording_microphone: CapabilityStatus {
+                available: true,
+                detail: "WASAPI：录制当前默认麦克风；首次使用受 Windows 麦克风隐私设置控制".into(),
+            },
             ocr: CapabilityStatus {
                 available: ocr_report.available,
                 detail: ocr_report.detail,
@@ -1227,10 +1277,33 @@ fn platform_capabilities() -> PlatformCapabilities {
                 detail,
             },
         };
+        let recording_system_audio = CapabilityStatus {
+            available: recording.available,
+            detail: if recording.available {
+                "ScreenCaptureKit：录制当前显示器上的应用系统声音".into()
+            } else {
+                recording.detail.clone()
+            },
+        };
+        let microphone_supported = macos_major_version()
+            .map(|version| version >= 15)
+            .unwrap_or(false);
+        let recording_microphone = CapabilityStatus {
+            available: recording.available && microphone_supported,
+            detail: if !recording.available {
+                recording.detail.clone()
+            } else if microphone_supported {
+                "ScreenCaptureKit：macOS 15 及以上可录制麦克风".into()
+            } else {
+                "麦克风采集需要 macOS 15 或更新版本".into()
+            },
+        };
         return PlatformCapabilities {
             os: "macos".into(),
             display_server: "AppKit".into(),
             recording,
+            recording_system_audio,
+            recording_microphone,
             ocr: CapabilityStatus {
                 available: ocr_report.available,
                 detail: ocr_report.detail,
@@ -1249,7 +1322,7 @@ fn platform_capabilities() -> PlatformCapabilities {
             tray_note: "NSStatusItem：左键打开主窗口；菜单打开设置/退出。".into(),
             notes: vec![
                 "macOS 还原最小化窗口按 AXTitle 对齐；标题对不上且该应用有多个最小化窗口时，不代劳、提示手动还原".into(),
-                "窗口录制使用 ScreenCaptureKit，仅录目标窗口，不包含系统音频或麦克风".into(),
+                "窗口录制使用 ScreenCaptureKit；系统音频可单独录制，麦克风需要 macOS 15 或更新版本".into(),
             ],
         };
     }
@@ -1259,6 +1332,14 @@ fn platform_capabilities() -> PlatformCapabilities {
             os: std::env::consts::OS.into(),
             display_server: "unknown".into(),
             recording: CapabilityStatus {
+                available: false,
+                detail: "未支持".into(),
+            },
+            recording_system_audio: CapabilityStatus {
+                available: false,
+                detail: "未支持".into(),
+            },
+            recording_microphone: CapabilityStatus {
                 available: false,
                 detail: "未支持".into(),
             },
@@ -2311,6 +2392,8 @@ fn spawn_macos_recorder(
     target: &TrackedWindow,
     output: &PathBuf,
     include_cursor: bool,
+    record_system_audio: bool,
+    record_microphone: bool,
 ) -> Result<(Child, Arc<Mutex<String>>), String> {
     let mut command = Command::new(macos_recorder_program());
     command
@@ -2320,6 +2403,12 @@ fn spawn_macos_recorder(
         .arg(output);
     if include_cursor {
         command.arg("--include-cursor");
+    }
+    if record_system_audio {
+        command.arg("--system-audio");
+    }
+    if record_microphone {
+        command.arg("--microphone");
     }
     command
         .stdin(Stdio::piped())
@@ -2471,8 +2560,13 @@ fn toggle_recording(
 
     #[cfg(target_os = "linux")]
     {
-        let (active, start_message) =
-            linux::start_recording(target.id, settings.include_cursor, &output)?;
+        let (active, start_message) = linux::start_recording(
+            target.id,
+            settings.include_cursor,
+            settings.record_system_audio,
+            settings.record_microphone,
+            &output,
+        )?;
         // child 也放一份，供 status.active 判断；停止走 linux_active
         // ActiveRecording 拥有 child，这里不双持——只用 linux_active
         recorder.linux_active = Some(active);
@@ -2493,7 +2587,13 @@ fn toggle_recording(
             restore_minimized_window(target.id)
                 .map_err(|error| format!("目标窗口已最小化，且无法还原：{error}"))?;
         }
-        let active = windows_recorder::start(target.id as isize, settings.include_cursor, &output)?;
+        let active = windows_recorder::start(
+            target.id as isize,
+            settings.include_cursor,
+            settings.record_system_audio,
+            settings.record_microphone,
+            &output,
+        )?;
         recorder.windows_active = Some(active);
         recorder.target = Some(target.app_name);
         recorder.started_at = Some(now_millis());
@@ -2503,7 +2603,13 @@ fn toggle_recording(
 
     #[cfg(target_os = "macos")]
     {
-        let (child, diagnostic) = spawn_macos_recorder(&target, &output, settings.include_cursor)?;
+        let (child, diagnostic) = spawn_macos_recorder(
+            &target,
+            &output,
+            settings.include_cursor,
+            settings.record_system_audio,
+            settings.record_microphone,
+        )?;
         recorder.child = Some(child);
         recorder.diagnostic = Some(diagnostic);
         recorder.target = Some(target.app_name);
@@ -3036,7 +3142,6 @@ async fn perform_action(
                 "录制已保存".into()
             }
         }),
-        "recordings" => open_recordings_dir(state).map(|path| format!("已打开录制目录：{path}")),
         "polish" => polish_clipboard(state).await,
         "ocr" => ocr_clipboard_into_clipboard().await,
         "fullscreen" => {
@@ -3955,9 +4060,9 @@ mod pet_asset_tests {
         path
     }
 
-    /// 老配置只有三条绑定，读取后应当补出 ocr，且已有的绑定不能被动到
+    /// 老配置含已废弃的录制目录绑定：移除它，补出新动作，保留其它已有绑定。
     #[test]
-    fn old_settings_gain_newly_added_shortcut_actions() {
+    fn old_settings_migrate_shortcut_actions() {
         let path = std::env::temp_dir().join("snapshot-settings-migration.json");
         let legacy = r#"{
             "baseUrl": "https://api.example.com/v1",
@@ -3970,6 +4075,7 @@ mod pet_asset_tests {
             "shortcuts": [
                 {"action":"snapshot","accelerator":"Alt+Shift+2"},
                 {"action":"record","accelerator":null},
+                {"action":"recordings","accelerator":"Alt+Shift+R"},
                 {"action":"polish","accelerator":null}
             ]
         }"#;
@@ -3991,21 +4097,13 @@ mod pet_asset_tests {
                 "polish",
                 "fullscreen",
                 "scrolling",
-                "recordings",
                 "ocr"
             ]
         );
         #[cfg(not(target_os = "linux"))]
         assert_eq!(
             actions,
-            vec![
-                "snapshot",
-                "record",
-                "polish",
-                "fullscreen",
-                "recordings",
-                "ocr"
-            ]
+            vec!["snapshot", "record", "polish", "fullscreen", "ocr"]
         );
 
         // 已绑定的键不能在迁移中丢失
