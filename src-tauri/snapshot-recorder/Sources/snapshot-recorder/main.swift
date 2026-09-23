@@ -36,11 +36,15 @@ struct Arguments {
     let windowID: CGWindowID
     let outputURL: URL
     let includeCursor: Bool
+    let includeSystemAudio: Bool
+    let includeMicrophone: Bool
 
     static func parse(_ values: [String]) throws -> Arguments {
         var windowID: CGWindowID?
         var outputPath: String?
         var includeCursor = false
+        var includeSystemAudio = false
+        var includeMicrophone = false
         var index = 1
         while index < values.count {
             switch values[index] {
@@ -58,6 +62,10 @@ struct Arguments {
                 outputPath = values[index]
             case "--include-cursor":
                 includeCursor = true
+            case "--system-audio":
+                includeSystemAudio = true
+            case "--microphone":
+                includeMicrophone = true
             default:
                 throw RecorderError(message: "未知参数：\(values[index])")
             }
@@ -73,7 +81,9 @@ struct Arguments {
         return Arguments(
             windowID: windowID,
             outputURL: URL(fileURLWithPath: outputPath),
-            includeCursor: includeCursor
+            includeCursor: includeCursor,
+            includeSystemAudio: includeSystemAudio,
+            includeMicrophone: includeMicrophone
         )
     }
 }
@@ -81,6 +91,8 @@ struct Arguments {
 final class RecordingCoordinator: NSObject, SCStreamOutput, SCStreamDelegate, @unchecked Sendable {
     private let writer: AVAssetWriter
     private let videoInput: AVAssetWriterInput
+    private let systemAudioInput: AVAssetWriterInput?
+    private let microphoneInput: AVAssetWriterInput?
     private let lock = NSLock()
     private let readySignal = DispatchSemaphore(value: 0)
     private let stopSignal = DispatchSemaphore(value: 0)
@@ -92,8 +104,9 @@ final class RecordingCoordinator: NSObject, SCStreamOutput, SCStreamDelegate, @u
     private var sessionStartUptimeNanoseconds: UInt64?
     private var lastSampleBuffer: CMSampleBuffer?
     private var lastPresentationTime = CMTime.invalid
+    private var lastAudioEndTime = CMTime.invalid
 
-    init(outputURL: URL, width: Int, height: Int) throws {
+    init(outputURL: URL, width: Int, height: Int, includeSystemAudio: Bool, includeMicrophone: Bool) throws {
         try? FileManager.default.removeItem(at: outputURL)
         writer = try AVAssetWriter(outputURL: outputURL, fileType: .mp4)
 
@@ -116,6 +129,26 @@ final class RecordingCoordinator: NSObject, SCStreamOutput, SCStreamDelegate, @u
             throw RecorderError(message: "系统编码器拒绝当前窗口的视频参数")
         }
         writer.add(videoInput)
+
+        func makeAudioInput(_ writer: AVAssetWriter) throws -> AVAssetWriterInput {
+            let input = AVAssetWriterInput(
+                mediaType: .audio,
+                outputSettings: [
+                    AVFormatIDKey: kAudioFormatMPEG4AAC,
+                    AVSampleRateKey: 48_000,
+                    AVNumberOfChannelsKey: 2,
+                    AVEncoderBitRateKey: 160_000,
+                ]
+            )
+            input.expectsMediaDataInRealTime = true
+            guard writer.canAdd(input) else {
+                throw RecorderError(message: "系统编码器拒绝当前 AAC 音频参数")
+            }
+            writer.add(input)
+            return input
+        }
+        systemAudioInput = includeSystemAudio ? try makeAudioInput(writer) : nil
+        microphoneInput = includeMicrophone ? try makeAudioInput(writer) : nil
         super.init()
     }
 
@@ -124,16 +157,42 @@ final class RecordingCoordinator: NSObject, SCStreamOutput, SCStreamDelegate, @u
         didOutputSampleBuffer sampleBuffer: CMSampleBuffer,
         of outputType: SCStreamOutputType
     ) {
-        guard outputType == .screen,
-              sampleBuffer.isValid,
-              sampleBuffer.dataReadiness == .ready,
-              CMSampleBufferGetImageBuffer(sampleBuffer) != nil else {
+        guard sampleBuffer.isValid, sampleBuffer.dataReadiness == .ready else {
             return
         }
 
         lock.lock()
         defer { lock.unlock() }
         guard failure == nil else { return }
+
+        let isMicrophoneOutput: Bool
+        if #available(macOS 15.0, *) {
+            isMicrophoneOutput = outputType == .microphone
+        } else {
+            isMicrophoneOutput = false
+        }
+        if outputType == .audio || isMicrophoneOutput {
+            guard sessionStarted else { return }
+            let input = outputType == .audio ? systemAudioInput : microphoneInput
+            guard let input, input.isReadyForMoreMediaData else { return }
+            guard input.append(sampleBuffer) else {
+                recordFailureLocked("写入音频失败：\(writer.error?.localizedDescription ?? "未知错误")")
+                return
+            }
+            let presentationTime = sampleBuffer.presentationTimeStamp
+            let duration = sampleBuffer.duration
+            if presentationTime.isValid, duration.isValid {
+                let endTime = CMTimeAdd(presentationTime, duration)
+                if !lastAudioEndTime.isValid || CMTimeCompare(endTime, lastAudioEndTime) > 0 {
+                    lastAudioEndTime = endTime
+                }
+            }
+            return
+        }
+
+        guard outputType == .screen, CMSampleBufferGetImageBuffer(sampleBuffer) != nil else {
+            return
+        }
 
         if !sessionStarted {
             guard writer.startWriting() else {
@@ -177,6 +236,10 @@ final class RecordingCoordinator: NSObject, SCStreamOutput, SCStreamDelegate, @u
         lock.unlock()
     }
 
+    func cancel() {
+        writer.cancelWriting()
+    }
+
     func failureMessage() -> String? {
         lock.lock()
         defer { lock.unlock() }
@@ -191,6 +254,7 @@ final class RecordingCoordinator: NSObject, SCStreamOutput, SCStreamDelegate, @u
         let startedAtUptime = sessionStartUptimeNanoseconds
         let finalSourceBuffer = lastSampleBuffer
         let finalSourceTime = lastPresentationTime
+        let audioEndTime = lastAudioEndTime
         lock.unlock()
 
         if let existingFailure {
@@ -249,8 +313,14 @@ final class RecordingCoordinator: NSObject, SCStreamOutput, SCStreamDelegate, @u
             }
         }
 
+        if audioEndTime.isValid, CMTimeCompare(audioEndTime, sessionEndTime) > 0 {
+            sessionEndTime = audioEndTime
+        }
+
         writer.endSession(atSourceTime: sessionEndTime)
         videoInput.markAsFinished()
+        systemAudioInput?.markAsFinished()
+        microphoneInput?.markAsFinished()
         let finished = DispatchSemaphore(value: 0)
         writer.finishWriting {
             finished.signal()
@@ -301,6 +371,22 @@ func runRecording(arguments: Arguments) async throws {
         )
     }
 
+    if arguments.includeMicrophone {
+        guard #available(macOS 15.0, *) else {
+            throw RecorderError(message: "麦克风录制需要 macOS 15 或更高版本")
+        }
+        let status = AVCaptureDevice.authorizationStatus(for: .audio)
+        let authorized: Bool
+        if status == .notDetermined {
+            authorized = await AVCaptureDevice.requestAccess(for: .audio)
+        } else {
+            authorized = status == .authorized
+        }
+        guard authorized else {
+            throw RecorderError(message: "未获得麦克风权限。请在系统设置 → 隐私与安全性 → 麦克风中允许应用快照")
+        }
+    }
+
     let content: SCShareableContent
     do {
         content = try await SCShareableContent.excludingDesktopWindows(
@@ -344,7 +430,9 @@ func runRecording(arguments: Arguments) async throws {
     let coordinator = try RecordingCoordinator(
         outputURL: arguments.outputURL,
         width: width,
-        height: height
+        height: height,
+        includeSystemAudio: arguments.includeSystemAudio,
+        includeMicrophone: arguments.includeMicrophone
     )
     let stream = SCStream(filter: filter, configuration: configuration, delegate: coordinator)
     let captureQueue = DispatchQueue(label: "com.appsnapshot.snapshot-recorder.frames")
@@ -365,6 +453,49 @@ func runRecording(arguments: Arguments) async throws {
         throw RecorderError(message: failure)
     }
 
+    var audioStream: SCStream?
+    if arguments.includeSystemAudio || arguments.includeMicrophone {
+        guard let display = content.displays.first else {
+            try? await stream.stopCapture()
+            coordinator.cancel()
+            try? FileManager.default.removeItem(at: arguments.outputURL)
+            throw RecorderError(message: "找不到可用于录制音频的显示器")
+        }
+        let audioFilter = SCContentFilter(display: display, excludingApplications: [], exceptingWindows: [])
+        let audioConfiguration = SCStreamConfiguration()
+        audioConfiguration.width = 2
+        audioConfiguration.height = 2
+        audioConfiguration.capturesAudio = arguments.includeSystemAudio
+        if arguments.includeMicrophone {
+            guard #available(macOS 15.0, *) else {
+                try? await stream.stopCapture()
+                coordinator.cancel()
+                try? FileManager.default.removeItem(at: arguments.outputURL)
+                throw RecorderError(message: "麦克风录制需要 macOS 15 或更高版本")
+            }
+            audioConfiguration.captureMicrophone = true
+        }
+        let captureQueue = DispatchQueue(label: "com.appsnapshot.snapshot-recorder.audio")
+        let configuredAudioStream = SCStream(filter: audioFilter, configuration: audioConfiguration, delegate: coordinator)
+        do {
+            if arguments.includeSystemAudio {
+                try configuredAudioStream.addStreamOutput(coordinator, type: .audio, sampleHandlerQueue: captureQueue)
+            }
+            if arguments.includeMicrophone {
+                if #available(macOS 15.0, *) {
+                    try configuredAudioStream.addStreamOutput(coordinator, type: .microphone, sampleHandlerQueue: captureQueue)
+                }
+            }
+            try await configuredAudioStream.startCapture()
+            audioStream = configuredAudioStream
+        } catch {
+            try? await stream.stopCapture()
+            coordinator.cancel()
+            try? FileManager.default.removeItem(at: arguments.outputURL)
+            throw RecorderError(message: "启动音频录制失败：\(error.localizedDescription)")
+        }
+    }
+
     emit("READY \(width) \(height)")
     DispatchQueue.global(qos: .userInitiated).async {
         while let line = readLine() {
@@ -377,6 +508,15 @@ func runRecording(arguments: Arguments) async throws {
 
     coordinator.waitUntilStopRequested()
     let streamFailure = coordinator.failureMessage()
+    if let audioStream {
+        do {
+            try await audioStream.stopCapture()
+        } catch where streamFailure == nil {
+            throw RecorderError(message: "停止音频录制失败：\(error.localizedDescription)")
+        } catch {
+            // 流已因错误停止时，保留原始采集错误。
+        }
+    }
     do {
         try await stream.stopCapture()
     } catch where streamFailure == nil {

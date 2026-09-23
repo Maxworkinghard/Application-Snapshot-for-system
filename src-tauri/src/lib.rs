@@ -366,9 +366,9 @@ mod mac_icon_tests {
 mod pet_asset_tests {
     use super::*;
 
-    /// 老配置只有三条绑定，读取后应当补出 ocr，且已有的绑定不能被动到
+    /// 老配置含已废弃的录制目录绑定：移除它，补出新动作，保留其它已有绑定。
     #[test]
-    fn old_settings_gain_newly_added_shortcut_actions() {
+    fn old_settings_migrate_shortcut_actions() {
         let path = std::env::temp_dir().join("snapshot-settings-migration.json");
         let legacy = r#"{
             "baseUrl": "https://api.example.com/v1",
@@ -381,6 +381,7 @@ mod pet_asset_tests {
             "shortcuts": [
                 {"action":"snapshot","accelerator":"Alt+Shift+2"},
                 {"action":"record","accelerator":null},
+                {"action":"recordings","accelerator":"Alt+Shift+R"},
                 {"action":"polish","accelerator":null}
             ]
         }"#;
@@ -402,21 +403,13 @@ mod pet_asset_tests {
                 "polish",
                 "fullscreen",
                 "scrolling",
-                "recordings",
                 "ocr"
             ]
         );
         #[cfg(not(target_os = "linux"))]
         assert_eq!(
             actions,
-            vec![
-                "snapshot",
-                "record",
-                "polish",
-                "fullscreen",
-                "recordings",
-                "ocr"
-            ]
+            vec!["snapshot", "record", "polish", "fullscreen", "ocr"]
         );
 
         // 已绑定的键不能在迁移中丢失

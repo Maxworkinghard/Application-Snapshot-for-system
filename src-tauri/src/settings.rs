@@ -105,6 +105,10 @@ pub(crate) struct Settings {
     pub(crate) launch_on_boot: bool,
     #[serde(default)]
     pub(crate) include_cursor: bool,
+    #[serde(default)]
+    pub(crate) record_system_audio: bool,
+    #[serde(default)]
+    pub(crate) record_microphone: bool,
     #[serde(default = "default_after_capture")]
     pub(crate) after_capture: String,
 }
@@ -162,6 +166,8 @@ impl Default for Settings {
             auto_save_local: true,
             launch_on_boot: false,
             include_cursor: false,
+            record_system_audio: false,
+            record_microphone: false,
             after_capture: default_after_capture(),
         }
     }
@@ -183,10 +189,6 @@ fn default_shortcut_bindings() -> Vec<ShortcutBinding> {
         },
         ShortcutBinding {
             action: "record".into(),
-            accelerator: None,
-        },
-        ShortcutBinding {
-            action: "recordings".into(),
             accelerator: None,
         },
         ShortcutBinding {
@@ -225,6 +227,8 @@ pub(crate) struct PreferencesPatch {
     auto_save_local: Option<bool>,
     launch_on_boot: Option<bool>,
     include_cursor: Option<bool>,
+    record_system_audio: Option<bool>,
+    record_microphone: Option<bool>,
     after_capture: Option<String>,
 }
 
@@ -274,7 +278,11 @@ pub(crate) fn read_settings(path: &PathBuf) -> Settings {
         settings.templates = Settings::default().templates;
         settings.active_template_id = "builtin-default".into();
     }
-    // 老配置里没有后来新增的动作（如 ocr）。只补不删：已有绑定原样保留，
+    // 移除旧版「打开录制目录」快捷键；录制设置里的打开按钮仍可使用。
+    settings
+        .shortcuts
+        .retain(|item| item.action != "recordings");
+    // 老配置里没有后来新增的动作（如 ocr）。其余已有绑定原样保留，
     // 缺的追加到末尾；平台不支持的动作（如 Win/mac 的 scrolling）不补。
     for fallback in default_shortcut_bindings() {
         if !settings
@@ -432,6 +440,10 @@ pub(crate) fn save_shortcuts(
     state: State<'_, AppState>,
     shortcuts: Vec<ShortcutBinding>,
 ) -> Result<Settings, String> {
+    let shortcuts = shortcuts
+        .into_iter()
+        .filter(|item| item.action != "recordings")
+        .collect::<Vec<_>>();
     let mut values = shortcuts
         .iter()
         .filter_map(|item| item.accelerator.as_ref())
@@ -504,6 +516,12 @@ pub(crate) fn save_preferences(
     }
     if let Some(value) = prefs.include_cursor {
         settings.include_cursor = value;
+    }
+    if let Some(value) = prefs.record_system_audio {
+        settings.record_system_audio = value;
+    }
+    if let Some(value) = prefs.record_microphone {
+        settings.record_microphone = value;
     }
     if let Some(value) = prefs.after_capture {
         settings.after_capture = value;

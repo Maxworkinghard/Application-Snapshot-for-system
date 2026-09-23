@@ -29,6 +29,8 @@ const settings: Settings = {
   autoSaveLocal: true,
   launchOnBoot: false,
   includeCursor: false,
+  recordSystemAudio: false,
+  recordMicrophone: false,
   afterCapture: "clipboard",
 };
 
@@ -36,6 +38,8 @@ const capabilities: PlatformCapabilities = {
   os: "windows",
   displayServer: "n/a",
   recording: { available: true, detail: "" },
+  recordingSystemAudio: { available: true, detail: "" },
+  recordingMicrophone: { available: true, detail: "" },
   ocr: { available: true, detail: "" },
   autostart: { available: true, detail: "" },
   includeCursor: { available: true, detail: "" },

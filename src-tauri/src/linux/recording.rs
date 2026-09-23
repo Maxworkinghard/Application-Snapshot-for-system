@@ -119,6 +119,164 @@ pub fn recording_available() -> Result<(), String> {
     pick_recording_backend().map(|_| ())
 }
 
+#[derive(Debug, Clone)]
+struct AudioInput {
+    source: String,
+}
+
+fn pulse_sources() -> Result<Vec<String>, String> {
+    let output = Command::new("pactl")
+        .args(["list", "short", "sources"])
+        .output()
+        .map_err(|_| "未找到 pactl；Linux 音频录制需要 PulseAudio 或 PipeWire-Pulse".to_string())?;
+    if !output.status.success() {
+        return Err("无法读取 PulseAudio/PipeWire 音频输入设备".into());
+    }
+    let text = String::from_utf8_lossy(&output.stdout);
+    Ok(text
+        .lines()
+        .filter_map(|line| line.split_whitespace().nth(1).map(str::to_string))
+        .collect())
+}
+
+fn pulse_ffmpeg_available() -> Result<(), String> {
+    ensure_ffmpeg()?;
+    let output = Command::new("ffmpeg")
+        .args(["-hide_banner", "-devices"])
+        .output()
+        .map_err(|_| "无法检查 ffmpeg 的 PulseAudio 支持".to_string())?;
+    let listing = format!(
+        "{}{}",
+        String::from_utf8_lossy(&output.stdout),
+        String::from_utf8_lossy(&output.stderr)
+    );
+    if listing.contains("pulse") {
+        Ok(())
+    } else {
+        Err("当前 ffmpeg 未编译 PulseAudio 输入支持".into())
+    }
+}
+
+fn system_audio_source() -> Result<String, String> {
+    pulse_ffmpeg_available()?;
+    let sink = Command::new("pactl")
+        .args(["get-default-sink"])
+        .output()
+        .map_err(|_| "未找到 pactl；无法定位系统播放设备".to_string())?;
+    if !sink.status.success() {
+        return Err("没有可用的默认系统播放设备".into());
+    }
+    let sink = String::from_utf8_lossy(&sink.stdout).trim().to_string();
+    if sink.is_empty() {
+        return Err("没有可用的默认系统播放设备".into());
+    }
+    let monitor = format!("{sink}.monitor");
+    if pulse_sources()?.iter().any(|source| source == &monitor) {
+        Ok(monitor)
+    } else {
+        Err("默认播放设备没有可录制的 monitor 输入".into())
+    }
+}
+
+fn microphone_source() -> Result<String, String> {
+    pulse_ffmpeg_available()?;
+    let source = Command::new("pactl")
+        .args(["get-default-source"])
+        .output()
+        .map_err(|_| "未找到 pactl；无法定位默认麦克风".to_string())?;
+    if !source.status.success() {
+        return Err("没有可用的默认麦克风输入".into());
+    }
+    let source = String::from_utf8_lossy(&source.stdout).trim().to_string();
+    if source.is_empty() || source.ends_with(".monitor") {
+        return Err("没有可用的默认麦克风输入".into());
+    }
+    if pulse_sources()?.iter().any(|item| item == &source) {
+        Ok(source)
+    } else {
+        Err("默认麦克风没有可录制的 PulseAudio/PipeWire 输入".into())
+    }
+}
+
+pub fn system_audio_capability() -> crate::platform::CapabilityStatus {
+    match system_audio_source() {
+        Ok(_) => crate::platform::CapabilityStatus {
+            available: true,
+            detail: "PulseAudio/PipeWire：录制默认播放设备的系统混音".into(),
+        },
+        Err(detail) => crate::platform::CapabilityStatus {
+            available: false,
+            detail,
+        },
+    }
+}
+
+pub fn microphone_capability() -> crate::platform::CapabilityStatus {
+    match microphone_source() {
+        Ok(_) => crate::platform::CapabilityStatus {
+            available: true,
+            detail: "PulseAudio/PipeWire：录制默认麦克风输入".into(),
+        },
+        Err(detail) => crate::platform::CapabilityStatus {
+            available: false,
+            detail,
+        },
+    }
+}
+
+fn selected_audio_inputs(
+    record_system_audio: bool,
+    record_microphone: bool,
+) -> Result<Vec<AudioInput>, String> {
+    let mut inputs = Vec::new();
+    if record_system_audio {
+        inputs.push(AudioInput {
+            source: system_audio_source()?,
+        });
+    }
+    if record_microphone {
+        inputs.push(AudioInput {
+            source: microphone_source()?,
+        });
+    }
+    Ok(inputs)
+}
+
+fn append_audio_inputs(command: &mut Command, inputs: &[AudioInput]) {
+    for input in inputs {
+        command.args(["-thread_queue_size", "512", "-f", "pulse", "-i"]);
+        command.arg(&input.source);
+    }
+}
+
+fn append_mux_args(command: &mut Command, audio_inputs: &[AudioInput]) {
+    command.args(["-map", "0:v:0"]);
+    match audio_inputs.len() {
+        0 => {}
+        1 => {
+            command.args(["-map", "1:a:0", "-c:a", "aac", "-b:a", "160k"]);
+        }
+        count => {
+            let filter = audio_inputs
+                .iter()
+                .enumerate()
+                .map(|(index, _)| format!("[{}:a:0]", index + 1))
+                .collect::<String>()
+                + &format!("amix=inputs={count}:duration=longest:dropout_transition=0[mixed]");
+            command.args([
+                "-filter_complex",
+                &filter,
+                "-map",
+                "[mixed]",
+                "-c:a",
+                "aac",
+                "-b:a",
+                "160k",
+            ]);
+        }
+    }
+}
+
 /// 能力探测文案（设置 / diagnostics）。
 pub fn recording_capability_detail() -> String {
     if let Err(detail) = ensure_ffmpeg() {
@@ -245,12 +403,15 @@ impl ActiveRecording {
 pub fn start_recording(
     target_id: u32,
     include_cursor: bool,
+    record_system_audio: bool,
+    record_microphone: bool,
     output: &Path,
 ) -> Result<(ActiveRecording, Option<String>), String> {
     ensure_ffmpeg()?;
+    let audio_inputs = selected_audio_inputs(record_system_audio, record_microphone)?;
     match pick_recording_backend()? {
         RecordingBackend::Portal => {
-            let active = start_portal_recording(include_cursor, output)?;
+            let active = start_portal_recording(include_cursor, &audio_inputs, output)?;
             // xdg portal 无法沿用应用内选中的 target_id；光标亦由合成器决定。
             let warn =
                 "录制已开始：门户将请你重新选择窗口/屏幕；光标由合成器决定（include_cursor 无效）"
@@ -258,7 +419,7 @@ pub fn start_recording(
             Ok((active, Some(warn)))
         }
         RecordingBackend::X11Grab { .. } => {
-            let active = start_x11_recording(target_id, include_cursor, output)?;
+            let active = start_x11_recording(target_id, include_cursor, &audio_inputs, output)?;
             Ok((active, None))
         }
     }
@@ -267,6 +428,7 @@ pub fn start_recording(
 fn start_x11_recording(
     target_id: u32,
     include_cursor: bool,
+    audio_inputs: &[AudioInput],
     output: &Path,
 ) -> Result<ActiveRecording, String> {
     let mut command = Command::new("ffmpeg");
@@ -274,9 +436,11 @@ fn start_x11_recording(
     for arg in build_ffmpeg_grab_args(target_id, include_cursor)? {
         command.arg(arg);
     }
+    append_audio_inputs(&mut command, audio_inputs);
     command.args([
         "-c:v", "libx264", "-preset", "veryfast", "-pix_fmt", "yuv420p", "-crf", "23",
     ]);
+    append_mux_args(&mut command, audio_inputs);
     command.arg(output);
     command
         .stdin(Stdio::piped())
@@ -292,7 +456,11 @@ fn start_x11_recording(
     })
 }
 
-fn start_portal_recording(include_cursor: bool, output: &Path) -> Result<ActiveRecording, String> {
+fn start_portal_recording(
+    include_cursor: bool,
+    audio_inputs: &[AudioInput],
+    output: &Path,
+) -> Result<ActiveRecording, String> {
     // xcap 的 ScreenCast 未暴露 cursor_mode；保留参数避免调用方分叉，并在能力文案里说明。
     let _ = include_cursor;
 
@@ -344,15 +512,17 @@ fn start_portal_recording(include_cursor: bool, output: &Path) -> Result<ActiveR
         "30",
         "-i",
         "pipe:0",
-        "-c:v",
-        "libx264",
-        "-preset",
-        "veryfast",
-        "-pix_fmt",
-        "yuv420p",
-        "-crf",
-        "23",
     ]);
+    append_audio_inputs(&mut command, audio_inputs);
+    command.args([
+        "-c:v", "libx264", "-preset", "veryfast", "-pix_fmt", "yuv420p", "-crf", "23",
+    ]);
+    append_mux_args(&mut command, audio_inputs);
+    // 门户的视频通过 stdin 输入。停止时关闭该管道，但 PulseAudio 输入仍是实时流；
+    // shortest 让 FFmpeg 在视频 EOF 后结束并封装 MP4，而不是继续等待音频设备。
+    if !audio_inputs.is_empty() {
+        command.arg("-shortest");
+    }
     command.arg(output);
     command
         .stdin(Stdio::piped())

@@ -151,9 +151,6 @@ pub(crate) async fn perform_action(
                 "录制已保存".into()
             }
         }),
-        "recordings" => {
-            recording::open_recordings_dir(state).map(|path| format!("已打开录制目录：{path}"))
-        }
         "polish" => polish::polish_clipboard(state).await,
         "ocr" => capture::ocr_clipboard_into_clipboard().await,
         "fullscreen" => {

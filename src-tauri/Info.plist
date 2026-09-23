@@ -1,0 +1,12 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<plist version="1.0">
+<dict>
+	<key>NSScreenCaptureUsageDescription</key>
+	<string>应用快照会在你录制窗口时采集所选窗口的画面。</string>
+	<key>NSAudioCaptureUsageDescription</key>
+	<string>应用快照会在你启用系统音频录制时录入屏幕播放的声音。</string>
+	<key>NSMicrophoneUsageDescription</key>
+	<string>应用快照会在你启用麦克风录制时录入麦克风声音。</string>
+</dict>
+</plist>

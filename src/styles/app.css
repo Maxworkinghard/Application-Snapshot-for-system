@@ -4006,6 +4006,29 @@ button.record-trigger-pill-btn:active {
   padding: 4px 0;
 }
 
+.pref-item-row.recording-audio-row {
+  min-height: 48px;
+  height: auto;
+  padding: 6px 0;
+}
+
+.recording-audio-copy {
+  display: flex;
+  min-width: 0;
+  flex-direction: column;
+  gap: 2px;
+}
+
+.recording-audio-copy .pref-title {
+  margin-right: 0;
+}
+
+.recording-audio-copy small {
+  color: var(--text-tertiary);
+  font-size: var(--text-caption);
+  line-height: 1.35;
+}
+
 .pref-item-row:last-child {
   border-bottom: none;
 }

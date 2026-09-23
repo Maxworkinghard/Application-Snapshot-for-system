@@ -115,6 +115,8 @@ fn spawn_macos_recorder(
     target: &tracker::TrackedWindow,
     output: &PathBuf,
     include_cursor: bool,
+    record_system_audio: bool,
+    record_microphone: bool,
 ) -> Result<(Child, Arc<Mutex<String>>), String> {
     let mut command = Command::new(platform::macos_recorder_program());
     command
@@ -124,6 +126,12 @@ fn spawn_macos_recorder(
         .arg(output);
     if include_cursor {
         command.arg("--include-cursor");
+    }
+    if record_system_audio {
+        command.arg("--system-audio");
+    }
+    if record_microphone {
+        command.arg("--microphone");
     }
     command
         .stdin(Stdio::piped())
@@ -275,8 +283,13 @@ pub(crate) fn toggle_recording(
 
     #[cfg(target_os = "linux")]
     {
-        let (active, start_message) =
-            linux::start_recording(target.id, settings.include_cursor, &output)?;
+        let (active, start_message) = linux::start_recording(
+            target.id,
+            settings.include_cursor,
+            settings.record_system_audio,
+            settings.record_microphone,
+            &output,
+        )?;
         // child 也放一份，供 status.active 判断；停止走 linux_active
         // ActiveRecording 拥有 child，这里不双持——只用 linux_active
         recorder.linux_active = Some(active);
@@ -297,7 +310,13 @@ pub(crate) fn toggle_recording(
             capture::restore_minimized_window(target.id)
                 .map_err(|error| format!("目标窗口已最小化，且无法还原：{error}"))?;
         }
-        let active = windows_recorder::start(target.id as isize, settings.include_cursor, &output)?;
+        let active = windows_recorder::start(
+            target.id as isize,
+            settings.include_cursor,
+            settings.record_system_audio,
+            settings.record_microphone,
+            &output,
+        )?;
         recorder.windows_active = Some(active);
         recorder.target = Some(target.app_name);
         recorder.started_at = Some(now_millis());
@@ -307,7 +326,13 @@ pub(crate) fn toggle_recording(
 
     #[cfg(target_os = "macos")]
     {
-        let (child, diagnostic) = spawn_macos_recorder(&target, &output, settings.include_cursor)?;
+        let (child, diagnostic) = spawn_macos_recorder(
+            &target,
+            &output,
+            settings.include_cursor,
+            settings.record_system_audio,
+            settings.record_microphone,
+        )?;
         recorder.child = Some(child);
         recorder.diagnostic = Some(diagnostic);
         recorder.target = Some(target.app_name);

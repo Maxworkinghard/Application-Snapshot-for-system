@@ -6,6 +6,8 @@ pub(crate) struct PlatformCapabilities {
     os: String,
     display_server: String,
     recording: CapabilityStatus,
+    recording_system_audio: CapabilityStatus,
+    recording_microphone: CapabilityStatus,
     ocr: CapabilityStatus,
     autostart: CapabilityStatus,
     /// 滚动长截图只有 Linux/X11 实现，其余平台不暴露这一项
@@ -19,9 +21,9 @@ pub(crate) struct PlatformCapabilities {
 
 #[derive(Clone, Debug, Serialize)]
 #[serde(rename_all = "camelCase")]
-struct CapabilityStatus {
-    available: bool,
-    detail: String,
+pub(crate) struct CapabilityStatus {
+    pub(crate) available: bool,
+    pub(crate) detail: String,
 }
 
 #[cfg(target_os = "macos")]
@@ -61,6 +63,24 @@ fn macos_recorder_capability() -> Result<(), String> {
     } else {
         Err("ScreenCaptureKit 录制组件不可用，请重新安装应用".into())
     }
+}
+
+#[cfg(target_os = "macos")]
+fn macos_major_version() -> Option<u32> {
+    let output = Command::new("sw_vers")
+        .arg("-productVersion")
+        .output()
+        .ok()?;
+    if !output.status.success() {
+        return None;
+    }
+    String::from_utf8(output.stdout)
+        .ok()?
+        .trim()
+        .split('.')
+        .next()?
+        .parse()
+        .ok()
 }
 
 // 每个平台的 cfg 块独立返回；显式 return 避免函数结果依赖当前被编译的分支。
@@ -109,10 +129,14 @@ pub(crate) fn platform_capabilities() -> PlatformCapabilities {
             available: true,
             detail: "静帧：ffmpeg x11grab 带光标（失败则回退无光标并在成功提示中说明）；录制：x11grab 尊重开关，portal 路径忽略".into(),
         };
+        let recording_system_audio = linux::system_audio_capability();
+        let recording_microphone = linux::microphone_capability();
         return PlatformCapabilities {
             os: "linux".into(),
             display_server: linux::display_server_label().into(),
             recording,
+            recording_system_audio,
+            recording_microphone,
             ocr,
             autostart,
             scrolling,
@@ -138,6 +162,14 @@ pub(crate) fn platform_capabilities() -> PlatformCapabilities {
             os: "windows".into(),
             display_server: "Win32".into(),
             recording,
+            recording_system_audio: CapabilityStatus {
+                available: true,
+                detail: "WASAPI loopback：录制当前默认播放设备的系统混音".into(),
+            },
+            recording_microphone: CapabilityStatus {
+                available: true,
+                detail: "WASAPI：录制当前默认麦克风；首次使用受 Windows 麦克风隐私设置控制".into(),
+            },
             ocr: CapabilityStatus {
                 available: ocr_report.available,
                 detail: ocr_report.detail,
@@ -167,10 +199,33 @@ pub(crate) fn platform_capabilities() -> PlatformCapabilities {
                 detail,
             },
         };
+        let recording_system_audio = CapabilityStatus {
+            available: recording.available,
+            detail: if recording.available {
+                "ScreenCaptureKit：录制当前显示器上的应用系统声音".into()
+            } else {
+                recording.detail.clone()
+            },
+        };
+        let microphone_supported = macos_major_version()
+            .map(|version| version >= 15)
+            .unwrap_or(false);
+        let recording_microphone = CapabilityStatus {
+            available: recording.available && microphone_supported,
+            detail: if !recording.available {
+                recording.detail.clone()
+            } else if microphone_supported {
+                "ScreenCaptureKit：macOS 15 及以上可录制麦克风".into()
+            } else {
+                "麦克风采集需要 macOS 15 或更新版本".into()
+            },
+        };
         return PlatformCapabilities {
             os: "macos".into(),
             display_server: "AppKit".into(),
             recording,
+            recording_system_audio,
+            recording_microphone,
             ocr: CapabilityStatus {
                 available: ocr_report.available,
                 detail: ocr_report.detail,
@@ -189,7 +244,7 @@ pub(crate) fn platform_capabilities() -> PlatformCapabilities {
             tray_note: "NSStatusItem：左键打开主窗口；菜单打开设置/退出。".into(),
             notes: vec![
                 "macOS 还原最小化窗口按 AXTitle 对齐；标题对不上且该应用有多个最小化窗口时，不代劳、提示手动还原".into(),
-                "窗口录制使用 ScreenCaptureKit，仅录目标窗口，不包含系统音频或麦克风".into(),
+                "窗口录制使用 ScreenCaptureKit；系统音频可单独录制，麦克风需要 macOS 15 或更新版本".into(),
             ],
         };
     }
@@ -199,6 +254,14 @@ pub(crate) fn platform_capabilities() -> PlatformCapabilities {
             os: std::env::consts::OS.into(),
             display_server: "unknown".into(),
             recording: CapabilityStatus {
+                available: false,
+                detail: "未支持".into(),
+            },
+            recording_system_audio: CapabilityStatus {
+                available: false,
+                detail: "未支持".into(),
+            },
+            recording_microphone: CapabilityStatus {
                 available: false,
                 detail: "未支持".into(),
             },
