@@ -1,4 +1,6 @@
+use super::settings::{default_appearance_id, emit_settings, persist_settings, Settings};
 use super::*;
+use serde::Deserialize;
 
 #[derive(Clone, Debug, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]

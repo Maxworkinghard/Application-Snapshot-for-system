@@ -1,4 +1,5 @@
 use super::*;
+use serde::Deserialize;
 
 const SNAPSHOT_LIMIT: usize = 200;
 

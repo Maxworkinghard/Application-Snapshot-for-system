@@ -1,4 +1,6 @@
+use super::settings::{keyring_entry, DEFAULT_PROMPT};
 use super::*;
+use regex::Regex;
 
 /// 待润色草稿的长度上限（字符）
 const POLISH_INPUT_LIMIT: usize = 12_000;
