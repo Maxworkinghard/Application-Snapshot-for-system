@@ -68,7 +68,8 @@ pub fn apply_launch_on_boot(enabled: bool) -> Result<(), String> {
         .filter(|s| !s.is_empty())
         .unwrap_or_else(|| exe_str.to_string());
 
-    fs::create_dir_all(autostart_dir()).map_err(|error| format!("无法创建 autostart 目录：{error}"))?;
+    fs::create_dir_all(autostart_dir())
+        .map_err(|error| format!("无法创建 autostart 目录：{error}"))?;
     let mut file = fs::OpenOptions::new()
         .write(true)
         .create(true)
@@ -151,6 +152,9 @@ mod tests {
         perms.set_mode(0o755);
         let _ = fs::set_permissions(&dir, perms);
         let _ = fs::remove_dir_all(&dir);
-        assert!(result.is_err(), "expected Err on non-writable dir, got {result:?}");
+        assert!(
+            result.is_err(),
+            "expected Err on non-writable dir, got {result:?}"
+        );
     }
 }

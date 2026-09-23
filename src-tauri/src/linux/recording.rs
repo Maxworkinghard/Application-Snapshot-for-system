@@ -57,9 +57,9 @@ pub fn pick_recording_backend() -> Result<RecordingBackend, String> {
     if is_wayland_session() {
         return match portal_screencast_available() {
             Ok(()) => Ok(RecordingBackend::Portal),
-            Err(_) if env::var_os("DISPLAY").is_some() => {
-                Ok(RecordingBackend::X11Grab { xwayland_only: true })
-            }
+            Err(_) if env::var_os("DISPLAY").is_some() => Ok(RecordingBackend::X11Grab {
+                xwayland_only: true,
+            }),
             Err(detail) => Err(format!(
                 "当前是 {} 会话且没有 X11 DISPLAY。门户录制不可用：{detail}",
                 display_server_label()
@@ -67,7 +67,9 @@ pub fn pick_recording_backend() -> Result<RecordingBackend, String> {
         };
     }
     if env::var_os("DISPLAY").is_some() {
-        return Ok(RecordingBackend::X11Grab { xwayland_only: false });
+        return Ok(RecordingBackend::X11Grab {
+            xwayland_only: false,
+        });
     }
     Err(format!(
         "当前是 {} 会话且没有 X11 DISPLAY，窗口录制需要 X11/XWayland 或可用的 xdg-desktop-portal ScreenCast / recording needs X11 DISPLAY or ScreenCast portal",
@@ -127,11 +129,15 @@ pub fn recording_capability_detail() -> String {
             "portal ScreenCast + PipeWire → ffmpeg（忽略 target_id / include_cursor）· {}",
             display_server_label()
         ),
-        Ok(RecordingBackend::X11Grab { xwayland_only: true }) => format!(
+        Ok(RecordingBackend::X11Grab {
+            xwayland_only: true,
+        }) => format!(
             "ffmpeg x11grab（门户不可用，只能录到 XWayland 的画面，原生 Wayland 窗口会是黑的）· {}",
             display_server_label()
         ),
-        Ok(RecordingBackend::X11Grab { xwayland_only: false }) => {
+        Ok(RecordingBackend::X11Grab {
+            xwayland_only: false,
+        }) => {
             format!("ffmpeg x11grab · {}", display_server_label())
         }
         Err(detail) => detail,
@@ -141,10 +147,7 @@ pub fn recording_capability_detail() -> String {
 /// 组装 x11grab 输入参数：`-f x11grab … -i :N.N+x,y`
 ///
 /// 旧实现写死 `:0.0`，远程桌面 / 多显示 / `DISPLAY=:3` 会录错屏。
-pub fn build_ffmpeg_grab_args(
-    target_id: u32,
-    include_cursor: bool,
-) -> Result<Vec<String>, String> {
+pub fn build_ffmpeg_grab_args(target_id: u32, include_cursor: bool) -> Result<Vec<String>, String> {
     ensure_ffmpeg()?;
     if env::var_os("DISPLAY").is_none() {
         return Err("x11grab 需要 $DISPLAY".into());
@@ -249,8 +252,9 @@ pub fn start_recording(
         RecordingBackend::Portal => {
             let active = start_portal_recording(include_cursor, output)?;
             // xdg portal 无法沿用应用内选中的 target_id；光标亦由合成器决定。
-            let warn = "录制已开始：门户将请你重新选择窗口/屏幕；光标由合成器决定（include_cursor 无效）"
-                .to_string();
+            let warn =
+                "录制已开始：门户将请你重新选择窗口/屏幕；光标由合成器决定（include_cursor 无效）"
+                    .to_string();
             Ok((active, Some(warn)))
         }
         RecordingBackend::X11Grab { .. } => {
@@ -271,14 +275,7 @@ fn start_x11_recording(
         command.arg(arg);
     }
     command.args([
-        "-c:v",
-        "libx264",
-        "-preset",
-        "veryfast",
-        "-pix_fmt",
-        "yuv420p",
-        "-crf",
-        "23",
+        "-c:v", "libx264", "-preset", "veryfast", "-pix_fmt", "yuv420p", "-crf", "23",
     ]);
     command.arg(output);
     command
@@ -295,10 +292,7 @@ fn start_x11_recording(
     })
 }
 
-fn start_portal_recording(
-    include_cursor: bool,
-    output: &Path,
-) -> Result<ActiveRecording, String> {
+fn start_portal_recording(include_cursor: bool, output: &Path) -> Result<ActiveRecording, String> {
     // xcap 的 ScreenCast 未暴露 cursor_mode；保留参数避免调用方分叉，并在能力文案里说明。
     let _ = include_cursor;
 
@@ -306,15 +300,11 @@ fn start_portal_recording(
 
     let monitor = Monitor::all()
         .map_err(|error| {
-            format!(
-                "无法列出显示器（ScreenCast）：{error} / cannot list monitors: {error}"
-            )
+            format!("无法列出显示器（ScreenCast）：{error} / cannot list monitors: {error}")
         })?
         .into_iter()
         .next()
-        .ok_or_else(|| {
-            "没有可用显示器 / no monitor available for ScreenCast".to_string()
-        })?;
+        .ok_or_else(|| "没有可用显示器 / no monitor available for ScreenCast".to_string())?;
 
     // 此处会触发门户选择器；无图形会话 / 用户取消会失败。
     let (video_recorder, frame_rx) = monitor.video_recorder().map_err(|error| {
@@ -381,8 +371,14 @@ fn start_portal_recording(
     let flag = Arc::clone(&stop_flag);
 
     // 先写入首帧，再泵后续帧；尺寸不一致时跳过（避免搞坏 rawvideo）
-    if let Err(error) = write_even_rgba_frame(&mut stdin, &first.raw, first.width, first.height, width, height)
-    {
+    if let Err(error) = write_even_rgba_frame(
+        &mut stdin,
+        &first.raw,
+        first.width,
+        first.height,
+        width,
+        height,
+    ) {
         flag.store(true, Ordering::SeqCst);
         let _ = video_recorder.stop();
         let _ = child.kill();
@@ -462,7 +458,11 @@ mod tests {
     // env mutations must be serialized across tests
     static ENV_LOCK: Mutex<()> = Mutex::new(());
 
-    fn restore_env(old_w: Option<std::ffi::OsString>, old_d: Option<std::ffi::OsString>, old_s: Option<std::ffi::OsString>) {
+    fn restore_env(
+        old_w: Option<std::ffi::OsString>,
+        old_d: Option<std::ffi::OsString>,
+        old_s: Option<std::ffi::OsString>,
+    ) {
         unsafe {
             match old_w {
                 Some(v) => std::env::set_var("WAYLAND_DISPLAY", v),
@@ -508,7 +508,9 @@ mod tests {
         assert!(!is_wayland_session());
         assert_eq!(
             pick_recording_backend(),
-            Ok(RecordingBackend::X11Grab { xwayland_only: false })
+            Ok(RecordingBackend::X11Grab {
+                xwayland_only: false
+            })
         );
         assert_eq!(display_server_label(), "X11");
         restore_env(old_w, old_d, old_s);
@@ -532,7 +534,9 @@ mod tests {
         let backend = pick_recording_backend();
         assert_ne!(
             backend,
-            Ok(RecordingBackend::X11Grab { xwayland_only: false }),
+            Ok(RecordingBackend::X11Grab {
+                xwayland_only: false
+            }),
             "Wayland 会话被当成了普通 X11：{backend:?}"
         );
         restore_env(old_w, old_d, old_s);

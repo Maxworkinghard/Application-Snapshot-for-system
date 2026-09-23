@@ -39,10 +39,9 @@ use windows::{
         Media::MediaFoundation::{
             IMFAttributes, IMFSinkWriter, MFCreateAttributes, MFCreateMediaType,
             MFCreateMemoryBuffer, MFCreateSample, MFCreateSinkWriterFromURL, MFMediaType_Video,
-            MFStartup, MFVideoFormat_H264,
-            MFVideoFormat_RGB32, MFVideoInterlace_Progressive, MFSTARTUP_NOSOCKET,
-            MF_MT_AVG_BITRATE, MF_MT_FRAME_RATE, MF_MT_FRAME_SIZE, MF_MT_INTERLACE_MODE,
-            MF_MT_MAJOR_TYPE, MF_MT_PIXEL_ASPECT_RATIO, MF_MT_SUBTYPE,
+            MFStartup, MFVideoFormat_H264, MFVideoFormat_RGB32, MFVideoInterlace_Progressive,
+            MFSTARTUP_NOSOCKET, MF_MT_AVG_BITRATE, MF_MT_FRAME_RATE, MF_MT_FRAME_SIZE,
+            MF_MT_INTERLACE_MODE, MF_MT_MAJOR_TYPE, MF_MT_PIXEL_ASPECT_RATIO, MF_MT_SUBTYPE,
             MF_READWRITE_ENABLE_HARDWARE_TRANSFORMS, MF_SINK_WRITER_DISABLE_THROTTLING, MF_VERSION,
         },
         System::WinRT::{
@@ -104,31 +103,37 @@ impl Encoder {
         }
 
         let writer = unsafe {
-            MFCreateSinkWriterFromURL(
-                &HSTRING::from(output.as_os_str()),
-                None,
-                &attributes,
-            )
-            .map_err(|e| err("无法创建录制文件", e))?
+            MFCreateSinkWriterFromURL(&HSTRING::from(output.as_os_str()), None, &attributes)
+                .map_err(|e| err("无法创建录制文件", e))?
         };
 
-        let out_type = unsafe { MFCreateMediaType().map_err(|e| err("创建输出格式失败", e))? };
+        let out_type =
+            unsafe { MFCreateMediaType().map_err(|e| err("创建输出格式失败", e))? };
         unsafe {
             out_type.SetGUID(&MF_MT_MAJOR_TYPE, &MFMediaType_Video).ok();
             out_type.SetGUID(&MF_MT_SUBTYPE, &MFVideoFormat_H264).ok();
-            out_type.SetUINT32(&MF_MT_AVG_BITRATE, bitrate_for(width, height)).ok();
+            out_type
+                .SetUINT32(&MF_MT_AVG_BITRATE, bitrate_for(width, height))
+                .ok();
             out_type
                 .SetUINT32(&MF_MT_INTERLACE_MODE, MFVideoInterlace_Progressive.0 as u32)
                 .ok();
-            out_type.SetUINT64(&MF_MT_FRAME_SIZE, packed(width, height)).ok();
+            out_type
+                .SetUINT64(&MF_MT_FRAME_SIZE, packed(width, height))
+                .ok();
             out_type.SetUINT64(&MF_MT_FRAME_RATE, packed(FPS, 1)).ok();
-            out_type.SetUINT64(&MF_MT_PIXEL_ASPECT_RATIO, packed(1, 1)).ok();
+            out_type
+                .SetUINT64(&MF_MT_PIXEL_ASPECT_RATIO, packed(1, 1))
+                .ok();
         }
         let stream = unsafe {
-            writer.AddStream(&out_type).map_err(|e| err("添加视频轨失败", e))?
+            writer
+                .AddStream(&out_type)
+                .map_err(|e| err("添加视频轨失败", e))?
         };
 
-        let in_type = unsafe { MFCreateMediaType().map_err(|e| err("创建输入格式失败", e))? };
+        let in_type =
+            unsafe { MFCreateMediaType().map_err(|e| err("创建输入格式失败", e))? };
         unsafe {
             in_type.SetGUID(&MF_MT_MAJOR_TYPE, &MFMediaType_Video).ok();
             // WGC 给的是 BGRA8，对应 MF 的 RGB32
@@ -136,16 +141,27 @@ impl Encoder {
             in_type
                 .SetUINT32(&MF_MT_INTERLACE_MODE, MFVideoInterlace_Progressive.0 as u32)
                 .ok();
-            in_type.SetUINT64(&MF_MT_FRAME_SIZE, packed(width, height)).ok();
+            in_type
+                .SetUINT64(&MF_MT_FRAME_SIZE, packed(width, height))
+                .ok();
             in_type.SetUINT64(&MF_MT_FRAME_RATE, packed(FPS, 1)).ok();
-            in_type.SetUINT64(&MF_MT_PIXEL_ASPECT_RATIO, packed(1, 1)).ok();
+            in_type
+                .SetUINT64(&MF_MT_PIXEL_ASPECT_RATIO, packed(1, 1))
+                .ok();
             writer
                 .SetInputMediaType(stream, &in_type, None)
                 .map_err(|e| err("设置输入格式失败", e))?;
             writer.BeginWriting().map_err(|e| err("开始录制失败", e))?;
         }
 
-        Ok(Self { writer, stream, width, height, base_time: None, frames: 0 })
+        Ok(Self {
+            writer,
+            stream,
+            width,
+            height,
+            base_time: None,
+            frames: 0,
+        })
     }
 
     /// `frame` 已按 MF 的行序排好（见 pack_frame），直接整块拷进样本。
@@ -173,7 +189,9 @@ impl Encoder {
         unsafe {
             sample.AddBuffer(&buffer).ok();
             sample.SetSampleTime(timestamp - base).ok();
-            sample.SetSampleDuration(HNS_PER_SECOND / i64::from(FPS)).ok();
+            sample
+                .SetSampleDuration(HNS_PER_SECOND / i64::from(FPS))
+                .ok();
             self.writer
                 .WriteSample(self.stream, &sample)
                 .map_err(|e| err("写入帧失败", e))?;
@@ -328,8 +346,8 @@ pub fn start(hwnd: isize, include_cursor: bool, output: &Path) -> Result<ActiveR
     let (device, context) = create_d3d_device()?;
     let dxgi: IDXGIDevice = device.cast().map_err(|e| err("获取 DXGI 设备失败", e))?;
     let d3d_device: IDirect3DDevice = unsafe {
-        let inspectable = CreateDirect3D11DeviceFromDXGIDevice(&dxgi)
-            .map_err(|e| err("创建采集设备失败", e))?;
+        let inspectable =
+            CreateDirect3D11DeviceFromDXGIDevice(&dxgi).map_err(|e| err("创建采集设备失败", e))?;
         inspectable.cast().map_err(|e| err("创建采集设备失败", e))?
     };
 
@@ -337,7 +355,10 @@ pub fn start(hwnd: isize, include_cursor: bool, output: &Path) -> Result<ActiveR
         &d3d_device,
         DirectXPixelFormat::B8G8R8A8UIntNormalized,
         2,
-        SizeInt32 { Width: width as i32, Height: height as i32 },
+        SizeInt32 {
+            Width: width as i32,
+            Height: height as i32,
+        },
     )
     .map_err(|e| err("创建帧池失败", e))?;
 
@@ -366,9 +387,15 @@ pub fn start(hwnd: isize, include_cursor: bool, output: &Path) -> Result<ActiveR
                 if handler_stopped.load(Ordering::SeqCst) {
                     return Ok(());
                 }
-                let Some(pool) = pool.as_ref() else { return Ok(()) };
-                let Ok(frame) = pool.TryGetNextFrame() else { return Ok(()) };
-                let Ok(surface) = frame.Surface() else { return Ok(()) };
+                let Some(pool) = pool.as_ref() else {
+                    return Ok(());
+                };
+                let Ok(frame) = pool.TryGetNextFrame() else {
+                    return Ok(());
+                };
+                let Ok(surface) = frame.Surface() else {
+                    return Ok(());
+                };
                 let Ok(access) = surface.cast::<IDirect3DDxgiInterfaceAccess>() else {
                     return Ok(());
                 };
@@ -378,7 +405,9 @@ pub fn start(hwnd: isize, include_cursor: bool, output: &Path) -> Result<ActiveR
                 };
 
                 let mut guard = handler_sink.lock();
-                let Some(sink) = guard.as_mut() else { return Ok(()) };
+                let Some(sink) = guard.as_mut() else {
+                    return Ok(());
+                };
 
                 // 采集纹理在 GPU 上且不可 CPU 读，先拷进一张 staging 纹理再映射
                 let mut desc = D3D11_TEXTURE2D_DESC::default();
@@ -388,17 +417,19 @@ pub fn start(hwnd: isize, include_cursor: bool, output: &Path) -> Result<ActiveR
                 desc.CPUAccessFlags = D3D11_CPU_ACCESS_READ.0 as u32;
                 desc.MiscFlags = 0;
                 let mut staging: Option<ID3D11Texture2D> = None;
-                if unsafe { sink.device.CreateTexture2D(&desc, None, Some(&mut staging)) }
-                    .is_err()
+                if unsafe { sink.device.CreateTexture2D(&desc, None, Some(&mut staging)) }.is_err()
                 {
                     return Ok(());
                 }
-                let Some(staging) = staging else { return Ok(()) };
+                let Some(staging) = staging else {
+                    return Ok(());
+                };
                 unsafe { sink.context.CopyResource(&staging, &texture) };
 
                 let mut mapped = D3D11_MAPPED_SUBRESOURCE::default();
                 if unsafe {
-                    sink.context.Map(&staging, 0, D3D11_MAP_READ, 0, Some(&mut mapped))
+                    sink.context
+                        .Map(&staging, 0, D3D11_MAP_READ, 0, Some(&mut mapped))
                 }
                 .is_err()
                 {
@@ -445,7 +476,9 @@ pub fn start(hwnd: isize, include_cursor: bool, output: &Path) -> Result<ActiveR
             let mut guard = pacer_sink.lock();
             let Some(sink) = guard.as_mut() else { break };
             // 分开借用：latest 只读，encoder 要可变
-            let FrameSink { encoder, latest, .. } = sink;
+            let FrameSink {
+                encoder, latest, ..
+            } = sink;
             if let Some(frame) = latest.as_deref() {
                 let timestamp = (due.as_nanos() / 100) as i64;
                 let _ = encoder.write(frame, timestamp);
@@ -568,7 +601,9 @@ fn decode_first_frame(path: &Path) -> Result<(u32, u32, Vec<u8>), String> {
         let current = reader
             .GetCurrentMediaType(MF_SOURCE_READER_FIRST_VIDEO_STREAM.0 as u32)
             .map_err(|e| err("读取解码格式", e))?;
-        let size = current.GetUINT64(&MF_MT_FRAME_SIZE).map_err(|e| err("读取尺寸", e))?;
+        let size = current
+            .GetUINT64(&MF_MT_FRAME_SIZE)
+            .map_err(|e| err("读取尺寸", e))?;
         let width = (size >> 32) as u32;
         let height = (size & 0xFFFF_FFFF) as u32;
 
@@ -586,7 +621,9 @@ fn decode_first_frame(path: &Path) -> Result<(u32, u32, Vec<u8>), String> {
             )
             .map_err(|e| err("读取帧", e))?;
         let sample = sample.ok_or("没有解出帧")?;
-        let buffer = sample.ConvertToContiguousBuffer().map_err(|e| err("取帧缓冲", e))?;
+        let buffer = sample
+            .ConvertToContiguousBuffer()
+            .map_err(|e| err("取帧缓冲", e))?;
         let mut data: *mut u8 = std::ptr::null_mut();
         let mut length = 0u32;
         buffer
@@ -604,7 +641,12 @@ mod decode_tests {
 
     /// 把一张图压成 N 段的逐行亮度曲线。比两个粗糙的平均值稳得多：
     /// 窗口内容在垂直方向偏均匀时，两段平均值的差落在噪声里，判不出方向。
-    fn row_profile(height: u32, width: u32, buckets: usize, get: &dyn Fn(u32, u32) -> f64) -> Vec<f64> {
+    fn row_profile(
+        height: u32,
+        width: u32,
+        buckets: usize,
+        get: &dyn Fn(u32, u32) -> f64,
+    ) -> Vec<f64> {
         let mut profile = vec![0.0; buckets];
         for (bucket, bucket_profile) in profile.iter_mut().enumerate() {
             let from = height as usize * bucket / buckets;
@@ -656,7 +698,11 @@ mod decode_tests {
         eprintln!("写入 {frames} 帧");
 
         let (width, height, pixels) = decode_first_frame(&path).expect("解码失败");
-        eprintln!("解出 {width}x{height}，实拍 {}x{}", truth.width(), truth.height());
+        eprintln!(
+            "解出 {width}x{height}，实拍 {}x{}",
+            truth.width(),
+            truth.height()
+        );
 
         const BUCKETS: usize = 48;
         let usable_w = width.min(truth.width());
@@ -779,7 +825,10 @@ mod minimized_tests {
         assert!(minimized_now, "没能把窗口最小化，这次测量无效");
         assert!(baseline > 0, "正常状态都没帧，环境有问题");
         // 钉住这个事实：最小化就是拿不到帧，所以上层必须先还原再录
-        assert_eq!(minimized, 0, "最小化窗口本不该产出帧，行为若变了要重新审视还原逻辑");
+        assert_eq!(
+            minimized, 0,
+            "最小化窗口本不该产出帧，行为若变了要重新审视还原逻辑"
+        );
         assert!(!is_minimized(id as isize), "测完应当已还原");
     }
 

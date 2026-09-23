@@ -12,10 +12,10 @@ use image::{DynamicImage, ImageFormat, RgbaImage};
 use parking_lot::Mutex;
 use regex::Regex;
 // 只有 macOS 的 recorder sidecar 要按行读子进程输出
-#[cfg(target_os = "macos")]
-use std::io::{BufRead, BufReader};
 use serde::{Deserialize, Serialize};
 use serde_json::{json, Value};
+#[cfg(target_os = "macos")]
+use std::io::{BufRead, BufReader};
 use std::{
     borrow::Cow,
     fs,
@@ -212,15 +212,39 @@ fn default_shortcut_bindings() -> Vec<ShortcutBinding> {
     // 非 Linux 上滚动长截图的那条 insert 被 cfg 掉了，mut 就用不上
     #[cfg_attr(not(target_os = "linux"), allow(unused_mut))]
     let mut bindings = vec![
-        ShortcutBinding { action: "snapshot".into(), accelerator: None },
-        ShortcutBinding { action: "fullscreen".into(), accelerator: None },
-        ShortcutBinding { action: "record".into(), accelerator: None },
-        ShortcutBinding { action: "recordings".into(), accelerator: None },
-        ShortcutBinding { action: "polish".into(), accelerator: None },
-        ShortcutBinding { action: "ocr".into(), accelerator: None },
+        ShortcutBinding {
+            action: "snapshot".into(),
+            accelerator: None,
+        },
+        ShortcutBinding {
+            action: "fullscreen".into(),
+            accelerator: None,
+        },
+        ShortcutBinding {
+            action: "record".into(),
+            accelerator: None,
+        },
+        ShortcutBinding {
+            action: "recordings".into(),
+            accelerator: None,
+        },
+        ShortcutBinding {
+            action: "polish".into(),
+            accelerator: None,
+        },
+        ShortcutBinding {
+            action: "ocr".into(),
+            accelerator: None,
+        },
     ];
     #[cfg(target_os = "linux")]
-    bindings.insert(2, ShortcutBinding { action: "scrolling".into(), accelerator: None });
+    bindings.insert(
+        2,
+        ShortcutBinding {
+            action: "scrolling".into(),
+            accelerator: None,
+        },
+    );
     bindings
 }
 
@@ -305,7 +329,6 @@ struct Recorder {
     windows_active: Option<windows_recorder::ActiveRecording>,
 }
 
-
 #[derive(Clone, Debug, Serialize)]
 #[serde(rename_all = "camelCase")]
 struct RecordingStatus {
@@ -379,7 +402,11 @@ fn read_settings(path: &PathBuf) -> Settings {
     // 老配置里没有后来新增的动作（如 ocr）。只补不删：已有绑定原样保留，
     // 缺的追加到末尾；平台不支持的动作（如 Win/mac 的 scrolling）不补。
     for fallback in default_shortcut_bindings() {
-        if !settings.shortcuts.iter().any(|item| item.action == fallback.action) {
+        if !settings
+            .shortcuts
+            .iter()
+            .any(|item| item.action == fallback.action)
+        {
             settings.shortcuts.push(fallback);
         }
     }
@@ -390,12 +417,17 @@ fn read_settings(path: &PathBuf) -> Settings {
                 asset.animations = animations;
             }
         }
-        if !asset.animations.is_empty() && !asset.animations.iter().any(|entry| entry == &asset.entry) {
+        if !asset.animations.is_empty()
+            && !asset.animations.iter().any(|entry| entry == &asset.entry)
+        {
             asset.entry = asset.animations[0].clone();
         }
     }
     if settings.selected_appearance_id != "app-icon"
-        && !settings.pet_assets.iter().any(|asset| asset.id == settings.selected_appearance_id)
+        && !settings
+            .pet_assets
+            .iter()
+            .any(|asset| asset.id == settings.selected_appearance_id)
     {
         settings.selected_appearance_id = default_appearance_id();
     }
@@ -433,7 +465,9 @@ fn save_prompt_settings(
         return Err("Base URL 必须以 http:// 或 https:// 开头".into());
     }
     if let Some(key) = input.api_key.as_ref().filter(|key| !key.trim().is_empty()) {
-        keyring_entry()?.set_password(key.trim()).map_err(|error| error.to_string())?;
+        keyring_entry()?
+            .set_password(key.trim())
+            .map_err(|error| error.to_string())?;
     }
     let mut settings = state.settings.lock();
     settings.base_url = input.base_url.trim().into();
@@ -472,11 +506,21 @@ async fn fetch_models(
     if let Some(key) = key {
         request = request.bearer_auth(key);
     }
-    let response = request.send().await.map_err(|error| format!("拉取模型失败：{error}"))?;
+    let response = request
+        .send()
+        .await
+        .map_err(|error| format!("拉取模型失败：{error}"))?;
     let status = response.status();
-    let payload: Value = response.json().await.map_err(|error| format!("模型接口响应无效：{error}"))?;
+    let payload: Value = response
+        .json()
+        .await
+        .map_err(|error| format!("模型接口响应无效：{error}"))?;
     if !status.is_success() {
-        return Err(format!("模型接口返回错误（{}）：{}", status.as_u16(), truncate(&payload.to_string(), 240)));
+        return Err(format!(
+            "模型接口返回错误（{}）：{}",
+            status.as_u16(),
+            truncate(&payload.to_string(), 240)
+        ));
     }
 
     let items = payload
@@ -517,7 +561,9 @@ fn select_pet_appearance(
     }
     settings.selected_appearance_id = id;
     persist_settings(&state.settings_path, &settings)?;
-    if let Some(window) = app.get_webview_window("pet") { let _ = window.show(); }
+    if let Some(window) = app.get_webview_window("pet") {
+        let _ = window.show();
+    }
     let result = settings.clone();
     emit_settings(&app, &result);
     Ok(result)
@@ -533,7 +579,11 @@ fn add_pet_asset(
     if !canonical.is_file() {
         return Err("请选择一个 ZIP 压缩包或 GIF 图片".into());
     }
-    let extension = canonical.extension().and_then(|value| value.to_str()).unwrap_or_default().to_lowercase();
+    let extension = canonical
+        .extension()
+        .and_then(|value| value.to_str())
+        .unwrap_or_default()
+        .to_lowercase();
     let single_gif = extension == "gif";
     if extension != "zip" && !single_gif {
         return Err("桌宠形象只支持 ZIP 压缩包或单个 GIF".into());
@@ -549,17 +599,28 @@ fn add_pet_asset(
         });
     }
     let animations = find_pet_animation_entries(&canonical)?;
-    let preview_entry = animations.first().cloned().ok_or_else(|| "这份素材里没有可用动画".to_string())?;
+    let preview_entry = animations
+        .first()
+        .cloned()
+        .ok_or_else(|| "这份素材里没有可用动画".to_string())?;
     let path = canonical.to_string_lossy().to_string();
     let mut settings = state.settings.lock();
-    if let Some(existing) = settings.pet_assets.iter_mut().find(|asset| asset.path == path) {
+    if let Some(existing) = settings
+        .pet_assets
+        .iter_mut()
+        .find(|asset| asset.path == path)
+    {
         existing.entry = preview_entry;
         existing.animations = animations;
         settings.selected_appearance_id = existing.id.clone();
     } else {
         let asset = PetAsset {
             id: format!("pet-{}", now_millis()),
-            name: canonical.file_stem().and_then(|value| value.to_str()).unwrap_or("桌宠").to_string(),
+            name: canonical
+                .file_stem()
+                .and_then(|value| value.to_str())
+                .unwrap_or("桌宠")
+                .to_string(),
             path,
             entry: preview_entry,
             animations,
@@ -568,7 +629,9 @@ fn add_pet_asset(
         settings.pet_assets.push(asset);
     }
     persist_settings(&state.settings_path, &settings)?;
-    if let Some(window) = app.get_webview_window("pet") { let _ = window.show(); }
+    if let Some(window) = app.get_webview_window("pet") {
+        let _ = window.show();
+    }
     let result = settings.clone();
     emit_settings(&app, &result);
     Ok(result)
@@ -604,19 +667,29 @@ fn get_pet_asset_data_url(
     id: String,
     entry: Option<String>,
 ) -> Result<String, String> {
-    let asset = state.settings.lock().pet_assets.iter()
+    let asset = state
+        .settings
+        .lock()
+        .pet_assets
+        .iter()
         .find(|asset| asset.id == id)
         .cloned()
         .ok_or_else(|| "找不到这个形象".to_string())?;
     let archive_path = PathBuf::from(&asset.path);
     let requested = entry.filter(|value| !value.is_empty());
     let entry_name = if let Some(requested) = requested {
-        if !asset.animations.iter().any(|candidate| candidate == &requested) {
+        if !asset
+            .animations
+            .iter()
+            .any(|candidate| candidate == &requested)
+        {
             return Err("压缩包内没有这个动画".into());
         }
         requested
     } else if asset.entry.is_empty() {
-        find_pet_animation_entries(&archive_path)?.into_iter().next()
+        find_pet_animation_entries(&archive_path)?
+            .into_iter()
+            .next()
             .ok_or_else(|| "压缩包内没有可预览的形象".to_string())?
     } else {
         asset.entry
@@ -634,12 +707,16 @@ fn get_pet_asset_data_url(
     }
     let file = fs::File::open(&archive_path).map_err(|_| "桌宠压缩包已被移动或删除".to_string())?;
     let mut archive = zip::ZipArchive::new(file).map_err(|_| "桌宠压缩包已损坏".to_string())?;
-    let mut entry = archive.by_name(&entry_name).map_err(|_| "压缩包内的预览动画已丢失".to_string())?;
+    let mut entry = archive
+        .by_name(&entry_name)
+        .map_err(|_| "压缩包内的预览动画已丢失".to_string())?;
     if entry.size() > 50 * 1024 * 1024 {
         return Err("桌宠动画不能超过 50MB".into());
     }
     let mut bytes = Vec::with_capacity(entry.size() as usize);
-    entry.read_to_end(&mut bytes).map_err(|_| "读取桌宠动画失败".to_string())?;
+    entry
+        .read_to_end(&mut bytes)
+        .map_err(|_| "读取桌宠动画失败".to_string())?;
     Ok(format!("data:image/gif;base64,{}", BASE64.encode(bytes)))
 }
 
@@ -659,7 +736,9 @@ fn find_pet_animation_entries(path: &PathBuf) -> Result<Vec<String>, String> {
     let mut archive = zip::ZipArchive::new(file).map_err(|_| "桌宠压缩包已损坏".to_string())?;
     let mut found = Vec::new();
     for index in 0..archive.len() {
-        let entry = archive.by_index(index).map_err(|_| "无法读取桌宠压缩包目录".to_string())?;
+        let entry = archive
+            .by_index(index)
+            .map_err(|_| "无法读取桌宠压缩包目录".to_string())?;
         if entry.is_dir() || entry.size() > 50 * 1024 * 1024 {
             continue;
         }
@@ -684,7 +763,6 @@ fn find_pet_animation_entries(path: &PathBuf) -> Result<Vec<String>, String> {
     Ok(found.into_iter().map(|item| item.2).collect())
 }
 
-
 /// 桌宠素材只收 GIF。
 ///
 /// 视频要交给各端内置的 WebView 解码，而三端内核（WebView2 / WKWebView /
@@ -697,14 +775,16 @@ fn is_pet_gif(path: &str) -> bool {
         .unwrap_or(false)
 }
 
-
 #[tauri::command]
 fn save_shortcuts(
     app: AppHandle,
     state: State<'_, AppState>,
     shortcuts: Vec<ShortcutBinding>,
 ) -> Result<Settings, String> {
-    let mut values = shortcuts.iter().filter_map(|item| item.accelerator.as_ref()).collect::<Vec<_>>();
+    let mut values = shortcuts
+        .iter()
+        .filter_map(|item| item.accelerator.as_ref())
+        .collect::<Vec<_>>();
     values.sort();
     if values.windows(2).any(|pair| pair[0] == pair[1]) {
         return Err("快捷键不能重复".into());
@@ -840,7 +920,6 @@ fn list_capturable_windows() -> Result<Vec<CapturableWindow>, String> {
     Ok(result.into_iter().map(|(_, window)| window).collect())
 }
 
-
 /// 历史库保留的快照条数上限，超出的连文件一起回收
 const SNAPSHOT_LIMIT: usize = 200;
 
@@ -925,7 +1004,11 @@ fn write_snapshot_index(path: &PathBuf, records: &[SnapshotRecord]) -> Result<()
 
 /// 把截图落盘并登记进历史索引。
 /// 这里失败不该影响"已复制到剪贴板"这件事，所以调用方只记录不中断。
-fn store_snapshot(state: &AppState, image: &RgbaImage, app_name: &str) -> Result<SnapshotRecord, String> {
+fn store_snapshot(
+    state: &AppState,
+    image: &RgbaImage,
+    app_name: &str,
+) -> Result<SnapshotRecord, String> {
     let dir = history_dir(state);
     fs::create_dir_all(&dir).map_err(|error| error.to_string())?;
     let format_setting = state.settings.lock().snapshot_format.clone();
@@ -960,8 +1043,6 @@ fn store_snapshot(state: &AppState, image: &RgbaImage, app_name: &str) -> Result
     write_snapshot_index(&index_path, &records)?;
     Ok(record)
 }
-
-
 
 /// 展开 `~/…`；其它路径原样返回。
 fn expand_user_path(raw: &str) -> String {
@@ -1002,7 +1083,6 @@ struct CapabilityStatus {
     available: bool,
     detail: String,
 }
-
 
 #[cfg(target_os = "macos")]
 const MACOS_RECORDER_HELPER: &str = "snapshot-recorder";
@@ -1074,9 +1154,7 @@ fn platform_capabilities() -> PlatformCapabilities {
                 detail,
             },
         };
-        let scrolling = if linux::is_wayland_session()
-            || std::env::var_os("DISPLAY").is_none()
-        {
+        let scrolling = if linux::is_wayland_session() || std::env::var_os("DISPLAY").is_none() {
             CapabilityStatus {
                 available: false,
                 detail: "滚动长截图需要 X11/`$DISPLAY`（xdotool）；纯 Wayland 不支持".into(),
@@ -1133,9 +1211,7 @@ fn platform_capabilities() -> PlatformCapabilities {
                 detail: "录制：WGC SetIsCursorCaptureEnabled；静帧：按热点合成系统光标".into(),
             },
             tray_note: "NotifyIcon：左键/双击打开主窗口；右键菜单打开设置/退出。".into(),
-            notes: vec![
-                "静帧光标只支持 32 位带 alpha 的现代光标；老式单色光标会跳过合成".into(),
-            ],
+            notes: vec!["静帧光标只支持 32 位带 alpha 的现代光标；老式单色光标会跳过合成".into()],
         };
     }
     #[cfg(target_os = "macos")]
@@ -1182,10 +1258,22 @@ fn platform_capabilities() -> PlatformCapabilities {
         PlatformCapabilities {
             os: std::env::consts::OS.into(),
             display_server: "unknown".into(),
-            recording: CapabilityStatus { available: false, detail: "未支持".into() },
-            ocr: CapabilityStatus { available: false, detail: "未支持".into() },
-            autostart: CapabilityStatus { available: false, detail: "未支持".into() },
-            include_cursor: CapabilityStatus { available: false, detail: "未支持".into() },
+            recording: CapabilityStatus {
+                available: false,
+                detail: "未支持".into(),
+            },
+            ocr: CapabilityStatus {
+                available: false,
+                detail: "未支持".into(),
+            },
+            autostart: CapabilityStatus {
+                available: false,
+                detail: "未支持".into(),
+            },
+            include_cursor: CapabilityStatus {
+                available: false,
+                detail: "未支持".into(),
+            },
             tray_note: String::new(),
             notes: vec![],
         }
@@ -1197,8 +1285,7 @@ fn platform_capabilities() -> PlatformCapabilities {
 #[tauri::command]
 fn open_snapshots_dir(state: State<'_, AppState>) -> Result<String, String> {
     let path = history_dir(&state);
-    fs::create_dir_all(&path)
-        .map_err(|error| format!("无法创建快照目录：{error}"))?;
+    fs::create_dir_all(&path).map_err(|error| format!("无法创建快照目录：{error}"))?;
 
     open_in_file_manager(&path)?;
     Ok(path.to_string_lossy().to_string())
@@ -1261,7 +1348,9 @@ fn get_snapshot_data_url(state: State<'_, AppState>, id: String) -> Result<Strin
 fn delete_snapshot(state: State<'_, AppState>, id: String) -> Result<Vec<SnapshotRecord>, String> {
     let index_path = snapshot_index_path(&state);
     let mut records = read_snapshot_index(&index_path);
-    let position = records.iter().position(|item| item.id == id)
+    let position = records
+        .iter()
+        .position(|item| item.id == id)
         .ok_or_else(|| "找不到这条快照".to_string())?;
     let removed = records.remove(position);
     let _ = fs::remove_file(history_dir(&state).join(&removed.file_name));
@@ -1278,7 +1367,6 @@ fn clear_snapshots(state: State<'_, AppState>) -> Result<Vec<SnapshotRecord>, St
     write_snapshot_index(&index_path, &[])?;
     Ok(Vec::new())
 }
-
 
 #[derive(Clone, Debug, Serialize)]
 #[serde(rename_all = "camelCase")]
@@ -1340,8 +1428,20 @@ async fn ocr_clipboard() -> Result<String, String> {
 }
 
 #[tauri::command]
-fn capture_window(app: AppHandle, state: State<'_, AppState>, id: Option<u32>) -> Result<String, String> {
-    let target_id = id.or_else(|| state.tracker.lock().previous.as_ref().map(|window| window.id))
+fn capture_window(
+    app: AppHandle,
+    state: State<'_, AppState>,
+    id: Option<u32>,
+) -> Result<String, String> {
+    let target_id = id
+        .or_else(|| {
+            state
+                .tracker
+                .lock()
+                .previous
+                .as_ref()
+                .map(|window| window.id)
+        })
         .ok_or_else(|| "还没有上一个应用可截取".to_string())?;
     let window = Window::all()
         .map_err(|error| error.to_string())?
@@ -1477,16 +1577,24 @@ fn finalize_capture(
     } else {
         let clear_label = format_clear_label(&settings.clipboard_auto_clear);
         if archived {
-            Ok(format!("已复制 {app_name} 并存入历史，{clear_label}{suffix}"))
+            Ok(format!(
+                "已复制 {app_name} 并存入历史，{clear_label}{suffix}"
+            ))
         } else if settings.auto_save_local {
-            Ok(format!("已复制 {app_name}，{clear_label}（未能存入历史）{suffix}"))
+            Ok(format!(
+                "已复制 {app_name}，{clear_label}（未能存入历史）{suffix}"
+            ))
         } else {
             Ok(format!("已复制 {app_name}，{clear_label}{suffix}"))
         }
     }
 }
 
-fn save_image_as_dialog(app: &AppHandle, image: &RgbaImage, format_setting: &str) -> Result<(), String> {
+fn save_image_as_dialog(
+    app: &AppHandle,
+    image: &RgbaImage,
+    format_setting: &str,
+) -> Result<(), String> {
     use tauri_plugin_dialog::DialogExt;
     let (format, ext) = snapshot_format_parts(format_setting);
     let suggested = format!("snapshot-{}.{}", Local::now().format("%Y%m%d-%H%M%S"), ext);
@@ -1560,8 +1668,7 @@ mod mac_cursor {
     use image::RgbaImage;
     use objc2::AnyThread;
     use objc2_app_kit::{
-        NSBitmapImageFileType, NSBitmapImageRep, NSCursor, NSDeviceRGBColorSpace,
-        NSGraphicsContext,
+        NSBitmapImageFileType, NSBitmapImageRep, NSCursor, NSDeviceRGBColorSpace, NSGraphicsContext,
     };
     use objc2_foundation::{NSDictionary, NSPoint, NSRect, NSSize};
     use std::ffi::c_void;
@@ -1636,8 +1743,10 @@ mod mac_cursor {
                 NSSize::new(pixel_width, pixel_height),
             ));
             NSGraphicsContext::restoreGraphicsState_class();
-            let png = rep
-                .representationUsingType_properties(NSBitmapImageFileType::PNG, &NSDictionary::new())?;
+            let png = rep.representationUsingType_properties(
+                NSBitmapImageFileType::PNG,
+                &NSDictionary::new(),
+            )?;
             let decoded = image::load_from_memory(&png.to_vec()).ok()?.to_rgba8();
             Some((decoded, hot_spot.x, hot_spot.y))
         }
@@ -1832,11 +1941,15 @@ mod mac_autostart {
     pub fn autostart_capability() -> Result<(), String> {
         let dir = agents_dir();
         fs::create_dir_all(&dir).map_err(|error| {
-            format!("无法创建 ~/Library/LaunchAgents（{error}）；仍可保存偏好，但系统自启项写不进去")
+            format!(
+                "无法创建 ~/Library/LaunchAgents（{error}）；仍可保存偏好，但系统自启项写不进去"
+            )
         })?;
         let probe = dir.join(".snapshot-autostart-write-probe");
         fs::write(&probe, b"ok").map_err(|error| {
-            format!("无法写入 ~/Library/LaunchAgents（{error}）；仍可保存偏好，但系统自启项写不进去")
+            format!(
+                "无法写入 ~/Library/LaunchAgents（{error}）；仍可保存偏好，但系统自启项写不进去"
+            )
         })?;
         let _ = fs::remove_file(&probe);
         Ok(())
@@ -1851,7 +1964,8 @@ mod mac_autostart {
             let body = plist_body("/Applications/snapshot.app/Contents/MacOS/snapshot");
             assert!(body.contains("<string>com.appsnapshot.prompt-pet-shortcut</string>"));
             assert!(body.contains("<key>RunAtLoad</key>"));
-            assert!(body.contains("<string>/Applications/snapshot.app/Contents/MacOS/snapshot</string>"));
+            assert!(body
+                .contains("<string>/Applications/snapshot.app/Contents/MacOS/snapshot</string>"));
         }
 
         #[test]
@@ -1865,7 +1979,9 @@ mod mac_autostart {
         #[test]
         fn plist_path_sits_in_launch_agents() {
             let path = plist_path();
-            assert!(path.ends_with("Library/LaunchAgents/com.appsnapshot.prompt-pet-shortcut.plist"));
+            assert!(
+                path.ends_with("Library/LaunchAgents/com.appsnapshot.prompt-pet-shortcut.plist")
+            );
         }
     }
 }
@@ -1885,8 +2001,16 @@ mod mac_ax {
     extern "C" {
         fn AXIsProcessTrusted() -> bool;
         fn AXUIElementCreateApplication(pid: c_int) -> AXUIElementRef;
-        fn AXUIElementCopyAttributeValue(element: AXUIElementRef, attribute: *const c_void, value: *mut *const c_void) -> c_int;
-        fn AXUIElementSetAttributeValue(element: AXUIElementRef, attribute: *const c_void, value: *const c_void) -> c_int;
+        fn AXUIElementCopyAttributeValue(
+            element: AXUIElementRef,
+            attribute: *const c_void,
+            value: *mut *const c_void,
+        ) -> c_int;
+        fn AXUIElementSetAttributeValue(
+            element: AXUIElementRef,
+            attribute: *const c_void,
+            value: *const c_void,
+        ) -> c_int;
         fn CFRelease(cf: *const c_void);
     }
 
@@ -1900,7 +2024,10 @@ mod mac_ax {
         let title = target.title().unwrap_or_default();
         unsafe {
             if !AXIsProcessTrusted() {
-                return Err("还原最小化窗口需要「辅助功能」权限，请在系统设置 → 隐私与安全性中授权后重试".into());
+                return Err(
+                    "还原最小化窗口需要「辅助功能」权限，请在系统设置 → 隐私与安全性中授权后重试"
+                        .into(),
+                );
             }
             let app = AXUIElementCreateApplication(pid as c_int);
             if app.is_null() {
@@ -1942,7 +2069,11 @@ mod mac_ax {
     unsafe fn unminimize_app_windows(app: AXUIElementRef, title: &str) -> Result<(), String> {
         let attr_windows = CFString::new("AXWindows");
         let mut raw: *const c_void = ptr::null();
-        let err = AXUIElementCopyAttributeValue(app, attr_windows.as_concrete_TypeRef() as *const c_void, &mut raw);
+        let err = AXUIElementCopyAttributeValue(
+            app,
+            attr_windows.as_concrete_TypeRef() as *const c_void,
+            &mut raw,
+        );
         if err != 0 || raw.is_null() {
             return Err("无法读取目标应用的窗口列表".into());
         }
@@ -1953,7 +2084,9 @@ mod mac_ax {
         let mut title_hits: Vec<isize> = Vec::new();
         let mut minimized: Vec<isize> = Vec::new();
         for index in 0..windows.len() {
-            let Some(item) = windows.get(index) else { continue };
+            let Some(item) = windows.get(index) else {
+                continue;
+            };
             let element = item.as_concrete_TypeRef() as AXUIElementRef;
             if !title.is_empty() && ax_string(element, "AXTitle").as_deref() == Some(title) {
                 title_hits.push(index);
@@ -1983,7 +2116,9 @@ mod mac_ax {
         };
 
         for index in targets {
-            let Some(item) = windows.get(index) else { continue };
+            let Some(item) = windows.get(index) else {
+                continue;
+            };
             let element = item.as_concrete_TypeRef() as AXUIElementRef;
             let _ = AXUIElementSetAttributeValue(
                 element,
@@ -1996,7 +2131,11 @@ mod mac_ax {
 
     unsafe fn is_minimized(element: AXUIElementRef, attr_minimized: &CFString) -> bool {
         let mut value: *const c_void = ptr::null();
-        if AXUIElementCopyAttributeValue(element, attr_minimized.as_concrete_TypeRef() as *const c_void, &mut value) != 0
+        if AXUIElementCopyAttributeValue(
+            element,
+            attr_minimized.as_concrete_TypeRef() as *const c_void,
+            &mut value,
+        ) != 0
             || value.is_null()
         {
             return false;
@@ -2007,7 +2146,11 @@ mod mac_ax {
     unsafe fn ax_string(element: AXUIElementRef, attribute: &str) -> Option<String> {
         let name = CFString::new(attribute);
         let mut raw: *const c_void = ptr::null();
-        if AXUIElementCopyAttributeValue(element, name.as_concrete_TypeRef() as *const c_void, &mut raw) != 0
+        if AXUIElementCopyAttributeValue(
+            element,
+            name.as_concrete_TypeRef() as *const c_void,
+            &mut raw,
+        ) != 0
             || raw.is_null()
         {
             return None;
@@ -2041,7 +2184,11 @@ fn restore_minimized_window(id: u32) -> Result<(), String> {
     linux::restore_minimized(id)
 }
 
-#[cfg(all(not(target_os = "windows"), not(target_os = "macos"), not(target_os = "linux")))]
+#[cfg(all(
+    not(target_os = "windows"),
+    not(target_os = "macos"),
+    not(target_os = "linux")
+))]
 fn restore_minimized_window(_id: u32) -> Result<(), String> {
     Err("目标窗口已最小化，请先还原".into())
 }
@@ -2051,7 +2198,13 @@ fn copy_image_to_clipboard(image: RgbaImage, clear_after: Option<Duration>) -> R
     let height = image.height() as usize;
     let bytes = image.into_raw();
     Clipboard::new()
-        .and_then(|mut clipboard| clipboard.set_image(ImageData { width, height, bytes: Cow::Borrowed(&bytes) }))
+        .and_then(|mut clipboard| {
+            clipboard.set_image(ImageData {
+                width,
+                height,
+                bytes: Cow::Borrowed(&bytes),
+            })
+        })
         .map_err(|error| error.to_string())?;
 
     if let Some(delay) = clear_after {
@@ -2059,7 +2212,10 @@ fn copy_image_to_clipboard(image: RgbaImage, clear_after: Option<Duration>) -> R
             thread::sleep(delay);
             if let Ok(mut clipboard) = Clipboard::new() {
                 if let Ok(current) = clipboard.get_image() {
-                    if current.width == width && current.height == height && current.bytes.as_ref() == bytes.as_slice() {
+                    if current.width == width
+                        && current.height == height
+                        && current.bytes.as_ref() == bytes.as_slice()
+                    {
                         let _ = clipboard.clear();
                     }
                 }
@@ -2083,11 +2239,17 @@ fn recording_status(recorder: &Recorder) -> RecordingStatus {
 fn recording_status_with_message(recorder: &Recorder, message: Option<String>) -> RecordingStatus {
     let active = recorder.child.is_some() || {
         #[cfg(target_os = "linux")]
-        { recorder.linux_active.is_some() }
+        {
+            recorder.linux_active.is_some()
+        }
         #[cfg(target_os = "windows")]
-        { recorder.windows_active.is_some() }
+        {
+            recorder.windows_active.is_some()
+        }
         #[cfg(not(any(target_os = "linux", target_os = "windows")))]
-        { false }
+        {
+            false
+        }
     };
     RecordingStatus {
         active,
@@ -2107,8 +2269,12 @@ fn recorder_diagnostic(recorder: &Recorder) -> String {
 }
 
 fn refresh_recording_process(recorder: &mut Recorder) {
-    let Some(child) = recorder.child.as_mut() else { return };
-    let Ok(Some(status)) = child.try_wait() else { return };
+    let Some(child) = recorder.child.as_mut() else {
+        return;
+    };
+    let Ok(Some(status)) = child.try_wait() else {
+        return;
+    };
     let detail = recorder_diagnostic(recorder);
     recorder.last_message = Some(if detail.is_empty() {
         format!("录制进程意外退出（{status}）")
@@ -2164,7 +2330,10 @@ fn spawn_macos_recorder(
         .spawn()
         .map_err(|error| format!("无法启动 ScreenCaptureKit 录制组件：{error}"))?;
     let diagnostic = capture_child_stderr(child.stderr.take());
-    let stdout = child.stdout.take().ok_or_else(|| "录制组件 stdout 不可用".to_string())?;
+    let stdout = child
+        .stdout
+        .take()
+        .ok_or_else(|| "录制组件 stdout 不可用".to_string())?;
     let (sender, receiver) = std::sync::mpsc::sync_channel(1);
     thread::spawn(move || {
         let mut reader = BufReader::new(stdout);
@@ -2265,11 +2434,17 @@ fn toggle_recording(
     refresh_recording_process(&mut recorder);
     if recorder.child.is_some() || {
         #[cfg(target_os = "linux")]
-        { recorder.linux_active.is_some() }
+        {
+            recorder.linux_active.is_some()
+        }
         #[cfg(target_os = "windows")]
-        { recorder.windows_active.is_some() }
+        {
+            recorder.windows_active.is_some()
+        }
         #[cfg(not(any(target_os = "linux", target_os = "windows")))]
-        { false }
+        {
+            false
+        }
     } {
         stop_active_recording(&mut recorder);
         return Ok(recording_status(&recorder));
@@ -2288,7 +2463,10 @@ fn toggle_recording(
     let settings = state.settings.lock().clone();
     let output_dir = resolve_recording_dir(&settings)?;
     fs::create_dir_all(&output_dir).map_err(|error| error.to_string())?;
-    let output = output_dir.join(format!("应用快照-{}.mp4", Local::now().format("%Y-%m-%d_%H-%M-%S")));
+    let output = output_dir.join(format!(
+        "应用快照-{}.mp4",
+        Local::now().format("%Y-%m-%d_%H-%M-%S")
+    ));
     recorder.last_message = None;
 
     #[cfg(target_os = "linux")]
@@ -2315,11 +2493,7 @@ fn toggle_recording(
             restore_minimized_window(target.id)
                 .map_err(|error| format!("目标窗口已最小化，且无法还原：{error}"))?;
         }
-        let active = windows_recorder::start(
-            target.id as isize,
-            settings.include_cursor,
-            &output,
-        )?;
+        let active = windows_recorder::start(target.id as isize, settings.include_cursor, &output)?;
         recorder.windows_active = Some(active);
         recorder.target = Some(target.app_name);
         recorder.started_at = Some(now_millis());
@@ -2329,8 +2503,7 @@ fn toggle_recording(
 
     #[cfg(target_os = "macos")]
     {
-        let (child, diagnostic) =
-            spawn_macos_recorder(&target, &output, settings.include_cursor)?;
+        let (child, diagnostic) = spawn_macos_recorder(&target, &output, settings.include_cursor)?;
         recorder.child = Some(child);
         recorder.diagnostic = Some(diagnostic);
         recorder.target = Some(target.app_name);
@@ -2349,7 +2522,10 @@ fn stop_active_recording(recorder: &mut Recorder) {
             // 一帧都没有时产物是个播放器打不开的空壳，留着只会让人以为录成功了
             if frames == 0 {
                 let _ = fs::remove_file(&path);
-                eprintln!("snapshot: recording produced no frames, removed {}", path.display());
+                eprintln!(
+                    "snapshot: recording produced no frames, removed {}",
+                    path.display()
+                );
             }
             recorder.target = None;
             recorder.started_at = None;
@@ -2413,35 +2589,60 @@ async fn run_polish(state: &State<'_, AppState>, original: &str) -> Result<Strin
         return Err("尚未配置润色服务，请先在 Prompt 页面完成配置".into());
     }
     let api_key = if settings.has_api_key {
-        Some(keyring_entry()?.get_password().map_err(|_| "无法读取已保存的 API Key".to_string())?)
+        Some(
+            keyring_entry()?
+                .get_password()
+                .map_err(|_| "无法读取已保存的 API Key".to_string())?,
+        )
     } else {
         None
     };
-    let prompt = settings.templates.iter()
+    let prompt = settings
+        .templates
+        .iter()
         .find(|item| item.id == settings.active_template_id)
         .map(|item| item.content.as_str())
         .unwrap_or(DEFAULT_PROMPT);
     let endpoint = make_endpoint(&settings.base_url)?;
-    let client = reqwest::Client::builder().timeout(Duration::from_secs(180)).build().map_err(|e| e.to_string())?;
+    let client = reqwest::Client::builder()
+        .timeout(Duration::from_secs(180))
+        .build()
+        .map_err(|e| e.to_string())?;
     let mut request = client.post(endpoint);
     if let Some(api_key) = api_key {
         request = request.bearer_auth(api_key);
     }
     request = request.json(&json!({ "model": settings.model, "max_tokens": 16384, "temperature": 0.3, "messages": [{ "role": "system", "content": prompt }, { "role": "user", "content": original }] }));
-    let response = request.send().await.map_err(|error| format!("润色请求失败：{error}"))?;
+    let response = request
+        .send()
+        .await
+        .map_err(|error| format!("润色请求失败：{error}"))?;
     let status = response.status();
-    let payload: Value = response.json().await.map_err(|error| format!("润色服务响应无效：{error}"))?;
+    let payload: Value = response
+        .json()
+        .await
+        .map_err(|error| format!("润色服务响应无效：{error}"))?;
     if !status.is_success() {
-        return Err(format!("润色服务返回错误（{}）：{}", status.as_u16(), truncate(&payload.to_string(), 240)));
+        return Err(format!(
+            "润色服务返回错误（{}）：{}",
+            status.as_u16(),
+            truncate(&payload.to_string(), 240)
+        ));
     }
-    let polished = payload.pointer("/choices/0/message/content").and_then(Value::as_str)
+    let polished = payload
+        .pointer("/choices/0/message/content")
+        .and_then(Value::as_str)
         .ok_or_else(|| "润色服务未返回内容".to_string())?;
     Ok(strip_reasoning(polished))
 }
 
 /// 剥掉 R1 一类推理模型吐出的思维链
 fn strip_reasoning(raw: &str) -> String {
-    Regex::new(r"(?s)<think>.*?</think>").unwrap().replace_all(raw, "").trim().to_string()
+    Regex::new(r"(?s)<think>.*?</think>")
+        .unwrap()
+        .replace_all(raw, "")
+        .trim()
+        .to_string()
 }
 
 /// 界面用：收草稿、回改写结果，不碰剪贴板
@@ -2454,23 +2655,37 @@ async fn polish_text(state: State<'_, AppState>, text: String) -> Result<String,
 /// 快捷键与便携坞用：就地替换剪贴板
 #[tauri::command]
 async fn polish_clipboard(state: State<'_, AppState>) -> Result<String, String> {
-    let raw = Clipboard::new().and_then(|mut clipboard| clipboard.get_text())
+    let raw = Clipboard::new()
+        .and_then(|mut clipboard| clipboard.get_text())
         .map_err(|_| "剪贴板没有文字，请先复制 Prompt".to_string())?;
     let original = normalize_draft(&raw, "剪贴板没有文字，请先复制 Prompt")?;
     let polished = run_polish(&state, &original).await?;
-    let current = Clipboard::new().and_then(|mut clipboard| clipboard.get_text()).unwrap_or_default();
-    if current.trim() != original { return Err("剪贴板内容已变化，润色结果未写入".into()); }
-    Clipboard::new().and_then(|mut clipboard| clipboard.set_text(polished))
+    let current = Clipboard::new()
+        .and_then(|mut clipboard| clipboard.get_text())
+        .unwrap_or_default();
+    if current.trim() != original {
+        return Err("剪贴板内容已变化，润色结果未写入".into());
+    }
+    Clipboard::new()
+        .and_then(|mut clipboard| clipboard.set_text(polished))
         .map_err(|error| format!("写入剪贴板失败：{error}"))?;
     Ok("润色完成，结果已替换剪贴板".into())
 }
 
 fn make_endpoint(base_url: &str) -> Result<String, String> {
     let trimmed = base_url.trim_end_matches('/');
-    if !(trimmed.starts_with("http://") || trimmed.starts_with("https://")) { return Err("润色服务 Base URL 无效".into()); }
-    if trimmed.ends_with("/chat/completions") { return Ok(trimmed.into()); }
+    if !(trimmed.starts_with("http://") || trimmed.starts_with("https://")) {
+        return Err("润色服务 Base URL 无效".into());
+    }
+    if trimmed.ends_with("/chat/completions") {
+        return Ok(trimmed.into());
+    }
     let version_suffix = Regex::new(r"/v\d+$").unwrap().is_match(trimmed);
-    let path = if version_suffix { "chat/completions" } else { "v1/chat/completions" };
+    let path = if version_suffix {
+        "chat/completions"
+    } else {
+        "v1/chat/completions"
+    };
     Ok(format!("{trimmed}/{path}"))
 }
 
@@ -2479,7 +2694,9 @@ fn make_models_endpoint(base_url: &str) -> Result<String, String> {
     if !(trimmed.starts_with("http://") || trimmed.starts_with("https://")) {
         return Err("Base URL 必须以 http:// 或 https:// 开头".into());
     }
-    if trimmed.ends_with("/models") { return Ok(trimmed.into()); }
+    if trimmed.ends_with("/models") {
+        return Ok(trimmed.into());
+    }
     if let Some(prefix) = trimmed.strip_suffix("/chat/completions") {
         return Ok(format!("{prefix}/models"));
     }
@@ -2492,15 +2709,26 @@ fn make_models_endpoint(base_url: &str) -> Result<String, String> {
 }
 
 fn truncate(value: &str, max: usize) -> String {
-    if value.chars().count() <= max { return value.into(); }
+    if value.chars().count() <= max {
+        return value.into();
+    }
     value.chars().take(max).collect::<String>() + "…"
 }
 
 #[tauri::command]
-fn show_quick_menu(app: AppHandle, state: State<'_, AppState>, x: f64, y: f64) -> Result<(), String> {
-    let window = app.get_webview_window("quick-menu").ok_or_else(|| "快捷菜单窗口不存在".to_string())?;
+fn show_quick_menu(
+    app: AppHandle,
+    state: State<'_, AppState>,
+    x: f64,
+    y: f64,
+) -> Result<(), String> {
+    let window = app
+        .get_webview_window("quick-menu")
+        .ok_or_else(|| "快捷菜单窗口不存在".to_string())?;
     *state.quick_menu_anchor.lock() = Some((x, y));
-    window.set_size(LogicalSize::new(286.0, 150.0)).map_err(|e| e.to_string())?;
+    window
+        .set_size(LogicalSize::new(286.0, 150.0))
+        .map_err(|e| e.to_string())?;
     position_quick_menu(&window, x, y, 150.0)?;
     window.show().map_err(|e| e.to_string())?;
     window.set_focus().map_err(|e| e.to_string())
@@ -2512,9 +2740,13 @@ fn set_quick_menu_expanded(
     state: State<'_, AppState>,
     expanded: bool,
 ) -> Result<(), String> {
-    let window = app.get_webview_window("quick-menu").ok_or_else(|| "快捷菜单窗口不存在".to_string())?;
+    let window = app
+        .get_webview_window("quick-menu")
+        .ok_or_else(|| "快捷菜单窗口不存在".to_string())?;
     let height = if expanded { 246.0 } else { 150.0 };
-    window.set_size(LogicalSize::new(286.0, height)).map_err(|e| e.to_string())?;
+    window
+        .set_size(LogicalSize::new(286.0, height))
+        .map_err(|e| e.to_string())?;
     if let Some((x, y)) = *state.quick_menu_anchor.lock() {
         position_quick_menu(&window, x, y, height)?;
     }
@@ -2538,8 +2770,10 @@ fn position_quick_menu(
         monitors.into_iter().find(|monitor| {
             let position = monitor.position();
             let size = monitor.size();
-            sx >= position.x as f64 && sx <= (position.x + size.width as i32) as f64
-                && sy >= position.y as f64 && sy <= (position.y + size.height as i32) as f64
+            sx >= position.x as f64
+                && sx <= (position.x + size.width as i32) as f64
+                && sy >= position.y as f64
+                && sy <= (position.y + size.height as i32) as f64
         })
     });
 
@@ -2558,23 +2792,41 @@ fn position_quick_menu(
     };
 
     // 18px 搭边：光标刚好搭在菜单角上，选第一项不用挪鼠标
-    let mut px = if open_right { sx - 18.0 } else { sx - menu_width + 18.0 };
-    let mut py = if open_down { sy - 18.0 } else { sy - menu_height + 18.0 };
+    let mut px = if open_right {
+        sx - 18.0
+    } else {
+        sx - menu_width + 18.0
+    };
+    let mut py = if open_down {
+        sy - 18.0
+    } else {
+        sy - menu_height + 18.0
+    };
 
     // 钳位兜底：象限逻辑已经朝屏幕中心开了，这层只是防极端多屏/错位
     if let Some(monitor) = monitor {
         let position = monitor.position();
         let size = monitor.size();
-        px = px.clamp(position.x as f64 + 8.0, (position.x + size.width as i32) as f64 - menu_width - 8.0);
-        py = py.clamp(position.y as f64 + 8.0, (position.y + size.height as i32) as f64 - menu_height - 8.0);
+        px = px.clamp(
+            position.x as f64 + 8.0,
+            (position.x + size.width as i32) as f64 - menu_width - 8.0,
+        );
+        py = py.clamp(
+            position.y as f64 + 8.0,
+            (position.y + size.height as i32) as f64 - menu_height - 8.0,
+        );
     }
-    window.set_position(PhysicalPosition::new(px.round() as i32, py.round() as i32)).map_err(|e| e.to_string())?;
+    window
+        .set_position(PhysicalPosition::new(px.round() as i32, py.round() as i32))
+        .map_err(|e| e.to_string())?;
     Ok(())
 }
 
 #[tauri::command]
 fn hide_quick_menu(app: AppHandle) {
-    if let Some(window) = app.get_webview_window("quick-menu") { let _ = window.hide(); }
+    if let Some(window) = app.get_webview_window("quick-menu") {
+        let _ = window.hide();
+    }
 }
 
 /// 第二个实例启动时把已有窗口唤到前台。
@@ -2615,7 +2867,10 @@ fn get_annotate_image(state: State<'_, AppState>) -> Result<Option<String>, Stri
     let Some(png) = state.annotate_png.lock().clone() else {
         return Ok(None);
     };
-    Ok(Some(format!("data:image/png;base64,{}", BASE64.encode(png))))
+    Ok(Some(format!(
+        "data:image/png;base64,{}",
+        BASE64.encode(png)
+    )))
 }
 
 #[tauri::command]
@@ -2637,7 +2892,11 @@ fn decode_png_base64(data: &str) -> Result<RgbaImage, String> {
 }
 
 #[tauri::command]
-fn annotate_copy(app: AppHandle, state: State<'_, AppState>, image_data: String) -> Result<String, String> {
+fn annotate_copy(
+    app: AppHandle,
+    state: State<'_, AppState>,
+    image_data: String,
+) -> Result<String, String> {
     let image = decode_png_base64(&image_data)?;
     let settings = state.settings.lock().clone();
     if settings.auto_save_local {
@@ -2645,11 +2904,18 @@ fn annotate_copy(app: AppHandle, state: State<'_, AppState>, image_data: String)
     }
     copy_image_to_clipboard(image, clipboard_clear_delay(&settings.clipboard_auto_clear))?;
     hide_annotate_window(&app, &state);
-    Ok(format!("已复制标注图，{}", format_clear_label(&settings.clipboard_auto_clear)))
+    Ok(format!(
+        "已复制标注图，{}",
+        format_clear_label(&settings.clipboard_auto_clear)
+    ))
 }
 
 #[tauri::command]
-fn annotate_save(app: AppHandle, state: State<'_, AppState>, image_data: String) -> Result<String, String> {
+fn annotate_save(
+    app: AppHandle,
+    state: State<'_, AppState>,
+    image_data: String,
+) -> Result<String, String> {
     let image = decode_png_base64(&image_data)?;
     let format = state.settings.lock().snapshot_format.clone();
     save_image_as_dialog(&app, &image, &format)?;
@@ -2701,7 +2967,11 @@ fn primary_monitor() -> Result<Monitor, String> {
     monitors
         .into_iter()
         .find(|monitor| monitor.is_primary().unwrap_or(false))
-        .or_else(|| Monitor::all().ok().and_then(|items| items.into_iter().next()))
+        .or_else(|| {
+            Monitor::all()
+                .ok()
+                .and_then(|items| items.into_iter().next())
+        })
         .ok_or_else(|| "未找到可用显示器".into())
 }
 
@@ -2752,14 +3022,16 @@ fn capture_fullscreen_image(
 }
 
 #[tauri::command]
-async fn perform_action(action: String, app: AppHandle, state: State<'_, AppState>) -> Result<String, String> {
+async fn perform_action(
+    action: String,
+    app: AppHandle,
+    state: State<'_, AppState>,
+) -> Result<String, String> {
     match action.as_str() {
         "snapshot" => capture_window(app, state, None),
         "record" => toggle_recording(state, None).map(|status| {
             if status.active {
-                status
-                    .message
-                    .unwrap_or_else(|| "录制已开始".into())
+                status.message.unwrap_or_else(|| "录制已开始".into())
             } else {
                 "录制已保存".into()
             }
@@ -2773,8 +3045,8 @@ async fn perform_action(action: String, app: AppHandle, state: State<'_, AppStat
             let (image, name, cursor_degraded) = tauri::async_runtime::spawn_blocking(move || {
                 capture_fullscreen_image(include_cursor)
             })
-                .await
-                .map_err(|error| error.to_string())??;
+            .await
+            .map_err(|error| error.to_string())??;
             finalize_capture(&app2, &state, image, &name, cursor_degraded)
         }
         #[cfg(target_os = "linux")]
@@ -2787,11 +3059,10 @@ async fn perform_action(action: String, app: AppHandle, state: State<'_, AppStat
                 .as_ref()
                 .map(|window| window.id)
                 .ok_or_else(|| "还没有上一个应用可截取".to_string())?;
-            let (image, name) = tauri::async_runtime::spawn_blocking(move || {
-                capture_scrolling_image(target_id)
-            })
-            .await
-            .map_err(|error| error.to_string())??;
+            let (image, name) =
+                tauri::async_runtime::spawn_blocking(move || capture_scrolling_image(target_id))
+                    .await
+                    .map_err(|error| error.to_string())??;
             finalize_capture(&app2, &state, image, &name, None)
         }
         _ => Err("未知快捷键动作".into()),
@@ -2799,7 +3070,10 @@ async fn perform_action(action: String, app: AppHandle, state: State<'_, AppStat
 }
 
 fn now_millis() -> u64 {
-    SystemTime::now().duration_since(UNIX_EPOCH).unwrap_or_default().as_millis() as u64
+    SystemTime::now()
+        .duration_since(UNIX_EPOCH)
+        .unwrap_or_default()
+        .as_millis() as u64
 }
 
 /// 判断某个窗口是不是本应用自己的窗口（桌宠、快捷菜单、主窗口）。
@@ -2839,7 +3113,11 @@ fn start_tracker(app: AppHandle, tracker: Arc<Mutex<TrackerState>>) {
                         title: focused.title().unwrap_or_default(),
                     };
                     let mut state = tracker.lock();
-                    let changed = state.current.as_ref().map(|current| current.pid != next.pid).unwrap_or(true);
+                    let changed = state
+                        .current
+                        .as_ref()
+                        .map(|current| current.pid != next.pid)
+                        .unwrap_or(true);
                     if state.current.is_none() {
                         state.current = Some(next.clone());
                         state.previous = Some(next.clone());
@@ -2872,7 +3150,9 @@ fn start_tracker(app: AppHandle, tracker: Arc<Mutex<TrackerState>>) {
 #[cfg(any(target_os = "windows", target_os = "linux"))]
 fn rgba_to_data_url(image: RgbaImage) -> Option<String> {
     let mut bytes = Vec::new();
-    DynamicImage::ImageRgba8(image).write_to(&mut Cursor::new(&mut bytes), ImageFormat::Png).ok()?;
+    DynamicImage::ImageRgba8(image)
+        .write_to(&mut Cursor::new(&mut bytes), ImageFormat::Png)
+        .ok()?;
     Some(format!("data:image/png;base64,{}", BASE64.encode(bytes)))
 }
 
@@ -2891,7 +3171,11 @@ fn app_icon_data_url(pid: u32) -> Option<String> {
     linux::icon_for_process(pid).and_then(rgba_to_data_url)
 }
 
-#[cfg(all(not(target_os = "windows"), not(target_os = "macos"), not(target_os = "linux")))]
+#[cfg(all(
+    not(target_os = "windows"),
+    not(target_os = "macos"),
+    not(target_os = "linux")
+))]
 fn app_icon_data_url(_pid: u32) -> Option<String> {
     None
 }
@@ -2903,8 +3187,8 @@ mod mac_icon {
     use base64::{engine::general_purpose::STANDARD as BASE64, Engine as _};
     use objc2::AnyThread;
     use objc2_app_kit::{
-        NSBitmapImageFileType, NSBitmapImageRep, NSDeviceRGBColorSpace, NSGraphicsContext,
-        NSImage, NSRunningApplication,
+        NSBitmapImageFileType, NSBitmapImageRep, NSDeviceRGBColorSpace, NSGraphicsContext, NSImage,
+        NSRunningApplication,
     };
     use objc2_foundation::{NSDictionary, NSPoint, NSRect, NSSize};
 
@@ -2939,10 +3223,8 @@ mod mac_icon {
         NSGraphicsContext::setCurrentContext(Some(&context));
         icon.drawInRect(NSRect::new(NSPoint::new(0.0, 0.0), NSSize::new(64.0, 64.0)));
         NSGraphicsContext::restoreGraphicsState_class();
-        let png = rep.representationUsingType_properties(
-            NSBitmapImageFileType::PNG,
-            &NSDictionary::new(),
-        )?;
+        let png = rep
+            .representationUsingType_properties(NSBitmapImageFileType::PNG, &NSDictionary::new())?;
         Some(png.to_vec())
     }
 }
@@ -2969,7 +3251,8 @@ mod windows_autostart {
 
     /// 可执行文件路径要带引号：路径含空格时，不加引号会被 Windows 拆成程序名 + 参数。
     fn command_line() -> Result<Vec<u16>, String> {
-        let exe = std::env::current_exe().map_err(|error| format!("无法定位可执行文件：{error}"))?;
+        let exe =
+            std::env::current_exe().map_err(|error| format!("无法定位可执行文件：{error}"))?;
         Ok(wide(&format!("\"{}\"", exe.display())))
     }
 
@@ -3012,7 +3295,11 @@ mod windows_autostart {
 #[cfg(target_os = "windows")]
 mod windows_cursor {
     use image::{Rgba, RgbaImage};
-    use std::{ffi::c_void, mem::{size_of, zeroed}, ptr::null_mut};
+    use std::{
+        ffi::c_void,
+        mem::{size_of, zeroed},
+        ptr::null_mut,
+    };
     use windows_sys::Win32::{
         Graphics::Gdi::{
             CreateCompatibleDC, CreateDIBSection, DeleteDC, DeleteObject, GetObjectW, SelectObject,
@@ -3088,7 +3375,17 @@ mod windows_cursor {
                 return None;
             }
             let old = SelectObject(dc, dib);
-            let drawn = DrawIconEx(dc, 0, 0, info.hCursor, width, height, 0, null_mut(), DI_NORMAL);
+            let drawn = DrawIconEx(
+                dc,
+                0,
+                0,
+                info.hCursor,
+                width,
+                height,
+                0,
+                null_mut(),
+                DI_NORMAL,
+            );
             let raw = std::slice::from_raw_parts(bits as *const u8, (width * height * 4) as usize);
             // 现代 Windows 光标是 32 位带 alpha 的。老式单色光标画出来 alpha 全 0，
             // 这时宁可不贴，也好过糊一个黑块在截图上。
@@ -3131,8 +3428,10 @@ mod windows_cursor {
         window_origin: (i32, i32),
         scale: f64,
     ) -> (i32, i32) {
-        let left = (f64::from(cursor_screen.0 - window_origin.0) * scale).round() as i32 - hot_spot.0;
-        let top = (f64::from(cursor_screen.1 - window_origin.1) * scale).round() as i32 - hot_spot.1;
+        let left =
+            (f64::from(cursor_screen.0 - window_origin.0) * scale).round() as i32 - hot_spot.0;
+        let top =
+            (f64::from(cursor_screen.1 - window_origin.1) * scale).round() as i32 - hot_spot.1;
         (left, top)
     }
 
@@ -3155,7 +3454,8 @@ mod windows_cursor {
         }
         let (cursor, screen_x, screen_y, hot_x, hot_y) =
             cursor_bitmap().ok_or("取不到当前系统光标位图")?;
-        let (left, top) = overlay_origin_px((screen_x, screen_y), (hot_x, hot_y), window_origin, scale);
+        let (left, top) =
+            overlay_origin_px((screen_x, screen_y), (hot_x, hot_y), window_origin, scale);
         blend(image, &cursor, left, top);
         Ok(())
     }
@@ -3238,14 +3538,20 @@ mod windows_cursor {
 #[cfg(target_os = "windows")]
 mod windows_icon {
     use image::{Rgba, RgbaImage};
-    use std::{ffi::c_void, mem::{size_of, zeroed}, ptr::null_mut};
+    use std::{
+        ffi::c_void,
+        mem::{size_of, zeroed},
+        ptr::null_mut,
+    };
     use windows_sys::Win32::{
         Foundation::{CloseHandle, HANDLE},
         Graphics::Gdi::{
-            CreateCompatibleDC, CreateDIBSection, DeleteDC, DeleteObject, SelectObject,
-            BITMAPINFO, BITMAPINFOHEADER, BI_RGB, DIB_RGB_COLORS,
+            CreateCompatibleDC, CreateDIBSection, DeleteDC, DeleteObject, SelectObject, BITMAPINFO,
+            BITMAPINFOHEADER, BI_RGB, DIB_RGB_COLORS,
         },
-        System::Threading::{OpenProcess, QueryFullProcessImageNameW, PROCESS_QUERY_LIMITED_INFORMATION},
+        System::Threading::{
+            OpenProcess, QueryFullProcessImageNameW, PROCESS_QUERY_LIMITED_INFORMATION,
+        },
         UI::{
             Shell::{SHGetFileInfoW, SHFILEINFOW, SHGFI_ICON, SHGFI_LARGEICON},
             WindowsAndMessaging::{DestroyIcon, DrawIconEx, PrivateExtractIconsW, DI_NORMAL},
@@ -3255,12 +3561,16 @@ mod windows_icon {
     pub fn icon_for_process(pid: u32) -> Option<RgbaImage> {
         unsafe {
             let process: HANDLE = OpenProcess(PROCESS_QUERY_LIMITED_INFORMATION, 0, pid);
-            if process.is_null() { return None; }
+            if process.is_null() {
+                return None;
+            }
             let mut path = vec![0u16; 32768];
             let mut len = path.len() as u32;
             let ok = QueryFullProcessImageNameW(process, 0, path.as_mut_ptr(), &mut len);
             CloseHandle(process);
-            if ok == 0 { return None; }
+            if ok == 0 {
+                return None;
+            }
             path.truncate(len as usize);
             path.push(0);
 
@@ -3288,12 +3598,17 @@ mod windows_icon {
                     size_of::<SHFILEINFOW>() as u32,
                     SHGFI_ICON | SHGFI_LARGEICON,
                 );
-                if result == 0 || info.hIcon.is_null() { return None; }
+                if result == 0 || info.hIcon.is_null() {
+                    return None;
+                }
                 info.hIcon
             };
 
             let dc = CreateCompatibleDC(null_mut());
-            if dc.is_null() { DestroyIcon(icon); return None; }
+            if dc.is_null() {
+                DestroyIcon(icon);
+                return None;
+            }
             let mut bitmap_info: BITMAPINFO = zeroed();
             bitmap_info.bmiHeader.biSize = size_of::<BITMAPINFOHEADER>() as u32;
             bitmap_info.bmiHeader.biWidth = SIZE;
@@ -3302,9 +3617,12 @@ mod windows_icon {
             bitmap_info.bmiHeader.biBitCount = 32;
             bitmap_info.bmiHeader.biCompression = BI_RGB;
             let mut bits: *mut c_void = null_mut();
-            let bitmap = CreateDIBSection(dc, &bitmap_info, DIB_RGB_COLORS, &mut bits, null_mut(), 0);
+            let bitmap =
+                CreateDIBSection(dc, &bitmap_info, DIB_RGB_COLORS, &mut bits, null_mut(), 0);
             if bitmap.is_null() || bits.is_null() {
-                DeleteDC(dc); DestroyIcon(icon); return None;
+                DeleteDC(dc);
+                DestroyIcon(icon);
+                return None;
             }
             let old = SelectObject(dc, bitmap);
             let _ = DrawIconEx(dc, 0, 0, icon, SIZE, SIZE, 0, null_mut(), DI_NORMAL);
@@ -3313,7 +3631,13 @@ mod windows_icon {
             let pixels = raw.as_chunks::<4>().0;
             let has_alpha = pixels.iter().any(|pixel| pixel[3] != 0);
             for (index, pixel) in pixels.iter().enumerate() {
-                let alpha = if has_alpha { pixel[3] } else if pixel[0] == 0 && pixel[1] == 0 && pixel[2] == 0 { 0 } else { 255 };
+                let alpha = if has_alpha {
+                    pixel[3]
+                } else if pixel[0] == 0 && pixel[1] == 0 && pixel[2] == 0 {
+                    0
+                } else {
+                    255
+                };
                 let x = (index as u32) % SIZE as u32;
                 let y = (index as u32) / SIZE as u32;
                 image.put_pixel(x, y, Rgba([pixel[2], pixel[1], pixel[0], alpha]));
@@ -3378,8 +3702,14 @@ pub fn run() {
                     monitors.iter().any(|monitor| {
                         let origin = monitor.position();
                         let size = monitor.size();
-                        let width = window_size.as_ref().map(|value| value.width as i32).unwrap_or(60);
-                        let height = window_size.as_ref().map(|value| value.height as i32).unwrap_or(60);
+                        let width = window_size
+                            .as_ref()
+                            .map(|value| value.width as i32)
+                            .unwrap_or(60);
+                        let height = window_size
+                            .as_ref()
+                            .map(|value| value.height as i32)
+                            .unwrap_or(60);
                         saved.x >= origin.x
                             && saved.y >= origin.y
                             && saved.x + width <= origin.x + size.width as i32
@@ -3391,8 +3721,14 @@ pub fn run() {
                 } else if let Ok(Some(monitor)) = window.primary_monitor() {
                     let screen = monitor.size();
                     let origin = monitor.position();
-                    let width = window_size.as_ref().map(|value| value.width as i32).unwrap_or(60);
-                    let height = window_size.as_ref().map(|value| value.height as i32).unwrap_or(60);
+                    let width = window_size
+                        .as_ref()
+                        .map(|value| value.width as i32)
+                        .unwrap_or(60);
+                    let height = window_size
+                        .as_ref()
+                        .map(|value| value.height as i32)
+                        .unwrap_or(60);
                     let x = origin.x + screen.width as i32 - width - 32;
                     let y = origin.y + (screen.height as i32 - height) / 2;
                     let _ = window.set_position(PhysicalPosition::new(x, y));
@@ -3430,40 +3766,45 @@ pub fn run() {
                 }
             }
 
-            let open_settings = MenuItem::with_id(app, "open-settings", "打开设置", true, None::<&str>)?;
+            let open_settings =
+                MenuItem::with_id(app, "open-settings", "打开设置", true, None::<&str>)?;
             let quit = MenuItem::with_id(app, "quit", "退出", true, None::<&str>)?;
             let menu = Menu::with_items(app, &[&open_settings, &quit])?;
-            let mut tray = TrayIconBuilder::new().menu(&menu).on_menu_event(|app, event| match event.id.as_ref() {
-                "open-settings" => show_main_window(app.clone()),
-                "quit" => {
-                    if let Some(state) = app.try_state::<AppState>() {
-                        stop_active_recording(&mut state.recorder.lock());
-                    }
-                    app.exit(0);
-                }
-                _ => {}
-            })
-            .on_tray_icon_event(|tray, event| {
-                // Left-click (and Windows double-click) opens the main window where the
-                // tray backend emits click events. Linux tray-icon 0.24 via
-                // libayatana-appindicator has no Activate/click callback — menu only.
-                // Right-click / context menu (打开设置 / 退出) is unchanged.
-                match event {
-                    TrayIconEvent::Click {
-                        button: MouseButton::Left,
-                        button_state: MouseButtonState::Up,
-                        ..
-                    }
-                    | TrayIconEvent::DoubleClick {
-                        button: MouseButton::Left,
-                        ..
-                    } => {
-                        show_main_window(tray.app_handle().clone());
+            let mut tray = TrayIconBuilder::new()
+                .menu(&menu)
+                .on_menu_event(|app, event| match event.id.as_ref() {
+                    "open-settings" => show_main_window(app.clone()),
+                    "quit" => {
+                        if let Some(state) = app.try_state::<AppState>() {
+                            stop_active_recording(&mut state.recorder.lock());
+                        }
+                        app.exit(0);
                     }
                     _ => {}
-                }
-            });
-            if let Some(icon) = app.default_window_icon() { tray = tray.icon(icon.clone()); }
+                })
+                .on_tray_icon_event(|tray, event| {
+                    // Left-click (and Windows double-click) opens the main window where the
+                    // tray backend emits click events. Linux tray-icon 0.24 via
+                    // libayatana-appindicator has no Activate/click callback — menu only.
+                    // Right-click / context menu (打开设置 / 退出) is unchanged.
+                    match event {
+                        TrayIconEvent::Click {
+                            button: MouseButton::Left,
+                            button_state: MouseButtonState::Up,
+                            ..
+                        }
+                        | TrayIconEvent::DoubleClick {
+                            button: MouseButton::Left,
+                            ..
+                        } => {
+                            show_main_window(tray.app_handle().clone());
+                        }
+                        _ => {}
+                    }
+                });
+            if let Some(icon) = app.default_window_icon() {
+                tray = tray.icon(icon.clone());
+            }
             // Linux 上若会话没有 StatusNotifierHost（精简环境 / 无扩展的 GNOME），
             // 托盘会建失败；主窗口与快捷键仍应可用，不能把整个 setup 拖死。
             if let Err(error) = tray.build(app) {
@@ -3481,8 +3822,13 @@ pub fn run() {
                 if let WindowEvent::Moved(position) = event {
                     let app = window.app_handle().clone();
                     let revision = {
-                        let Some(state) = app.try_state::<AppState>() else { return };
-                        state.settings.lock().pet_position = Some(PetPosition { x: position.x, y: position.y });
+                        let Some(state) = app.try_state::<AppState>() else {
+                            return;
+                        };
+                        state.settings.lock().pet_position = Some(PetPosition {
+                            x: position.x,
+                            y: position.y,
+                        });
                         state.pet_position_revision.fetch_add(1, Ordering::Relaxed) + 1
                     };
                     thread::spawn(move || {
@@ -3545,19 +3891,50 @@ mod mac_icon_tests {
 
     #[test]
     fn finder_icon_encodes_as_64px_png() {
-        let Ok(output) = std::process::Command::new("pgrep").args(["-x", "Finder"]).output() else { return };
+        let Ok(output) = std::process::Command::new("pgrep")
+            .args(["-x", "Finder"])
+            .output()
+        else {
+            return;
+        };
         let text = String::from_utf8_lossy(&output.stdout);
-        let Some(pid) = text.lines().next().and_then(|line| line.trim().parse::<u32>().ok()) else { return };
+        let Some(pid) = text
+            .lines()
+            .next()
+            .and_then(|line| line.trim().parse::<u32>().ok())
+        else {
+            return;
+        };
         let url = crate::mac_icon::png_data_url_for_pid(pid).expect("Finder 应当能取到图标");
-        assert!(url.starts_with("data:image/png;base64,"), "应返回 PNG data URL");
-        let png = BASE64.decode(url.trim_start_matches("data:image/png;base64,")).expect("data URL 应为合法 base64");
+        assert!(
+            url.starts_with("data:image/png;base64,"),
+            "应返回 PNG data URL"
+        );
+        let png = BASE64
+            .decode(url.trim_start_matches("data:image/png;base64,"))
+            .expect("data URL 应为合法 base64");
         // 图标 TIFF 里有 1024×1024 原图；不真压尺寸的话这里会得到六百 KB 的大图
         let decoded = image::load_from_memory(&png).expect("导出的应为合法 PNG");
-        assert_eq!((decoded.width(), decoded.height()), (64, 64), "图标应压到 64×64");
-        assert!(png.len() < 20 * 1024, "64×64 图标 PNG 应远小于 20KB，实际 {} 字节", png.len());
+        assert_eq!(
+            (decoded.width(), decoded.height()),
+            (64, 64),
+            "图标应压到 64×64"
+        );
+        assert!(
+            png.len() < 20 * 1024,
+            "64×64 图标 PNG 应远小于 20KB，实际 {} 字节",
+            png.len()
+        );
         // drawInRect 必须真的把图标画进去，而不是导出一张空白图
-        let opaque = decoded.to_rgba8().pixels().filter(|pixel| pixel[3] > 0).count();
-        assert!(opaque > 64, "64×64 图标应有可见内容，实际只有 {opaque} 个非透明像素");
+        let opaque = decoded
+            .to_rgba8()
+            .pixels()
+            .filter(|pixel| pixel[3] > 0)
+            .count();
+        assert!(
+            opaque > 64,
+            "64×64 图标应有可见内容，实际只有 {opaque} 个非透明像素"
+        );
     }
 }
 
@@ -3599,24 +3976,51 @@ mod pet_asset_tests {
         fs::write(&path, legacy).expect("写测试配置失败");
 
         let settings = read_settings(&path);
-        let actions: Vec<&str> = settings.shortcuts.iter().map(|item| item.action.as_str()).collect();
+        let actions: Vec<&str> = settings
+            .shortcuts
+            .iter()
+            .map(|item| item.action.as_str())
+            .collect();
         // 平台不支持的动作（如 Win/mac 的 scrolling）不应被迁移补回
         #[cfg(target_os = "linux")]
         assert_eq!(
             actions,
-            vec!["snapshot", "record", "polish", "fullscreen", "scrolling", "recordings", "ocr"]
+            vec![
+                "snapshot",
+                "record",
+                "polish",
+                "fullscreen",
+                "scrolling",
+                "recordings",
+                "ocr"
+            ]
         );
         #[cfg(not(target_os = "linux"))]
         assert_eq!(
             actions,
-            vec!["snapshot", "record", "polish", "fullscreen", "recordings", "ocr"]
+            vec![
+                "snapshot",
+                "record",
+                "polish",
+                "fullscreen",
+                "recordings",
+                "ocr"
+            ]
         );
 
         // 已绑定的键不能在迁移中丢失
-        let snapshot = settings.shortcuts.iter().find(|item| item.action == "snapshot").unwrap();
+        let snapshot = settings
+            .shortcuts
+            .iter()
+            .find(|item| item.action == "snapshot")
+            .unwrap();
         assert_eq!(snapshot.accelerator.as_deref(), Some("Alt+Shift+2"));
         // 新补的那条应当是未绑定状态
-        let ocr = settings.shortcuts.iter().find(|item| item.action == "ocr").unwrap();
+        let ocr = settings
+            .shortcuts
+            .iter()
+            .find(|item| item.action == "ocr")
+            .unwrap();
         assert!(ocr.accelerator.is_none());
         // 老版录制与快照共用 saveDir，新版应将它迁移到独立录制目录。
         assert_eq!(settings.recording_dir, "~/LegacyCaptures");
@@ -3644,12 +4048,22 @@ mod pet_asset_tests {
 
     #[test]
     fn non_gif_entries_are_skipped_and_idle_comes_first() {
-        let path = make_zip("mixed", &["cover.png", "pose/walk.mp4", "pose/walk.gif", "pose/idle.gif"]);
+        let path = make_zip(
+            "mixed",
+            &[
+                "cover.png",
+                "pose/walk.mp4",
+                "pose/walk.gif",
+                "pose/idle.gif",
+            ],
+        );
         let found = find_pet_animation_entries(&path).expect("应当找到 GIF");
-        assert_eq!(found, vec!["pose/idle.gif".to_string(), "pose/walk.gif".to_string()]);
+        assert_eq!(
+            found,
+            vec!["pose/idle.gif".to_string(), "pose/walk.gif".to_string()]
+        );
         let _ = fs::remove_file(&path);
     }
-
 
     #[test]
     fn idle_at_package_root_is_still_the_default_pose() {
@@ -3662,7 +4076,10 @@ mod pet_asset_tests {
     #[test]
     fn a_package_with_only_video_is_rejected() {
         let path = make_zip("video-only", &["cat/idle.mp4", "cat/walk.webm"]);
-        assert!(find_pet_animation_entries(&path).is_err(), "只剩视频的包应当被拒绝");
+        assert!(
+            find_pet_animation_entries(&path).is_err(),
+            "只剩视频的包应当被拒绝"
+        );
         let _ = fs::remove_file(&path);
     }
 
@@ -3674,8 +4091,6 @@ mod pet_asset_tests {
         assert_eq!(found, vec!["snapshot-pet-test-single.gif".to_string()]);
         let _ = fs::remove_file(&path);
     }
-
-
 
     #[test]
     fn expand_user_path_keeps_absolute_and_expands_tilde() {
@@ -3693,7 +4108,10 @@ mod pet_asset_tests {
         assert_eq!(clipboard_clear_delay("60s"), Some(Duration::from_secs(60)));
         assert_eq!(clipboard_clear_delay("5m"), Some(Duration::from_secs(300)));
         assert_eq!(clipboard_clear_delay("never"), None);
-        assert_eq!(clipboard_clear_delay("weird"), Some(Duration::from_secs(60)));
+        assert_eq!(
+            clipboard_clear_delay("weird"),
+            Some(Duration::from_secs(60))
+        );
     }
 
     #[test]

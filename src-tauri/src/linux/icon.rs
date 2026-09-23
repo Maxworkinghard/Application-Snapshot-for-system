@@ -41,20 +41,23 @@ fn find_desktop_icon(app: &str) -> Option<String> {
     let lower = app.to_ascii_lowercase();
     for root in xdg_data_dirs() {
         let apps = root.join("applications");
-        let Ok(entries) = fs::read_dir(&apps) else { continue };
+        let Ok(entries) = fs::read_dir(&apps) else {
+            continue;
+        };
         for entry in entries.flatten() {
             let path = entry.path();
             if path.extension().and_then(|e| e.to_str()) != Some("desktop") {
                 continue;
             }
-            let Ok(text) = fs::read_to_string(&path) else { continue };
+            let Ok(text) = fs::read_to_string(&path) else {
+                continue;
+            };
             let file_stem = path.file_stem().and_then(|s| s.to_str()).unwrap_or("");
             let matches_name = file_stem.eq_ignore_ascii_case(app)
                 || file_stem.to_ascii_lowercase().contains(&lower);
             let matches_exec = text.lines().any(|line| {
                 let line = line.trim();
-                line.starts_with("Exec=")
-                    && line.to_ascii_lowercase().contains(&lower)
+                line.starts_with("Exec=") && line.to_ascii_lowercase().contains(&lower)
             });
             if !(matches_name || matches_exec) {
                 continue;
