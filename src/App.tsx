@@ -72,6 +72,8 @@ import { fileNameOf, formatBytes, formatWhen, normalizeKey } from "./lib/format"
 import { previewHintSound } from "./lib/sound";
 import { renderPetMedia } from "./windows/PetWindow";
 import { KbdBadge } from "./components/ui/KbdBadge";
+import { PrefToggle } from "./components/ui/PrefToggle";
+import { SegGroup } from "./components/ui/SegGroup";
 import {
   applyTheme,
   broadcastTheme,
@@ -1199,66 +1201,6 @@ function PetPage({
           </div>
         </div>
       </section>
-    </div>
-  );
-}
-
-/** 偏好设置共用的开关控件，样式来自 app.css 的 toggle-switch-btn */
-function PrefToggle({
-  value,
-  onChange,
-  label,
-  disabled = false,
-}: {
-  value: boolean;
-  onChange: (next: boolean) => void;
-  label: string;
-  disabled?: boolean;
-}) {
-  return (
-    <button
-      type="button"
-      role="switch"
-      aria-checked={value}
-      aria-label={label}
-      disabled={disabled}
-      className={`toggle-switch-btn ${value ? "on" : ""}`}
-      style={disabled ? { opacity: 0.45, cursor: "not-allowed" } : undefined}
-      onClick={() => {
-        if (!disabled) onChange(!value);
-      }}
-    >
-      <span className="toggle-thumb" />
-    </button>
-  );
-}
-
-/** 偏好设置共用的分段选择器，样式来自 app.css 的 segmented-track */
-function SegGroup<T extends string>({
-  value,
-  options,
-  onChange,
-  ariaLabel,
-}: {
-  value: T;
-  options: Array<{ value: T; label: string }>;
-  onChange: (next: T) => void;
-  ariaLabel: string;
-}) {
-  return (
-    <div className="segmented-track" role="radiogroup" aria-label={ariaLabel}>
-      {options.map((option) => (
-        <button
-          key={option.value}
-          type="button"
-          role="radio"
-          aria-checked={value === option.value}
-          className={`segmented-item-btn ${value === option.value ? "is-active" : ""}`}
-          onClick={() => onChange(option.value)}
-        >
-          {option.label}
-        </button>
-      ))}
     </div>
   );
 }
