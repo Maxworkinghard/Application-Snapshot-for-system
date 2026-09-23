@@ -345,6 +345,8 @@ pub(crate) mod mac_autostart {
     }
 }
 
+/// macOS：NSRunningApplication.icon → 64×64 PNG data URL。
+/// 拿到的是 PNG 字节，直接 base64，不必像 Windows 那样走 RgbaImage。
 #[cfg(target_os = "macos")]
 pub(crate) mod mac_icon {
     use base64::{engine::general_purpose::STANDARD as BASE64, Engine as _};
