@@ -183,12 +183,12 @@ fn rgba_to_data_url(image: RgbaImage) -> Option<String> {
 
 #[cfg(target_os = "windows")]
 fn app_icon_data_url(pid: u32) -> Option<String> {
-    windows_icon::icon_for_process(pid).and_then(rgba_to_data_url)
+    platform::windows_icon::icon_for_process(pid).and_then(rgba_to_data_url)
 }
 
 #[cfg(target_os = "macos")]
 fn app_icon_data_url(pid: u32) -> Option<String> {
-    mac_icon::png_data_url_for_pid(pid)
+    platform::mac_icon::png_data_url_for_pid(pid)
 }
 
 #[cfg(target_os = "linux")]

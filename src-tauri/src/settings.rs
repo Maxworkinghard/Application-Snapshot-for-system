@@ -10,7 +10,7 @@ use super::linux;
 #[cfg(target_os = "macos")]
 use super::platform::mac_autostart;
 #[cfg(target_os = "windows")]
-use super::windows_autostart;
+use super::platform::windows_autostart;
 
 const KEYRING_SERVICE: &str = "com.appsnapshot.prompt-pet-shortcut";
 const KEYRING_USER: &str = "polish-api-key";

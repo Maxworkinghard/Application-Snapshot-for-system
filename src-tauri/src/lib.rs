@@ -262,116 +262,6 @@ fn now_millis() -> u64 {
 
 /// macOS：NSRunningApplication.icon → 64×64 PNG data URL。
 /// 拿到的是 PNG 字节，直接 base64，不必像 Windows 那样走 RgbaImage。
-#[cfg(target_os = "macos")]
-mod mac_icon {
-    use base64::{engine::general_purpose::STANDARD as BASE64, Engine as _};
-    use objc2::AnyThread;
-    use objc2_app_kit::{
-        NSBitmapImageFileType, NSBitmapImageRep, NSDeviceRGBColorSpace, NSGraphicsContext, NSImage,
-        NSRunningApplication,
-    };
-    use objc2_foundation::{NSDictionary, NSPoint, NSRect, NSSize};
-
-    pub fn png_data_url_for_pid(pid: u32) -> Option<String> {
-        unsafe {
-            let app = NSRunningApplication::runningApplicationWithProcessIdentifier(pid as i32)?;
-            let icon = app.icon()?;
-            let png = downscale_to_png(&icon)?;
-            Some(format!("data:image/png;base64,{}", BASE64.encode(png)))
-        }
-    }
-
-    /// 图标的 TIFF 里带全套尺寸（最大 1024×1024）；setSize 只改逻辑尺寸、
-    /// 动不了 TIFFRepresentation 里的像素。要真压到 64×64，得把它画进
-    /// 一个新的 64×64 bitmap rep 再导出。
-    unsafe fn downscale_to_png(icon: &NSImage) -> Option<Vec<u8>> {
-        let rep = NSBitmapImageRep::initWithBitmapDataPlanes_pixelsWide_pixelsHigh_bitsPerSample_samplesPerPixel_hasAlpha_isPlanar_colorSpaceName_bytesPerRow_bitsPerPixel(
-            NSBitmapImageRep::alloc(),
-            std::ptr::null_mut(),
-            64,
-            64,
-            8,
-            4,
-            true,
-            false,
-            NSDeviceRGBColorSpace,
-            0,
-            0,
-        )?;
-        let context = NSGraphicsContext::graphicsContextWithBitmapImageRep(&rep)?;
-        NSGraphicsContext::saveGraphicsState_class();
-        NSGraphicsContext::setCurrentContext(Some(&context));
-        icon.drawInRect(NSRect::new(NSPoint::new(0.0, 0.0), NSSize::new(64.0, 64.0)));
-        NSGraphicsContext::restoreGraphicsState_class();
-        let png = rep
-            .representationUsingType_properties(NSBitmapImageFileType::PNG, &NSDictionary::new())?;
-        Some(png.to_vec())
-    }
-}
-
-/// Windows 开机自启：在 HKCU 的 Run 键下写一个值。
-/// 不走「启动」文件夹的 .lnk —— 那需要 COM IShellLink，而且用户手动删掉快捷方式后
-/// 设置项仍显示开启，状态会和系统对不上。注册表读写都在当前用户下，无需提权。
-#[cfg(target_os = "windows")]
-mod windows_autostart {
-    use std::{ffi::OsStr, iter::once, os::windows::ffi::OsStrExt};
-    use windows_sys::Win32::System::Registry::{
-        RegDeleteKeyValueW, RegSetKeyValueW, HKEY_CURRENT_USER, REG_SZ,
-    };
-
-    const RUN_KEY: &str = r"Software\Microsoft\Windows\CurrentVersion\Run";
-    /// 注册表值名。改名会在用户机器上留下卸不掉的旧值，所以固定不动。
-    const VALUE_NAME: &str = "AppSnapshot";
-    /// ERROR_FILE_NOT_FOUND：值本来就不存在，删除按成功处理。
-    const ERROR_FILE_NOT_FOUND: u32 = 2;
-
-    fn wide(text: &str) -> Vec<u16> {
-        OsStr::new(text).encode_wide().chain(once(0)).collect()
-    }
-
-    /// 可执行文件路径要带引号：路径含空格时，不加引号会被 Windows 拆成程序名 + 参数。
-    fn command_line() -> Result<Vec<u16>, String> {
-        let exe =
-            std::env::current_exe().map_err(|error| format!("无法定位可执行文件：{error}"))?;
-        Ok(wide(&format!("\"{}\"", exe.display())))
-    }
-
-    pub fn apply(enabled: bool) -> Result<(), String> {
-        let key = wide(RUN_KEY);
-        let name = wide(VALUE_NAME);
-        let status = if enabled {
-            let value = command_line()?;
-            // REG_SZ 的字节数要含结尾的 NUL，少算会让读取方拿到没有终止符的串。
-            let bytes = (value.len() * 2) as u32;
-            unsafe {
-                RegSetKeyValueW(
-                    HKEY_CURRENT_USER,
-                    key.as_ptr(),
-                    name.as_ptr(),
-                    REG_SZ,
-                    value.as_ptr().cast(),
-                    bytes,
-                )
-            }
-        } else {
-            let status =
-                unsafe { RegDeleteKeyValueW(HKEY_CURRENT_USER, key.as_ptr(), name.as_ptr()) };
-            if status == ERROR_FILE_NOT_FOUND {
-                0
-            } else {
-                status
-            }
-        };
-        if status != 0 {
-            let action = if enabled { "写入" } else { "移除" };
-            return Err(format!("无法{action}开机启动项（注册表错误 {status}）"));
-        }
-        Ok(())
-    }
-}
-
-/// Windows 静帧截图的光标合成。
-/// xcap 只给窗口像素、不含光标；录制侧靠 ffmpeg `-draw_mouse`，静帧只能自己画。
 #[cfg(target_os = "windows")]
 mod windows_cursor {
     use image::{Rgba, RgbaImage};
@@ -615,122 +505,6 @@ mod windows_cursor {
     }
 }
 
-#[cfg(target_os = "windows")]
-mod windows_icon {
-    use image::{Rgba, RgbaImage};
-    use std::{
-        ffi::c_void,
-        mem::{size_of, zeroed},
-        ptr::null_mut,
-    };
-    use windows_sys::Win32::{
-        Foundation::{CloseHandle, HANDLE},
-        Graphics::Gdi::{
-            CreateCompatibleDC, CreateDIBSection, DeleteDC, DeleteObject, SelectObject, BITMAPINFO,
-            BITMAPINFOHEADER, BI_RGB, DIB_RGB_COLORS,
-        },
-        System::Threading::{
-            OpenProcess, QueryFullProcessImageNameW, PROCESS_QUERY_LIMITED_INFORMATION,
-        },
-        UI::{
-            Shell::{SHGetFileInfoW, SHFILEINFOW, SHGFI_ICON, SHGFI_LARGEICON},
-            WindowsAndMessaging::{DestroyIcon, DrawIconEx, PrivateExtractIconsW, DI_NORMAL},
-        },
-    };
-
-    pub fn icon_for_process(pid: u32) -> Option<RgbaImage> {
-        unsafe {
-            let process: HANDLE = OpenProcess(PROCESS_QUERY_LIMITED_INFORMATION, 0, pid);
-            if process.is_null() {
-                return None;
-            }
-            let mut path = vec![0u16; 32768];
-            let mut len = path.len() as u32;
-            let ok = QueryFullProcessImageNameW(process, 0, path.as_mut_ptr(), &mut len);
-            CloseHandle(process);
-            if ok == 0 {
-                return None;
-            }
-            path.truncate(len as usize);
-            path.push(0);
-
-            const SIZE: i32 = 256;
-            let mut extracted_icon = null_mut();
-            let mut icon_id = 0u32;
-            let extracted = PrivateExtractIconsW(
-                path.as_ptr(),
-                0,
-                SIZE,
-                SIZE,
-                &mut extracted_icon,
-                &mut icon_id,
-                1,
-                0,
-            );
-            let icon = if extracted > 0 && extracted != u32::MAX && !extracted_icon.is_null() {
-                extracted_icon
-            } else {
-                let mut info: SHFILEINFOW = zeroed();
-                let result = SHGetFileInfoW(
-                    path.as_ptr(),
-                    0,
-                    &mut info,
-                    size_of::<SHFILEINFOW>() as u32,
-                    SHGFI_ICON | SHGFI_LARGEICON,
-                );
-                if result == 0 || info.hIcon.is_null() {
-                    return None;
-                }
-                info.hIcon
-            };
-
-            let dc = CreateCompatibleDC(null_mut());
-            if dc.is_null() {
-                DestroyIcon(icon);
-                return None;
-            }
-            let mut bitmap_info: BITMAPINFO = zeroed();
-            bitmap_info.bmiHeader.biSize = size_of::<BITMAPINFOHEADER>() as u32;
-            bitmap_info.bmiHeader.biWidth = SIZE;
-            bitmap_info.bmiHeader.biHeight = -SIZE;
-            bitmap_info.bmiHeader.biPlanes = 1;
-            bitmap_info.bmiHeader.biBitCount = 32;
-            bitmap_info.bmiHeader.biCompression = BI_RGB;
-            let mut bits: *mut c_void = null_mut();
-            let bitmap =
-                CreateDIBSection(dc, &bitmap_info, DIB_RGB_COLORS, &mut bits, null_mut(), 0);
-            if bitmap.is_null() || bits.is_null() {
-                DeleteDC(dc);
-                DestroyIcon(icon);
-                return None;
-            }
-            let old = SelectObject(dc, bitmap);
-            let _ = DrawIconEx(dc, 0, 0, icon, SIZE, SIZE, 0, null_mut(), DI_NORMAL);
-            let raw = std::slice::from_raw_parts(bits as *const u8, (SIZE * SIZE * 4) as usize);
-            let mut image = RgbaImage::new(SIZE as u32, SIZE as u32);
-            let pixels = raw.as_chunks::<4>().0;
-            let has_alpha = pixels.iter().any(|pixel| pixel[3] != 0);
-            for (index, pixel) in pixels.iter().enumerate() {
-                let alpha = if has_alpha {
-                    pixel[3]
-                } else if pixel[0] == 0 && pixel[1] == 0 && pixel[2] == 0 {
-                    0
-                } else {
-                    255
-                };
-                let x = (index as u32) % SIZE as u32;
-                let y = (index as u32) / SIZE as u32;
-                image.put_pixel(x, y, Rgba([pixel[2], pixel[1], pixel[0], alpha]));
-            }
-            SelectObject(dc, old);
-            DeleteObject(bitmap);
-            DeleteDC(dc);
-            DestroyIcon(icon);
-            Some(image)
-        }
-    }
-}
-
 pub fn run() {
     // 配置文件里定义的窗口在 setup() 之前就已创建并开始加载前端，
     // 若把 manage() 留在 setup() 里，前端可能抢先发出命令并撞上
@@ -829,7 +603,7 @@ pub fn run() {
             #[cfg(target_os = "windows")]
             {
                 if settings.launch_on_boot {
-                    if let Err(error) = windows_autostart::apply(true) {
+                    if let Err(error) = platform::windows_autostart::apply(true) {
                         eprintln!("snapshot: could not sync Run key: {error}");
                     }
                 }
@@ -985,7 +759,8 @@ mod mac_icon_tests {
         else {
             return;
         };
-        let url = crate::mac_icon::png_data_url_for_pid(pid).expect("Finder 应当能取到图标");
+        let url =
+            crate::platform::mac_icon::png_data_url_for_pid(pid).expect("Finder 应当能取到图标");
         assert!(
             url.starts_with("data:image/png;base64,"),
             "应返回 PNG data URL"
