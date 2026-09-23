@@ -37,6 +37,8 @@
 
 **真机验证**：目前以 Windows 为主（adapter、托盘、快捷键、截图/录制等已在真机跑过）。macOS / Linux 能力主要来自代码路径、编译检查与适配层实现；macOS 的 `snapshot-ocr` 桥与部分窗口能力（截图、图标、Accessibility 还原最小化）有过真机验证，录制已切到 ScreenCaptureKit 原生窗口流并由 AVAssetWriter 输出 H.264 MP4。Linux 在修复编译阻断后已恢复 `cargo check`；X11 路径（xcap / x11grab / tesseract / xdotool / XDG 自启）按适配层实现，Wayland portal ScreenCast、托盘点击、打包安装包等仍可能需本机再验。
 
+开发机（macOS）上无法验证的项目统一登记在 [docs/pending-device-verification.md](docs/pending-device-verification.md)，每条都注明应在哪一端补验。
+
 ## 依赖
 
 - **录制**：Windows 走系统自带的 Windows.Graphics.Capture 与 Media Foundation，不需要 ffmpeg；macOS 使用随应用打包的 ScreenCaptureKit sidecar，不依赖外部 ffmpeg；Linux 需要 `ffmpeg` 在 `PATH` 中。Linux 上「截屏包含鼠标光标」的静帧也会优先走 ffmpeg `x11grab`（失败则回退为无光标截图）；OCR、润色不需要 ffmpeg。
