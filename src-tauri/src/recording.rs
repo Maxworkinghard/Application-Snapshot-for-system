@@ -116,7 +116,7 @@ fn spawn_macos_recorder(
     output: &PathBuf,
     include_cursor: bool,
 ) -> Result<(Child, Arc<Mutex<String>>), String> {
-    let mut command = Command::new(macos_recorder_program());
+    let mut command = Command::new(platform::macos_recorder_program());
     command
         .arg("--window-id")
         .arg(target.id.to_string())
