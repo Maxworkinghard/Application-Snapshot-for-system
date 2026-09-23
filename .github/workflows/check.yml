@@ -27,6 +27,7 @@ jobs:
           node-version: "22"
           cache: npm
       - run: npm ci
+      - run: npm test
       # tsc + vite build，前端类型错误在这里就拦住
       - run: npm run build
 
