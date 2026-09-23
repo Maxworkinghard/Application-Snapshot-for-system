@@ -120,7 +120,6 @@ const actionLabels: Record<ShortcutAction, { name: string; tag?: string }> = {
   fullscreen: { name: "全屏快照", tag: "主显示器" },
   scrolling: { name: "滚动长截图", tag: "窗口连拍" },
   record: { name: "窗口录制", tag: "MP4" },
-  recordings: { name: "打开录制目录", tag: "文件管理器" },
   polish: { name: "润色 Prompt", tag: "剪贴板" },
   ocr: { name: "提取文字 (OCR)", tag: "离线识别" },
 };
@@ -142,7 +141,6 @@ const initialSettings: Settings = {
     { action: "fullscreen", accelerator: "Alt+Shift+F" },
     ...(SCROLLING_SUPPORTED ? [{ action: "scrolling" as const, accelerator: null }] : []),
     { action: "record", accelerator: null },
-    { action: "recordings", accelerator: null },
     { action: "polish", accelerator: "Alt+Shift+P" },
     { action: "ocr", accelerator: "Alt+Shift+O" },
   ],
@@ -158,6 +156,8 @@ const initialSettings: Settings = {
   autoSaveLocal: true,
   launchOnBoot: false,
   includeCursor: false,
+  recordSystemAudio: false,
+  recordMicrophone: false,
   afterCapture: "clipboard",
 };
 
@@ -1444,7 +1444,6 @@ function ShortcutsPage({
               : binding.action === "fullscreen" ? <Camera size={15} />
               : binding.action === "scrolling" ? <Layers size={15} />
               : binding.action === "record" ? <span className="record-symbol" />
-              : binding.action === "recordings" ? <FolderOpen size={15} />
               : binding.action === "ocr" ? <ScanText size={15} />
               : <TextCursorInput size={15} />}
           </span>
@@ -1571,6 +1570,14 @@ function ShortcutsPage({
                   </button>
                 </div>
               </div>
+            </div>
+          </section>
+
+          <section className="hub-section-block">
+            <div className="section-label-bar">
+              <span className="section-name">录制设置</span>
+            </div>
+            <div className="preferences-group-card">
               <div className="pref-item-row folder-row">
                 <span className="pref-title">录制保存目录</span>
                 <div className="folder-picker-box">
@@ -1595,6 +1602,30 @@ function ShortcutsPage({
                     </button>
                   )}
                 </div>
+              </div>
+              <div className="pref-item-row recording-audio-row">
+                <div className="recording-audio-copy">
+                  <span className="pref-title">系统音频</span>
+                  <small>{caps?.recordingSystemAudio.detail ?? "录制电脑正在播放的声音"}</small>
+                </div>
+                <PrefToggle
+                  value={settings.recordSystemAudio}
+                  label="录制系统音频"
+                  disabled={!caps?.recordingSystemAudio.available && !settings.recordSystemAudio}
+                  onChange={(value) => void updatePrefs({ recordSystemAudio: value })}
+                />
+              </div>
+              <div className="pref-item-row recording-audio-row">
+                <div className="recording-audio-copy">
+                  <span className="pref-title">麦克风</span>
+                  <small>{caps?.recordingMicrophone.detail ?? "录制麦克风输入"}</small>
+                </div>
+                <PrefToggle
+                  value={settings.recordMicrophone}
+                  label="录制麦克风"
+                  disabled={!caps?.recordingMicrophone.available && !settings.recordMicrophone}
+                  onChange={(value) => void updatePrefs({ recordMicrophone: value })}
+                />
               </div>
             </div>
           </section>

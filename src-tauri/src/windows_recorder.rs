@@ -12,13 +12,14 @@ use std::{
     path::{Path, PathBuf},
     sync::{
         atomic::{AtomicBool, Ordering},
-        Arc,
+        mpsc, Arc,
     },
+    time::{Duration, Instant},
 };
 
 use parking_lot::Mutex;
 use windows::{
-    core::{Interface, HSTRING},
+    core::{Interface, GUID, HSTRING},
     Foundation::TypedEventHandler,
     Graphics::{
         Capture::{Direct3D11CaptureFramePool, GraphicsCaptureItem, GraphicsCaptureSession},
@@ -36,13 +37,26 @@ use windows::{
             },
             Dxgi::IDXGIDevice,
         },
+        Media::Audio::{
+            eCapture, eConsole, eRender, IAudioCaptureClient, IAudioClient, IMMDeviceEnumerator,
+            AUDCLNT_BUFFERFLAGS_SILENT, AUDCLNT_SHAREMODE_SHARED,
+            AUDCLNT_STREAMFLAGS_AUTOCONVERTPCM, AUDCLNT_STREAMFLAGS_LOOPBACK,
+            AUDCLNT_STREAMFLAGS_SRC_DEFAULT_QUALITY, WAVEFORMATEX, WAVE_FORMAT_PCM,
+        },
         Media::MediaFoundation::{
-            IMFAttributes, IMFSinkWriter, MFCreateAttributes, MFCreateMediaType,
-            MFCreateMemoryBuffer, MFCreateSample, MFCreateSinkWriterFromURL, MFMediaType_Video,
-            MFStartup, MFVideoFormat_H264, MFVideoFormat_RGB32, MFVideoInterlace_Progressive,
-            MFSTARTUP_NOSOCKET, MF_MT_AVG_BITRATE, MF_MT_FRAME_RATE, MF_MT_FRAME_SIZE,
-            MF_MT_INTERLACE_MODE, MF_MT_MAJOR_TYPE, MF_MT_PIXEL_ASPECT_RATIO, MF_MT_SUBTYPE,
+            IMFAttributes, IMFSinkWriter, MFAudioFormat_AAC, MFAudioFormat_PCM, MFCreateAttributes,
+            MFCreateMediaType, MFCreateMemoryBuffer, MFCreateSample, MFCreateSinkWriterFromURL,
+            MFMediaType_Audio, MFMediaType_Video, MFStartup, MFVideoFormat_H264,
+            MFVideoFormat_RGB32, MFVideoInterlace_Progressive, MFSTARTUP_NOSOCKET,
+            MF_MT_AAC_AUDIO_PROFILE_LEVEL_INDICATION, MF_MT_AAC_PAYLOAD_TYPE,
+            MF_MT_AUDIO_AVG_BYTES_PER_SECOND, MF_MT_AUDIO_BITS_PER_SAMPLE,
+            MF_MT_AUDIO_BLOCK_ALIGNMENT, MF_MT_AUDIO_NUM_CHANNELS, MF_MT_AUDIO_SAMPLES_PER_SECOND,
+            MF_MT_AVG_BITRATE, MF_MT_FRAME_RATE, MF_MT_FRAME_SIZE, MF_MT_INTERLACE_MODE,
+            MF_MT_MAJOR_TYPE, MF_MT_PIXEL_ASPECT_RATIO, MF_MT_SUBTYPE,
             MF_READWRITE_ENABLE_HARDWARE_TRANSFORMS, MF_SINK_WRITER_DISABLE_THROTTLING, MF_VERSION,
+        },
+        System::Com::{
+            CoCreateInstance, CoInitializeEx, CoUninitialize, CLSCTX_ALL, COINIT_MULTITHREADED,
         },
         System::WinRT::{
             Direct3D11::{CreateDirect3D11DeviceFromDXGIDevice, IDirect3DDxgiInterfaceAccess},
@@ -76,16 +90,24 @@ fn bitrate_for(width: u32, height: u32) -> u32 {
 struct Encoder {
     writer: IMFSinkWriter,
     stream: u32,
+    system_audio_stream: Option<u32>,
+    microphone_stream: Option<u32>,
     width: u32,
     height: u32,
-    /// 第一帧的 SystemRelativeTime，后续帧减它得到相对时间轴
+    /// 所有输入流共享一条相对时间轴，从首个音视频样本开始计时。
     base_time: Option<i64>,
     /// 实际写进去多少帧。一帧没有的话收尾会得到一个播放器打不开的空 MP4
     frames: u64,
 }
 
 impl Encoder {
-    fn new(output: &Path, width: u32, height: u32) -> Result<Self, String> {
+    fn new(
+        output: &Path,
+        width: u32,
+        height: u32,
+        record_system_audio: bool,
+        record_microphone: bool,
+    ) -> Result<Self, String> {
         let attributes: IMFAttributes = unsafe {
             let mut attributes = None;
             MFCreateAttributes(&mut attributes, 2).map_err(|e| err("创建编码器属性失败", e))?;
@@ -151,12 +173,27 @@ impl Encoder {
             writer
                 .SetInputMediaType(stream, &in_type, None)
                 .map_err(|e| err("设置输入格式失败", e))?;
+        }
+
+        let system_audio_stream = if record_system_audio {
+            Some(add_audio_stream(&writer)?)
+        } else {
+            None
+        };
+        let microphone_stream = if record_microphone {
+            Some(add_audio_stream(&writer)?)
+        } else {
+            None
+        };
+        unsafe {
             writer.BeginWriting().map_err(|e| err("开始录制失败", e))?;
         }
 
         Ok(Self {
             writer,
             stream,
+            system_audio_stream,
+            microphone_stream,
             width,
             height,
             base_time: None,
@@ -200,11 +237,282 @@ impl Encoder {
         Ok(())
     }
 
+    fn write_audio(
+        &mut self,
+        stream: u32,
+        samples: &[u8],
+        timestamp: i64,
+        duration: i64,
+    ) -> Result<(), String> {
+        if samples.is_empty() || duration <= 0 {
+            return Ok(());
+        }
+        let buffer = unsafe {
+            MFCreateMemoryBuffer(samples.len() as u32).map_err(|e| err("分配音频缓冲失败", e))?
+        };
+        unsafe {
+            let mut target: *mut u8 = std::ptr::null_mut();
+            buffer
+                .Lock(&mut target, None, None)
+                .map_err(|e| err("锁定音频缓冲失败", e))?;
+            std::ptr::copy_nonoverlapping(samples.as_ptr(), target, samples.len());
+            buffer.SetCurrentLength(samples.len() as u32).ok();
+            buffer.Unlock().ok();
+        }
+        let sample = unsafe { MFCreateSample().map_err(|e| err("创建音频样本失败", e))? };
+        let base = *self.base_time.get_or_insert(timestamp);
+        unsafe {
+            sample.AddBuffer(&buffer).ok();
+            sample.SetSampleTime(timestamp - base).ok();
+            sample.SetSampleDuration(duration).ok();
+            self.writer
+                .WriteSample(stream, &sample)
+                .map_err(|e| err("写入音频失败", e))?;
+        }
+        Ok(())
+    }
+
+    fn audio_stream(&self, source: AudioSource) -> Option<u32> {
+        match source {
+            AudioSource::System => self.system_audio_stream,
+            AudioSource::Microphone => self.microphone_stream,
+        }
+    }
+
     fn finish(self) {
         unsafe {
             let _ = self.writer.Finalize();
         }
     }
+}
+
+const AUDIO_SAMPLE_RATE: u32 = 48_000;
+const AUDIO_CHANNELS: u32 = 2;
+const AUDIO_BYTES_PER_SAMPLE: u32 = 2;
+const AUDIO_BLOCK_ALIGN: u32 = AUDIO_CHANNELS * AUDIO_BYTES_PER_SAMPLE;
+const CLSID_MMDEVICE_ENUMERATOR: GUID = GUID::from_u128(0xBCDE0395_E52F_467C_8E3D_C4579291692E);
+
+#[derive(Clone, Copy)]
+enum AudioSource {
+    System,
+    Microphone,
+}
+
+fn add_audio_stream(writer: &IMFSinkWriter) -> Result<u32, String> {
+    let output_type =
+        unsafe { MFCreateMediaType().map_err(|e| err("创建 AAC 音频格式失败", e))? };
+    unsafe {
+        output_type
+            .SetGUID(&MF_MT_MAJOR_TYPE, &MFMediaType_Audio)
+            .map_err(|e| err("设置 AAC 音频类型失败", e))?;
+        output_type
+            .SetGUID(&MF_MT_SUBTYPE, &MFAudioFormat_AAC)
+            .map_err(|e| err("设置 AAC 编码失败", e))?;
+        output_type
+            .SetUINT32(&MF_MT_AUDIO_BITS_PER_SAMPLE, 16)
+            .map_err(|e| err("配置 AAC 位深失败", e))?;
+        output_type
+            .SetUINT32(&MF_MT_AUDIO_SAMPLES_PER_SECOND, AUDIO_SAMPLE_RATE)
+            .map_err(|e| err("配置 AAC 采样率失败", e))?;
+        output_type
+            .SetUINT32(&MF_MT_AUDIO_NUM_CHANNELS, AUDIO_CHANNELS)
+            .map_err(|e| err("配置 AAC 声道失败", e))?;
+        output_type
+            .SetUINT32(&MF_MT_AUDIO_AVG_BYTES_PER_SECOND, 16_000)
+            .map_err(|e| err("配置 AAC 码率失败", e))?;
+        output_type
+            .SetUINT32(&MF_MT_AAC_AUDIO_PROFILE_LEVEL_INDICATION, 0x29)
+            .map_err(|e| err("配置 AAC profile 失败", e))?;
+        output_type
+            .SetUINT32(&MF_MT_AAC_PAYLOAD_TYPE, 0)
+            .map_err(|e| err("配置 AAC payload 失败", e))?;
+        output_type
+            .SetUINT32(&MF_MT_AUDIO_BLOCK_ALIGNMENT, 1)
+            .map_err(|e| err("配置 AAC 对齐失败", e))?;
+    }
+    let stream = unsafe {
+        writer
+            .AddStream(&output_type)
+            .map_err(|e| err("添加 AAC 音轨失败", e))?
+    };
+
+    let input_type =
+        unsafe { MFCreateMediaType().map_err(|e| err("创建 PCM 音频格式失败", e))? };
+    unsafe {
+        input_type
+            .SetGUID(&MF_MT_MAJOR_TYPE, &MFMediaType_Audio)
+            .map_err(|e| err("设置 PCM 音频类型失败", e))?;
+        input_type
+            .SetGUID(&MF_MT_SUBTYPE, &MFAudioFormat_PCM)
+            .map_err(|e| err("设置 PCM 编码失败", e))?;
+        input_type
+            .SetUINT32(&MF_MT_AUDIO_BITS_PER_SAMPLE, 16)
+            .map_err(|e| err("配置 PCM 位深失败", e))?;
+        input_type
+            .SetUINT32(&MF_MT_AUDIO_SAMPLES_PER_SECOND, AUDIO_SAMPLE_RATE)
+            .map_err(|e| err("配置 PCM 采样率失败", e))?;
+        input_type
+            .SetUINT32(&MF_MT_AUDIO_NUM_CHANNELS, AUDIO_CHANNELS)
+            .map_err(|e| err("配置 PCM 声道失败", e))?;
+        input_type
+            .SetUINT32(
+                &MF_MT_AUDIO_AVG_BYTES_PER_SECOND,
+                AUDIO_SAMPLE_RATE * AUDIO_BLOCK_ALIGN,
+            )
+            .map_err(|e| err("配置 PCM 字节率失败", e))?;
+        input_type
+            .SetUINT32(&MF_MT_AUDIO_BLOCK_ALIGNMENT, AUDIO_BLOCK_ALIGN)
+            .map_err(|e| err("配置 PCM 块对齐失败", e))?;
+        writer
+            .SetInputMediaType(stream, &input_type, None)
+            .map_err(|e| err("设置 PCM 音频输入失败", e))?;
+    }
+    Ok(stream)
+}
+
+fn start_audio_worker(
+    source: AudioSource,
+    sink: Arc<Mutex<Option<FrameSink>>>,
+    stopped: Arc<AtomicBool>,
+    recording_epoch: Instant,
+) -> Result<std::thread::JoinHandle<Result<(), String>>, String> {
+    let (ready_tx, ready_rx) = mpsc::sync_channel(1);
+    let worker = std::thread::spawn(move || {
+        let com_status = unsafe { CoInitializeEx(None, COINIT_MULTITHREADED) };
+        if com_status.is_err() {
+            let message = format!("初始化音频设备接口失败：{com_status}");
+            let _ = ready_tx.send(Err(message.clone()));
+            return Err(message);
+        }
+        let result = capture_audio_loop(source, sink, stopped, recording_epoch, ready_tx);
+        unsafe { CoUninitialize() };
+        result
+    });
+
+    match ready_rx.recv() {
+        Ok(Ok(())) => Ok(worker),
+        Ok(Err(error)) => {
+            let _ = worker.join();
+            Err(error)
+        }
+        Err(_) => {
+            let _ = worker.join();
+            Err("音频采集线程意外退出".into())
+        }
+    }
+}
+
+fn capture_audio_loop(
+    source: AudioSource,
+    sink: Arc<Mutex<Option<FrameSink>>>,
+    stopped: Arc<AtomicBool>,
+    recording_epoch: Instant,
+    ready_tx: mpsc::SyncSender<Result<(), String>>,
+) -> Result<(), String> {
+    let initialized: Result<(IAudioClient, IAudioCaptureClient, &'static str), String> = (|| unsafe {
+        let enumerator: IMMDeviceEnumerator =
+            CoCreateInstance(&CLSID_MMDEVICE_ENUMERATOR, None, CLSCTX_ALL)
+                .map_err(|e| err("找不到 Windows 音频设备", e))?;
+        let (flow, label) = match source {
+            AudioSource::System => (eRender, "系统音频"),
+            AudioSource::Microphone => (eCapture, "麦克风"),
+        };
+        let device = enumerator
+            .GetDefaultAudioEndpoint(flow, eConsole)
+            .map_err(|e| {
+                err(
+                    &format!("无法获取默认{label}设备，请检查系统音频设置和麦克风隐私权限"),
+                    e,
+                )
+            })?;
+        let client: IAudioClient = device
+            .Activate(CLSCTX_ALL, None)
+            .map_err(|e| err(&format!("无法打开{label}设备"), e))?;
+        let format = WAVEFORMATEX {
+            wFormatTag: WAVE_FORMAT_PCM as u16,
+            nChannels: AUDIO_CHANNELS as u16,
+            nSamplesPerSec: AUDIO_SAMPLE_RATE,
+            nAvgBytesPerSec: AUDIO_SAMPLE_RATE * AUDIO_BLOCK_ALIGN,
+            nBlockAlign: AUDIO_BLOCK_ALIGN as u16,
+            wBitsPerSample: (AUDIO_BYTES_PER_SAMPLE * 8) as u16,
+            cbSize: 0,
+        };
+        let mut flags =
+            AUDCLNT_STREAMFLAGS_AUTOCONVERTPCM | AUDCLNT_STREAMFLAGS_SRC_DEFAULT_QUALITY;
+        if matches!(source, AudioSource::System) {
+            flags |= AUDCLNT_STREAMFLAGS_LOOPBACK;
+        }
+        client
+            .Initialize(AUDCLNT_SHAREMODE_SHARED, flags, 1_000_000, 0, &format, None)
+            .map_err(|e| err(&format!("启动{label}采集失败"), e))?;
+        let capture: IAudioCaptureClient = client
+            .GetService()
+            .map_err(|e| err(&format!("连接{label}数据流失败"), e))?;
+        client
+            .Start()
+            .map_err(|e| err(&format!("启动{label}采集失败"), e))?;
+        Ok((client, capture, label))
+    })();
+
+    let (client, capture, label) = match initialized {
+        Ok(value) => value,
+        Err(error) => {
+            let _ = ready_tx.send(Err(error.clone()));
+            return Err(error);
+        }
+    };
+    let _ = ready_tx.send(Ok(()));
+
+    let result = (|| {
+        while !stopped.load(Ordering::SeqCst) {
+            let packet_frames = unsafe {
+                capture
+                    .GetNextPacketSize()
+                    .map_err(|e| err(&format!("读取{label}数据失败"), e))?
+            };
+            if packet_frames == 0 {
+                std::thread::sleep(Duration::from_millis(4));
+                continue;
+            }
+
+            let mut data = std::ptr::null_mut();
+            let mut frames = 0u32;
+            let mut flags = 0u32;
+            unsafe {
+                capture
+                    .GetBuffer(&mut data, &mut frames, &mut flags, None, None)
+                    .map_err(|e| err(&format!("读取{label}数据失败"), e))?;
+            }
+            let byte_count = frames as usize * AUDIO_BLOCK_ALIGN as usize;
+            let samples = if flags & AUDCLNT_BUFFERFLAGS_SILENT.0 as u32 != 0 {
+                vec![0; byte_count]
+            } else if data.is_null() || byte_count == 0 {
+                Vec::new()
+            } else {
+                unsafe { std::slice::from_raw_parts(data, byte_count) }.to_vec()
+            };
+            unsafe { capture.ReleaseBuffer(frames) }
+                .map_err(|e| err(&format!("释放{label}缓冲区失败"), e))?;
+
+            let duration = (i64::from(frames) * HNS_PER_SECOND) / i64::from(AUDIO_SAMPLE_RATE);
+            let elapsed = recording_epoch.elapsed().as_nanos() / 100;
+            let timestamp = (elapsed.min(i64::MAX as u128) as i64)
+                .saturating_sub(duration)
+                .max(0);
+            let mut guard = sink.lock();
+            let Some(frame_sink) = guard.as_mut() else {
+                break;
+            };
+            if let Some(stream) = frame_sink.encoder.audio_stream(source) {
+                frame_sink
+                    .encoder
+                    .write_audio(stream, &samples, timestamp, duration)?;
+            }
+        }
+        Ok(())
+    })();
+    let _ = unsafe { client.Stop() };
+    result
 }
 
 /// 帧回调跑在 WGC 的线程池上，而 D3D 设备、上下文、SinkWriter 都是裸 COM 指针，
@@ -249,6 +557,7 @@ pub struct ActiveRecording {
     stopped: Arc<AtomicBool>,
     /// 按固定帧率补帧的线程，停止时要先收掉它再 Finalize
     pacer: Option<std::thread::JoinHandle<()>>,
+    audio_workers: Vec<std::thread::JoinHandle<Result<(), String>>>,
     output: PathBuf,
 }
 
@@ -261,6 +570,11 @@ impl ActiveRecording {
         // 先等定时器退出，否则它可能在 Finalize 之后还往 writer 里塞帧
         if let Some(pacer) = self.pacer.take() {
             let _ = pacer.join();
+        }
+        for worker in self.audio_workers.drain(..) {
+            if let Ok(Err(error)) = worker.join() {
+                eprintln!("snapshot: audio capture stopped: {error}");
+            }
         }
         let frames = match self.sink.lock().take() {
             Some(sink) => {
@@ -313,7 +627,13 @@ pub fn is_minimized(hwnd: isize) -> bool {
 }
 
 /// 开始录制 `hwnd` 指向的窗口。
-pub fn start(hwnd: isize, include_cursor: bool, output: &Path) -> Result<ActiveRecording, String> {
+pub fn start(
+    hwnd: isize,
+    include_cursor: bool,
+    record_system_audio: bool,
+    record_microphone: bool,
+    output: &Path,
+) -> Result<ActiveRecording, String> {
     if !GraphicsCaptureSession::IsSupported().unwrap_or(false) {
         return Err("当前系统不支持窗口录制（需要 Windows 10 1903 或更高）".into());
     }
@@ -370,7 +690,13 @@ pub fn start(hwnd: isize, include_cursor: bool, output: &Path) -> Result<ActiveR
     // Win11 起可以去掉采集时那圈黄框；老系统上这个属性不存在，忽略失败即可
     let _ = session.SetIsBorderRequired(false);
 
-    let encoder = Encoder::new(output, width, height)?;
+    let encoder = Encoder::new(
+        output,
+        width,
+        height,
+        record_system_audio,
+        record_microphone,
+    )?;
     let sink = Arc::new(Mutex::new(Some(FrameSink {
         device,
         context,
@@ -452,7 +778,39 @@ pub fn start(hwnd: isize, include_cursor: bool, output: &Path) -> Result<ActiveR
         ))
         .map_err(|e| err("注册帧回调失败", e))?;
 
+    let recording_epoch = Instant::now();
     session.StartCapture().map_err(|e| err("启动录制失败", e))?;
+
+    let mut audio_workers = Vec::new();
+    for source in [
+        record_system_audio.then_some(AudioSource::System),
+        record_microphone.then_some(AudioSource::Microphone),
+    ]
+    .into_iter()
+    .flatten()
+    {
+        match start_audio_worker(
+            source,
+            Arc::clone(&sink),
+            Arc::clone(&stopped),
+            recording_epoch,
+        ) {
+            Ok(worker) => audio_workers.push(worker),
+            Err(error) => {
+                stopped.store(true, Ordering::SeqCst);
+                let _ = session.Close();
+                let _ = frame_pool.Close();
+                for worker in audio_workers {
+                    let _ = worker.join();
+                }
+                if let Some(sink) = sink.lock().take() {
+                    sink.encoder.finish();
+                }
+                let _ = std::fs::remove_file(output);
+                return Err(error);
+            }
+        }
+    }
 
     // 按固定节奏往编码器里灌帧。窗口不重绘时 FrameArrived 不触发，
     // 没有这个定时器就会写出一个零帧、播放器打不开的空 MP4——
@@ -460,13 +818,12 @@ pub fn start(hwnd: isize, include_cursor: bool, output: &Path) -> Result<ActiveR
     let pacer_sink = Arc::clone(&sink);
     let pacer_stopped = Arc::clone(&stopped);
     let pacer = std::thread::spawn(move || {
-        let start = std::time::Instant::now();
         let interval = std::time::Duration::from_nanos(1_000_000_000 / u64::from(FPS));
         let mut tick = 0u64;
         while !pacer_stopped.load(Ordering::SeqCst) {
             tick += 1;
             let due = interval * tick as u32;
-            let now = start.elapsed();
+            let now = recording_epoch.elapsed();
             if due > now {
                 std::thread::sleep(due - now);
             }
@@ -480,7 +837,8 @@ pub fn start(hwnd: isize, include_cursor: bool, output: &Path) -> Result<ActiveR
                 encoder, latest, ..
             } = sink;
             if let Some(frame) = latest.as_deref() {
-                let timestamp = (due.as_nanos() / 100) as i64;
+                let timestamp =
+                    (recording_epoch.elapsed().as_nanos() / 100).min(i64::MAX as u128) as i64;
                 let _ = encoder.write(frame, timestamp);
             }
         }
@@ -492,6 +850,7 @@ pub fn start(hwnd: isize, include_cursor: bool, output: &Path) -> Result<ActiveR
         sink,
         stopped,
         pacer: Some(pacer),
+        audio_workers,
         output: output.to_path_buf(),
     })
 }
@@ -530,7 +889,7 @@ mod tests {
         let _ = std::fs::remove_file(&output);
 
         eprintln!("录制目标：{title}");
-        let active = start(hwnd, true, &output).expect("启动录制失败");
+        let active = start(hwnd, true, false, false, &output).expect("启动录制失败");
         std::thread::sleep(std::time::Duration::from_secs(3));
         let (path, frames) = active.stop();
 
@@ -556,7 +915,7 @@ mod tests {
 
         let output = std::env::temp_dir().join("snapshot-wgc-probe.mp4");
         let _ = std::fs::remove_file(&output);
-        let active = start(hwnd, false, &output).expect("启动采集失败");
+        let active = start(hwnd, false, false, false, &output).expect("启动采集失败");
         std::thread::sleep(std::time::Duration::from_millis(600));
 
         // 借录制链路里那张 staging 纹理之外，单独再抓一次当前窗口内容做对照
@@ -689,7 +1048,7 @@ mod decode_tests {
 
         let output = std::env::temp_dir().join("snapshot-wgc-orient.mp4");
         let _ = std::fs::remove_file(&output);
-        let active = start(hwnd, false, &output).expect("启动录制失败");
+        let active = start(hwnd, false, false, false, &output).expect("启动录制失败");
         // 解出来的是首帧，实拍也要尽早抓，否则期间内容变了会污染比对
         std::thread::sleep(std::time::Duration::from_millis(250));
         let truth = window.capture_image().expect("实拍失败");
@@ -755,7 +1114,7 @@ mod frame_yield_tests {
 
             let output = std::env::temp_dir().join(format!("snapshot-yield-{id}.mp4"));
             let _ = std::fs::remove_file(&output);
-            match start(id as isize, false, &output) {
+            match start(id as isize, false, false, false, &output) {
                 Ok(active) => {
                     std::thread::sleep(std::time::Duration::from_millis(1500));
                     let (path, frames) = active.stop();
@@ -835,7 +1194,7 @@ mod minimized_tests {
     fn record_and_count(hwnd: isize, tag: &str) -> u64 {
         let output = std::env::temp_dir().join(format!("snapshot-min-{tag}.mp4"));
         let _ = std::fs::remove_file(&output);
-        match start(hwnd, false, &output) {
+        match start(hwnd, false, false, false, &output) {
             Ok(active) => {
                 std::thread::sleep(std::time::Duration::from_millis(1500));
                 let (path, frames) = active.stop();

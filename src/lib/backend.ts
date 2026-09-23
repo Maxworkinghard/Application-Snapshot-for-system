@@ -34,7 +34,6 @@ const demoSettings: Settings = {
     { action: "fullscreen", accelerator: null },
     { action: "scrolling", accelerator: null },
     { action: "record", accelerator: null },
-    { action: "recordings", accelerator: null },
     { action: "polish", accelerator: null },
     { action: "ocr", accelerator: null },
   ],
@@ -50,6 +49,8 @@ const demoSettings: Settings = {
   autoSaveLocal: true,
   launchOnBoot: false,
   includeCursor: false,
+  recordSystemAudio: false,
+  recordMicrophone: false,
   afterCapture: "clipboard",
 };
 
@@ -237,6 +238,8 @@ export async function platformCapabilities(): Promise<PlatformCapabilities> {
       os: "preview",
       displayServer: "n/a",
       recording: { available: false, detail: "预览模式" },
+      recordingSystemAudio: { available: false, detail: "预览模式" },
+      recordingMicrophone: { available: false, detail: "预览模式" },
       ocr: { available: false, detail: "预览模式" },
       autostart: { available: false, detail: "预览模式" },
       scrolling: { available: false, detail: "预览模式" },
