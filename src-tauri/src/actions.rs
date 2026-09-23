@@ -159,6 +159,7 @@ pub(crate) async fn perform(app: &AppHandle, action: &str) -> Result<String, Str
             .map_err(|error| error.to_string())??;
             capture::finalize_capture(app, &state, image, &name, cursor_degraded)
         }
+        // 滚动长截图只有 Linux/X11 有实现（其余平台的 SHORTCUT_ACTIONS 里也没有这一项）
         #[cfg(target_os = "linux")]
         "scrolling" => {
             let target_id = state
@@ -168,12 +169,12 @@ pub(crate) async fn perform(app: &AppHandle, action: &str) -> Result<String, Str
                 .as_ref()
                 .map(|window| window.id)
                 .ok_or_else(|| "还没有上一个应用可截取".to_string())?;
-            let (image, name) = tauri::async_runtime::spawn_blocking(move || {
-                capture::capture_scrolling_image(target_id)
+            let image = tauri::async_runtime::spawn_blocking(move || {
+                os::capture_scrolling_window(target_id)
             })
             .await
             .map_err(|error| error.to_string())??;
-            capture::finalize_capture(app, &state, image, &name, None)
+            capture::finalize_capture(app, &state, image, "滚动长截图", None)
         }
         _ => Err("未知快捷键动作".into()),
     }
