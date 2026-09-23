@@ -35,6 +35,8 @@ Only the parts that do not depend on system capabilities are shared: settings, s
 
 **Device verification**: Windows is the primary verified platform (adapters, tray, shortcuts, capture/recording on real hardware). macOS and Linux capabilities are mainly validated via code paths, compile checks, and adapters; the macOS `snapshot-ocr` helper and some window adapters (capture, icons, Accessibility unminimize) have seen device testing. macOS recording now uses a native ScreenCaptureKit window stream and writes H.264 MP4 through AVAssetWriter. Linux `cargo check` is restored after fixing compile blockers; X11 paths (xcap / x11grab / tesseract / xdotool / XDG autostart) follow the adapter implementation. Wayland portal ScreenCast, tray click behaviour, and packaged installers may still need local verification.
 
+Items that cannot be verified on the development machine (macOS) are tracked in [docs/pending-device-verification.md](docs/pending-device-verification.md), each with the platform that must check it.
+
 ## Requirements
 
 - **Recording**: Windows uses the built-in Windows.Graphics.Capture + Media Foundation and does not need ffmpeg; macOS uses a bundled ScreenCaptureKit sidecar and does not need external ffmpeg; Linux needs `ffmpeg` on `PATH`. On Linux, still captures that include the cursor also prefer ffmpeg `x11grab` (falling back without the cursor). OCR and polishing do not need ffmpeg.
