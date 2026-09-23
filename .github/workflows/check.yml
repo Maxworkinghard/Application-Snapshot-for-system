@@ -21,7 +21,7 @@ jobs:
   frontend:
     runs-on: ubuntu-24.04
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v7
       - uses: actions/setup-node@v4
         with:
           node-version: "22"
@@ -43,7 +43,7 @@ jobs:
             name: macos
     runs-on: ${{ matrix.runner }}
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v7
       # Keep in sync with rust-toolchain.toml.
       - uses: dtolnay/rust-toolchain@master
         with:
