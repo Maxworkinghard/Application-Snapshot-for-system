@@ -33,6 +33,8 @@ const settings: Settings = {
   autoSaveLocal: true,
   launchOnBoot: false,
   includeCursor: false,
+  recordSystemAudio: false,
+  recordMicrophone: false,
   afterCapture: "clipboard",
 };
 
@@ -40,6 +42,8 @@ const capabilities: PlatformCapabilities = {
   os: "windows",
   displayServer: "n/a",
   recording: { available: true, detail: "录制可用" },
+  recordingSystemAudio: { available: true, detail: "系统音频可用" },
+  recordingMicrophone: { available: true, detail: "麦克风可用" },
   ocr: { available: true, detail: "OCR 可用" },
   autostart: { available: true, detail: "自启可用" },
   includeCursor: { available: true, detail: "光标可用" },
