@@ -51,6 +51,9 @@ jobs:
       - uses: Swatinem/rust-cache@v2
         with:
           workspaces: src-tauri
+      - name: cargo fmt
+        working-directory: src-tauri
+        run: cargo fmt --check
       # 直接用仓库里给 Linux 用户的那份依赖脚本，顺带保证它在干净机器上是有效的
       - name: System deps
         if: matrix.name == 'linux'

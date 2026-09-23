@@ -68,9 +68,12 @@ impl OcrAdapter for PlatformOcr {
 
     fn language(&self) -> Result<String, String> {
         use windows::Media::Ocr::OcrEngine;
-        let engine = OcrEngine::TryCreateFromUserProfileLanguages()
-            .map_err(|_| "系统没有可用的 OCR 语言包，请在「设置 → 时间和语言 → 语言」中添加".to_string())?;
-        let language = engine.RecognizerLanguage().map_err(|error| error.to_string())?;
+        let engine = OcrEngine::TryCreateFromUserProfileLanguages().map_err(|_| {
+            "系统没有可用的 OCR 语言包，请在「设置 → 时间和语言 → 语言」中添加".to_string()
+        })?;
+        let language = engine
+            .RecognizerLanguage()
+            .map_err(|error| error.to_string())?;
         language
             .DisplayName()
             .map(|name| name.to_string_lossy())
@@ -85,8 +88,16 @@ impl OcrAdapter for PlatformOcr {
         let stream = InMemoryRandomAccessStream::new().map_err(|error| error.to_string())?;
         let writer = DataWriter::CreateDataWriter(&stream).map_err(|error| error.to_string())?;
         writer.WriteBytes(png).map_err(|error| error.to_string())?;
-        writer.StoreAsync().map_err(|e| e.to_string())?.join().map_err(|e| e.to_string())?;
-        writer.FlushAsync().map_err(|e| e.to_string())?.join().map_err(|e| e.to_string())?;
+        writer
+            .StoreAsync()
+            .map_err(|e| e.to_string())?
+            .join()
+            .map_err(|e| e.to_string())?;
+        writer
+            .FlushAsync()
+            .map_err(|e| e.to_string())?
+            .join()
+            .map_err(|e| e.to_string())?;
         writer.DetachStream().map_err(|error| error.to_string())?;
         stream.Seek(0).map_err(|error| error.to_string())?;
 
@@ -100,8 +111,9 @@ impl OcrAdapter for PlatformOcr {
             .join()
             .map_err(|error| format!("读取位图失败：{error}"))?;
 
-        let engine = OcrEngine::TryCreateFromUserProfileLanguages()
-            .map_err(|_| "系统没有可用的 OCR 语言包，请在「设置 → 时间和语言 → 语言」中添加".to_string())?;
+        let engine = OcrEngine::TryCreateFromUserProfileLanguages().map_err(|_| {
+            "系统没有可用的 OCR 语言包，请在「设置 → 时间和语言 → 语言」中添加".to_string()
+        })?;
         let result = engine
             .RecognizeAsync(&bitmap)
             .map_err(|e| e.to_string())?
@@ -154,7 +166,6 @@ fn helper_program() -> String {
     }
     MACOS_HELPER.to_string()
 }
-
 
 #[cfg(target_os = "macos")]
 impl OcrAdapter for PlatformOcr {
@@ -217,7 +228,11 @@ fn tesseract_languages(installed: &[String]) -> String {
             picked.push(candidate);
         }
     }
-    if picked.is_empty() { "eng".to_string() } else { picked.join("+") }
+    if picked.is_empty() {
+        "eng".to_string()
+    } else {
+        picked.join("+")
+    }
 }
 
 #[cfg(all(unix, not(target_os = "macos")))]
@@ -230,7 +245,9 @@ impl OcrAdapter for PlatformOcr {
         let output = Command::new(TESSERACT)
             .arg("--list-langs")
             .output()
-            .map_err(|_| "未安装 tesseract，请先通过包管理器安装（如 apt install tesseract-ocr）".to_string())?;
+            .map_err(|_| {
+                "未安装 tesseract，请先通过包管理器安装（如 apt install tesseract-ocr）".to_string()
+            })?;
         if !output.status.success() {
             return Err(stderr_or(&output.stderr, "tesseract 不可用"));
         }
@@ -290,7 +307,11 @@ fn pipe_png(program: &str, args: &[&str], png: &[u8]) -> std::io::Result<std::pr
 #[cfg(not(target_os = "windows"))]
 fn stderr_or(stderr: &[u8], fallback: &str) -> String {
     let text = String::from_utf8_lossy(stderr).trim().to_string();
-    if text.is_empty() { fallback.to_string() } else { text }
+    if text.is_empty() {
+        fallback.to_string()
+    } else {
+        text
+    }
 }
 
 /// 各后端都输出「逐行文本」，统一在这里清洗并判空
@@ -325,7 +346,10 @@ mod tests {
     #[cfg(all(unix, not(target_os = "macos")))]
     #[test]
     fn language_pick_prefers_chinese_plus_english() {
-        assert_eq!(tesseract_languages(&["eng".into(), "chi_sim".into()]), "chi_sim+eng");
+        assert_eq!(
+            tesseract_languages(&["eng".into(), "chi_sim".into()]),
+            "chi_sim+eng"
+        );
         assert_eq!(tesseract_languages(&["eng".into()]), "eng");
         assert_eq!(tesseract_languages(&["deu".into()]), "eng");
     }

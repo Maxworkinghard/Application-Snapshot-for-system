@@ -193,7 +193,14 @@ fn find_overlap(prev: &RgbaImage, next: &RgbaImage) -> u32 {
     best_overlap
 }
 
-fn blit_rows(dest: &mut RgbaImage, dest_y: u32, src: &RgbaImage, src_y: u32, rows: u32, width: u32) {
+fn blit_rows(
+    dest: &mut RgbaImage,
+    dest_y: u32,
+    src: &RgbaImage,
+    src_y: u32,
+    rows: u32,
+    width: u32,
+) {
     for row in 0..rows {
         for x in 0..width {
             let pixel = *src.get_pixel(x, src_y + row);

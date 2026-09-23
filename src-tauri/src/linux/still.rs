@@ -7,7 +7,8 @@ use xcap::Monitor;
 
 fn display_spec() -> Result<String, String> {
     std::env::var("DISPLAY").map_err(|_| {
-        "无 X11 DISPLAY，无法用 x11grab 抓带光标静帧 / no DISPLAY for x11grab cursor frame".to_string()
+        "无 X11 DISPLAY，无法用 x11grab 抓带光标静帧 / no DISPLAY for x11grab cursor frame"
+            .to_string()
     })
 }
 
@@ -16,7 +17,11 @@ fn primary_monitor() -> Result<Monitor, String> {
     monitors
         .into_iter()
         .find(|m| m.is_primary().unwrap_or(false))
-        .or_else(|| Monitor::all().ok().and_then(|items| items.into_iter().next()))
+        .or_else(|| {
+            Monitor::all()
+                .ok()
+                .and_then(|items| items.into_iter().next())
+        })
         .ok_or_else(|| "未找到显示器".into())
 }
 
@@ -74,6 +79,11 @@ pub fn capture_primary_with_cursor() -> Result<RgbaImage, String> {
 }
 
 /// 任意屏幕矩形静帧（含鼠标光标）。窗口截图按窗口矩形调用；失败由调用方回退。
-pub fn capture_region_with_cursor(x: i32, y: i32, width: u32, height: u32) -> Result<RgbaImage, String> {
+pub fn capture_region_with_cursor(
+    x: i32,
+    y: i32,
+    width: u32,
+    height: u32,
+) -> Result<RgbaImage, String> {
     capture_rect_with_cursor(x, y, width, height)
 }
