@@ -606,7 +606,7 @@ mod decode_tests {
     /// 窗口内容在垂直方向偏均匀时，两段平均值的差落在噪声里，判不出方向。
     fn row_profile(height: u32, width: u32, buckets: usize, get: &dyn Fn(u32, u32) -> f64) -> Vec<f64> {
         let mut profile = vec![0.0; buckets];
-        for bucket in 0..buckets {
+        for (bucket, bucket_profile) in profile.iter_mut().enumerate() {
             let from = height as usize * bucket / buckets;
             let to = (height as usize * (bucket + 1) / buckets).max(from + 1);
             let mut sum = 0.0;
@@ -617,7 +617,7 @@ mod decode_tests {
                     count += 1.0;
                 }
             }
-            profile[bucket] = if count == 0.0 { 0.0 } else { sum / count };
+            *bucket_profile = if count == 0.0 { 0.0 } else { sum / count };
         }
         profile
     }
@@ -780,7 +780,7 @@ mod minimized_tests {
         assert!(baseline > 0, "正常状态都没帧，环境有问题");
         // 钉住这个事实：最小化就是拿不到帧，所以上层必须先还原再录
         assert_eq!(minimized, 0, "最小化窗口本不该产出帧，行为若变了要重新审视还原逻辑");
-        assert!(is_minimized(id as isize) == false, "测完应当已还原");
+        assert!(!is_minimized(id as isize), "测完应当已还原");
     }
 
     fn record_and_count(hwnd: isize, tag: &str) -> u64 {
