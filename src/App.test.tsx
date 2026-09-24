@@ -21,7 +21,6 @@ const settings: Settings = {
   snapshotFormat: "png",
   saveDir: "",
   recordingDir: "",
-  customTheme: null,
   shutterSound: "crisp",
   customSoundPath: null,
   flashOnCapture: true,
@@ -37,13 +36,11 @@ const settings: Settings = {
 const capabilities: PlatformCapabilities = {
   os: "windows",
   displayServer: "n/a",
-  recording: { available: true, detail: "" },
-  recordingSystemAudio: { available: true, detail: "" },
-  recordingMicrophone: { available: true, detail: "" },
-  autostart: { available: true, detail: "" },
-  includeCursor: { available: true, detail: "" },
-  trayNote: "",
-  notes: [],
+  recording: { available: true },
+  recordingSystemAudio: { available: true },
+  recordingMicrophone: { available: true },
+  autostart: { available: true },
+  includeCursor: { available: true },
 };
 
 async function renderApp(handle: (command: string, payload?: InvokeArgs) => unknown) {

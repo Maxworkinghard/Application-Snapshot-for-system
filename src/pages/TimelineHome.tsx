@@ -21,7 +21,7 @@ const FILTERS: Array<{ key: Filter; label: string }> = [
 
 /** 「时间线」布局的首页：今天做过的事排成一条，顶上一个输入框，粘贴进去就能润色 */
 export function TimelineHome() {
-  const { settings, activity, clipboard, navigate, notify } = useApp();
+  const { activity, clipboard, navigate, notify } = useApp();
   const [filter, setFilter] = useState<Filter>("all");
   const [draft, setDraft] = useState("");
   const now = useNow(Boolean(clipboard?.clearAt));

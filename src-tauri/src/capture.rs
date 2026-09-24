@@ -9,7 +9,7 @@ pub(crate) fn encode_png(image: &RgbaImage) -> Result<Vec<u8>, String> {
     Ok(bytes)
 }
 
-#[tauri::command]
+/// 截一个窗口（不传就是前台窗口）。快捷键和输入框都经 `actions` 调到这里
 pub(crate) fn capture_window(
     app: AppHandle,
     state: State<'_, AppState>,

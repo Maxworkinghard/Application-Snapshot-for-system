@@ -25,7 +25,6 @@ const settings: Settings = {
   snapshotFormat: "png",
   saveDir: "",
   recordingDir: "",
-  customTheme: null,
   shutterSound: "crisp",
   customSoundPath: null,
   flashOnCapture: true,
@@ -41,13 +40,11 @@ const settings: Settings = {
 const capabilities: PlatformCapabilities = {
   os: "windows",
   displayServer: "n/a",
-  recording: { available: true, detail: "录制可用" },
-  recordingSystemAudio: { available: true, detail: "系统音频可用" },
-  recordingMicrophone: { available: true, detail: "麦克风可用" },
-  autostart: { available: true, detail: "自启可用" },
-  includeCursor: { available: true, detail: "光标可用" },
-  trayNote: "",
-  notes: [],
+  recording: { available: true },
+  recordingSystemAudio: { available: true },
+  recordingMicrophone: { available: true },
+  autostart: { available: true },
+  includeCursor: { available: true },
 };
 
 function handler(command: string) {

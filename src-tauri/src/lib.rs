@@ -293,10 +293,8 @@ pub fn run() {
             settings::save_preferences,
             tracker::get_previous_app,
             tracker::list_capturable_windows,
-            capture::capture_window,
             recording::get_recording_status,
             recording::toggle_recording,
-            polish::polish_clipboard,
             polish::polish_text,
             snapshots::list_snapshots,
             snapshots::open_snapshots_dir,
@@ -362,7 +360,14 @@ mod pet_asset_tests {
         #[cfg(target_os = "linux")]
         assert_eq!(
             actions,
-            vec!["snapshot", "record", "polish", "scrolling", "fullscreen", "palette"]
+            vec![
+                "snapshot",
+                "record",
+                "polish",
+                "scrolling",
+                "fullscreen",
+                "palette"
+            ]
         );
         #[cfg(not(target_os = "linux"))]
         assert_eq!(

@@ -159,7 +159,8 @@ pub(crate) fn add_pet_assets(
 
 /// 校验一个文件、复制进应用目录、读出动作表；还没登记进设置
 fn prepare_import(state: &AppState, raw_path: &str) -> Result<PetAsset, String> {
-    let canonical = fs::canonicalize(raw_path.trim()).map_err(|_| "无法读取这个文件".to_string())?;
+    let canonical =
+        fs::canonicalize(raw_path.trim()).map_err(|_| "无法读取这个文件".to_string())?;
     if !canonical.is_file() {
         return Err("请选择一个 ZIP 压缩包或 GIF 图片".into());
     }

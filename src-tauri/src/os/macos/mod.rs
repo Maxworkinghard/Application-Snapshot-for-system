@@ -61,27 +61,16 @@ fn major_version() -> Option<u32> {
 }
 
 pub(crate) fn capabilities() -> PlatformCapabilities {
-    let recording = CapabilityStatus::probe(
-        recorder::probe(),
-        "ScreenCaptureKit 原生窗口流（不受遮挡，支持副屏与窗口移动；首次使用会请求屏幕录制权限）",
-    );
-    let recording_system_audio = if recording.available {
-        CapabilityStatus::available("ScreenCaptureKit：录制当前显示器上的应用系统声音")
-    } else {
-        recording.clone()
-    };
+    let recording = CapabilityStatus::probe(recorder::probe());
+    // 系统声音、麦克风都走 ScreenCaptureKit：录不了窗口就都不行；麦克风还要 macOS 15+
+    let recording_system_audio = recording;
     let microphone_supported = major_version()
         .map(|version| version >= 15)
         .unwrap_or(false);
-    let recording_microphone = if !recording.available {
-        recording.clone()
-    } else if microphone_supported {
-        CapabilityStatus::available("ScreenCaptureKit：macOS 15 及以上可录制麦克风")
+    let recording_microphone = if recording.available && microphone_supported {
+        CapabilityStatus::yes()
     } else {
-        CapabilityStatus {
-            available: false,
-            detail: "麦克风采集需要 macOS 15 或更新版本".into(),
-        }
+        CapabilityStatus::no()
     };
     PlatformCapabilities {
         os: "macos".into(),
@@ -89,18 +78,8 @@ pub(crate) fn capabilities() -> PlatformCapabilities {
         recording,
         recording_system_audio,
         recording_microphone,
-        autostart: CapabilityStatus::probe(
-            autostart::autostart_capability(),
-            "LaunchAgent：~/Library/LaunchAgents/com.appsnapshot.prompt-pet-shortcut.plist，下次登录生效",
-        ),
+        autostart: CapabilityStatus::probe(autostart::autostart_capability()),
         scrolling: None,
-        include_cursor: CapabilityStatus::available(
-            "录制：ScreenCaptureKit showsCursor；静帧截图：截后按热点与 DPI 比例合成当前系统光标",
-        ),
-        tray_note: "NSStatusItem：左键打开主窗口；菜单打开设置/退出。".into(),
-        notes: vec![
-            "macOS 还原最小化窗口按 AXTitle 对齐；标题对不上且该应用有多个最小化窗口时，不代劳、提示手动还原".into(),
-            "窗口录制使用 ScreenCaptureKit；系统音频可单独录制，麦克风需要 macOS 15 或更新版本".into(),
-        ],
+        include_cursor: CapabilityStatus::yes(),
     }
 }

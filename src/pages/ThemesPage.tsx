@@ -3,7 +3,7 @@ import { Choices } from "../components/ui/Choices";
 import { useApp } from "../app/context";
 import type { LayoutTheme } from "../lib/prefs";
 
-export const LAYOUT_INFO: Record<LayoutTheme, { name: string }> = {
+const LAYOUT_INFO: Record<LayoutTheme, { name: string }> = {
   companion: { name: "伴侣侧栏" },
   timeline: { name: "时间线" },
   ledger: { name: "今日流水" },

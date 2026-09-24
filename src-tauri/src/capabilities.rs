@@ -1,4 +1,4 @@
-//! 本机能力说明（设置页「本机能力」一栏）。每一项说什么由各平台自己给，见 `os::capabilities`。
+//! 本机能力（偏好设置「本机与模型」里的可用 / 不可用）。每一项能不能用由各平台自己判断，见 `os::capabilities`。
 
 use super::os;
 use serde::Serialize;
@@ -16,36 +16,30 @@ pub(crate) struct PlatformCapabilities {
     #[serde(skip_serializing_if = "Option::is_none")]
     pub(crate) scrolling: Option<CapabilityStatus>,
     pub(crate) include_cursor: CapabilityStatus,
-    pub(crate) tray_note: String,
-    /// 设置页展示的额外说明（门户忽略项、焦点抢占等）
-    pub(crate) notes: Vec<String>,
 }
 
-#[derive(Clone, Debug, Serialize)]
+#[derive(Clone, Copy, Debug, Serialize)]
 #[serde(rename_all = "camelCase")]
 pub(crate) struct CapabilityStatus {
     pub(crate) available: bool,
-    pub(crate) detail: String,
 }
 
 impl CapabilityStatus {
-    pub(crate) fn available(detail: impl Into<String>) -> Self {
-        Self {
-            available: true,
-            detail: detail.into(),
-        }
+    pub(crate) fn yes() -> Self {
+        Self { available: true }
     }
 
-    /// 探测成功就用 `detail` 说明这项能力；失败就把失败原因原样给用户看。
     // Windows 的各项能力都是系统自带、不需要运行时探测
     #[cfg_attr(target_os = "windows", allow(dead_code))]
-    pub(crate) fn probe(result: Result<(), String>, detail: impl Into<String>) -> Self {
-        match result {
-            Ok(()) => Self::available(detail),
-            Err(reason) => Self {
-                available: false,
-                detail: reason,
-            },
+    pub(crate) fn no() -> Self {
+        Self { available: false }
+    }
+
+    /// 探测成功就是可用；失败原因界面上不再展示，只看能不能用
+    #[cfg_attr(target_os = "windows", allow(dead_code))]
+    pub(crate) fn probe<E>(result: Result<(), E>) -> Self {
+        Self {
+            available: result.is_ok(),
         }
     }
 }

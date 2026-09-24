@@ -2,7 +2,7 @@ import { useState } from "react";
 import { thumbUrl } from "../lib/media";
 
 /** 按截图原本的宽高比算缩略图宽度：长截图就是一条窄条，带鱼屏就是一块宽块 */
-export function thumbWidth(width: number, height: number, thumbHeight: number, max = 200, min = 22) {
+function thumbWidth(width: number, height: number, thumbHeight: number, max = 200, min = 22) {
   if (!width || !height) return Math.round(thumbHeight * 16 / 9);
   return Math.max(min, Math.min(max, Math.round((thumbHeight * width) / height)));
 }

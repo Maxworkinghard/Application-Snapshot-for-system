@@ -21,7 +21,6 @@ const base: Settings = {
   snapshotFormat: "png",
   saveDir: "",
   recordingDir: "",
-  customTheme: null,
   shutterSound: "crisp",
   customSoundPath: null,
   flashOnCapture: true,

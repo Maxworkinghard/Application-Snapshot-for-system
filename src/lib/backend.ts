@@ -56,7 +56,6 @@ export const getPreviousApp = () => invoke<PreviousApp>("get_previous_app");
 
 export const listWindows = () => invoke<CapturableWindow[]>("list_capturable_windows");
 
-export const captureWindow = (id?: number) => invoke<string>("capture_window", { id: id ?? null });
 
 /**
  * 输入框里执行会截屏的动作：后端先把输入框藏起来再动手。
@@ -71,7 +70,6 @@ export const toggleRecording = (targetId?: number) =>
 
 export const getRecordingStatus = () => invoke<RecordingStatus>("get_recording_status");
 
-export const polishClipboard = () => invoke<string>("polish_clipboard");
 
 /** 不给 templateId 就用当前生效的规则 */
 export const polishText = (text: string, templateId?: string | null) =>

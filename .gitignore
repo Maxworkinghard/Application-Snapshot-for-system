@@ -28,7 +28,8 @@
 /samples/
 *.zip
 .tmp-*/
-clean_run.log
+# tauri dev 输出重定向留下的日志
+*_run.log
 
 # 交互原型（demo），不随应用一起发布
 /prototype/

@@ -63,7 +63,6 @@ let settings: Settings = {
   snapshotFormat: "png",
   saveDir: demo ? "D:\\Dropbox\\工作\\2026\\截图归档\\应用快照\\原始文件" : "",
   recordingDir: "",
-  customTheme: null,
   shutterSound: "crisp",
   customSoundPath: null,
   flashOnCapture: true,
@@ -122,18 +121,16 @@ const demoClipboard = demo
   ? { label: "Visual Studio Code 截图", snapshotId: "snap-0", armedAt: Date.now() - 18_000, clearAt: Date.now() + 42_000 }
   : null;
 
-const unavailable = { available: false, detail: "预览模式" };
+const unavailable = { available: false };
 const capabilities: PlatformCapabilities = demo
   ? {
       os: "windows",
       displayServer: "desktop",
-      recording: { available: true, detail: "Windows.Graphics.Capture + Media Foundation" },
-      recordingSystemAudio: { available: true, detail: "" },
-      recordingMicrophone: { available: true, detail: "" },
-      autostart: { available: true, detail: "" },
-      includeCursor: { available: true, detail: "" },
-      trayNote: "",
-      notes: [],
+      recording: { available: true },
+      recordingSystemAudio: { available: true },
+      recordingMicrophone: { available: true },
+      autostart: { available: true },
+      includeCursor: { available: true },
     }
   : {
       os: "preview",
@@ -144,8 +141,6 @@ const capabilities: PlatformCapabilities = demo
       autostart: unavailable,
       scrolling: unavailable,
       includeCursor: unavailable,
-      trayNote: "",
-      notes: [],
     };
 
 const idleRecording = { active: false, target: null, startedAt: null };

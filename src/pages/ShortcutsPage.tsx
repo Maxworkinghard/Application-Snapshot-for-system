@@ -1,14 +1,14 @@
 import React, { useEffect, useMemo, useState } from "react";
 import { open } from "@tauri-apps/plugin-dialog";
 import { openRecordingsDir, savePreferences, saveShortcuts } from "../lib/backend";
-import { middleTruncatePath, normalizeKey, shortcutKeys } from "../lib/format";
+import { middleTruncatePath, normalizeKey } from "../lib/format";
 import { Keys } from "../components/ui/Keys";
 import { Choices } from "../components/ui/Choices";
 import { Switch } from "../components/ui/Switch";
 import { errorText, useApp } from "../app/context";
 import type { Settings, ShortcutAction, ShortcutBinding } from "../types";
 
-export const ACTION_LABELS: Record<ShortcutAction, { name: string }> = {
+const ACTION_LABELS: Record<ShortcutAction, { name: string }> = {
   snapshot: { name: "窗口快照" },
   fullscreen: { name: "全屏快照" },
   scrolling: { name: "滚动长截图" },
@@ -325,4 +325,3 @@ export function acceleratorOf(settings: Settings, action: ShortcutAction) {
   return settings.shortcuts.find((item) => item.action === action)?.accelerator ?? null;
 }
 
-export { shortcutKeys };

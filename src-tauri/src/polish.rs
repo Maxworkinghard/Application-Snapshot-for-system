@@ -129,8 +129,7 @@ pub(crate) async fn polish_text(
     result.map(|(polished, _)| polished)
 }
 
-/// 快捷键与便携坞用：就地替换剪贴板
-#[tauri::command]
+/// 快捷键与输入框用：就地替换剪贴板
 pub(crate) async fn polish_clipboard(
     app: AppHandle,
     state: State<'_, AppState>,

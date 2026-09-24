@@ -12,18 +12,12 @@ import { flushSync } from "react-dom";
  */
 
 export const DURATION = { press: 100, fade: 180, open: 320, exit: 160, theme: 520 } as const;
-export const EASE_OUT = "cubic-bezier(0.2, 0, 0, 1)";
-export const EASE_ENTER = "cubic-bezier(0.05, 0.7, 0.1, 1)";
-export const EASE_EXIT = "cubic-bezier(0.3, 0, 0.8, 0.15)";
-export const EASE_IN = EASE_EXIT;
+const EASE_OUT = "cubic-bezier(0.2, 0, 0, 1)";
+const EASE_ENTER = "cubic-bezier(0.05, 0.7, 0.1, 1)";
+const EASE_EXIT = "cubic-bezier(0.3, 0, 0.8, 0.15)";
 
 export function motionReduced(): boolean {
   return document.documentElement.dataset.motion === "reduced";
-}
-
-/** 按当前动效档位折算时长 */
-export function duration(ms: number): number {
-  return motionReduced() ? Math.min(ms, 200) : ms;
 }
 
 type ViewTransitionLike = { finished: Promise<void>; skipTransition?: () => void };
@@ -87,11 +81,6 @@ export function viewTransition(kind: TransitionKind, update: () => void, options
     delete root.dataset.vtDir;
   };
   transition.finished.then(done, done);
-}
-
-/** 旧名字：整窗交叉淡化 */
-export function withViewTransition(update: () => void) {
-  viewTransition("layout", update);
 }
 
 /**
@@ -197,7 +186,7 @@ export function shrinkTo(element: HTMLElement, to: DOMRect | null, ms: number = 
       { transformOrigin: "0 0", transform: "none" },
       { transformOrigin: "0 0", transform: `translate(${dx}px, ${dy}px) scale(${to.width / from.width}, ${to.height / from.height})` },
     ],
-    { duration: ms, easing: EASE_IN, fill: "forwards" },
+    { duration: ms, easing: EASE_EXIT, fill: "forwards" },
   );
   return animation.finished.then(
     () => undefined,

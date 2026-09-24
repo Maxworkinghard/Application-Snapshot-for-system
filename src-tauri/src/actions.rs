@@ -103,8 +103,16 @@ fn position_palette(
                 }
                 None => (true, true),
             };
-            let px = if open_right { sx - 40.0 * scale } else { sx - width + 40.0 * scale };
-            let py = if open_down { sy - 24.0 * scale } else { sy - height + 24.0 * scale };
+            let px = if open_right {
+                sx - 40.0 * scale
+            } else {
+                sx - width + 40.0 * scale
+            };
+            let py = if open_down {
+                sy - 24.0 * scale
+            } else {
+                sy - height + 24.0 * scale
+            };
             (px, py, monitor)
         }
         None => {
@@ -158,7 +166,8 @@ pub(crate) async fn run_action(
 ) -> Result<String, String> {
     hide_quick_menu(app.clone());
     // 等窗口真的从屏幕上消失（合成器要一两帧）
-    let _ = tauri::async_runtime::spawn_blocking(|| thread::sleep(Duration::from_millis(160))).await;
+    let _ =
+        tauri::async_runtime::spawn_blocking(|| thread::sleep(Duration::from_millis(160))).await;
     let result = if action == "capture" {
         let state = app.state::<AppState>();
         capture::capture_window(app.clone(), state, target_id)

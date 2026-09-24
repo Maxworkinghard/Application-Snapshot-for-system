@@ -1,19 +1,16 @@
 {
   "$schema": "../gen/schemas/desktop-schema.json",
   "identifier": "desktop-capability",
-  "description": "主设置窗口、桌宠和快捷菜单所需权限",
+  "description": "主窗口、桌宠、输入框和标注窗口所需权限",
   "windows": ["main", "pet", "quick-menu", "annotate"],
   "permissions": [
     "core:default",
     "core:window:allow-start-dragging",
-    "core:window:allow-hide",
-    "core:window:allow-show",
     "core:window:allow-set-focus",
     "core:window:allow-set-size",
     "core:window:allow-minimize",
     "core:window:allow-toggle-maximize",
     "core:window:allow-close",
-    "dialog:allow-open",
-    "dialog:allow-save"
+    "dialog:allow-open"
   ]
 }

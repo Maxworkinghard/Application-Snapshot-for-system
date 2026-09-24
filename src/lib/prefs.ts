@@ -13,7 +13,7 @@ const LAYOUT_KEY = "snapshot-layout";
 const MOTION_KEY = "snapshot-motion";
 const REDUCED_QUERY = "(prefers-reduced-motion: reduce)";
 
-export const LAYOUTS: LayoutTheme[] = ["companion", "timeline", "ledger", "topbar"];
+const LAYOUTS: LayoutTheme[] = ["companion", "timeline", "ledger", "topbar"];
 
 function read(key: string): string | null {
   try {

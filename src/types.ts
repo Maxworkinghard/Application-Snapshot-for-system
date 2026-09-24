@@ -57,7 +57,6 @@ export interface Settings {
   snapshotFormat: "png" | "jpeg" | "webp";
   saveDir: string;
   recordingDir: string;
-  customTheme: string | null;
   shutterSound: "crisp" | "soft" | "none" | "custom";
   customSoundPath: string | null;
   flashOnCapture: boolean;
@@ -133,7 +132,6 @@ export interface PetImportResult {
 
 export interface CapabilityStatus {
   available: boolean;
-  detail: string;
 }
 
 export interface PlatformCapabilities {
@@ -146,6 +144,4 @@ export interface PlatformCapabilities {
   /** 仅 Linux 下发：其余平台没有滚动长截图 */
   scrolling?: CapabilityStatus;
   includeCursor: CapabilityStatus;
-  trayNote: string;
-  notes: string[];
 }

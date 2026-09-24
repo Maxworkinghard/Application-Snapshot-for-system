@@ -46,7 +46,7 @@ export function TitleBar({ children, right, tall = false }: { children?: ReactNo
 
 type NavItem = { page: NavPage; label: string; trailing?: ReactNode };
 
-export function useNavItems(): { work: NavItem[]; settings: NavItem[] } {
+function useNavItems(): { work: NavItem[]; settings: NavItem[] } {
   const { conflicts } = useApp();
   return {
     work: [

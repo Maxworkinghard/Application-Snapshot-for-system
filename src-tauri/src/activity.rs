@@ -115,7 +115,10 @@ pub(crate) fn record(app: &AppHandle, activity: Activity<'_>) {
 
 /// 失败也是一条活动：界面上的猫会播报它
 pub(crate) fn record_error(app: &AppHandle, title: impl Into<String>, error: &str) {
-    record(app, Activity::new("error", title).detail(truncate(error, 200)));
+    record(
+        app,
+        Activity::new("error", title).detail(truncate(error, 200)),
+    );
 }
 
 #[tauri::command]
