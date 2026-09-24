@@ -2,122 +2,144 @@
 
 [![Check](https://github.com/Maxworkinghard/Application-Snapshot-for-system/actions/workflows/check.yml/badge.svg)](https://github.com/Maxworkinghard/Application-Snapshot-for-system/actions/workflows/check.yml)
 
-[简体中文](README.zh-CN.md) · **English**
+[简体中文](README.zh-CN.md) | English
 
-Captures the current application window to the clipboard, keeps a local snapshot history, polishes prompts through an OpenAI-compatible endpoint, and puts an animated companion on the desktop.
+A small desktop tool for window screenshots and screen recording, with prompt polishing and a desktop companion on the side. Built with Tauri 2 + React; one codebase for Windows, macOS and Linux.
 
-## Repository layout
+The interface is Chinese only for now, so menu names below are followed by their Chinese labels.
 
-The **Tauri 2 app at the repository root is the whole application**. It is one codebase for all three platforms: React front end in [src/](src/), native side in [src-tauri/](src-tauri/). The earlier per-platform implementations (Swift, C#, Rust) were removed once the mainline covered them; they are still in the git history.
+## Features
 
-## Choosing an implementation
+- **Window snapshots**: capture a chosen application window straight to the clipboard, or open it for annotation or save it as a file. Fullscreen capture is also available, plus scrolling capture on Linux (X11).
+- **Window recording**: record a window to MP4, optionally with system audio and the microphone.
+- **Snapshot history**: captures are kept locally (the latest 200) and can be copied again at any time.
+- **Prompt polishing**: rewrite prompts through any OpenAI-compatible endpoint, with rewrite rules you can add and remove.
+- **Desktop companion**: a small floating window that shows the current app's icon by default, or an animated GIF of your choice. Right-click it to open the input box, from which you can capture, record and polish.
+- **Global shortcuts**: every action above can be bound to a global shortcut, which also works while the main window is minimized.
 
-**When the platform's own facility is clearly better, implement it separately for that platform rather than bending it to a shared path.** The test is the actual result, not tidy code. Recording went this way: all three platforms once shared ffmpeg, and `gdigrab` recorded hardware-accelerated windows as black frames — a lowest common denominator that was not good enough anywhere. Windows now uses WGC, macOS ScreenCaptureKit, Linux portal/x11grab, and each is better than before.
+## Platform support
 
-Conversely, when only the API names differ and the result does not, use a mature cross-platform library or a shared implementation. Window capture uses xcap on all three — which is itself three native implementations, maintained by someone else. Writing our own three would gain almost nothing.
+| Feature | Windows | macOS | Linux |
+|---|:-:|:-:|:-:|
+| Window and fullscreen capture | ✓ | ✓ | ✓ |
+| Window recording | ✓ | ✓ | ✓ |
+| System audio while recording | ✓ | ✓ | ✓ |
+| Microphone while recording | ✓ | macOS 15+ | ✓ |
+| Scrolling capture | — | — | X11 only |
+| Launch at login | ✓ | ✓ | ✓ |
+| Snapshot history, prompt polishing, companion | ✓ | ✓ | ✓ |
 
-Before adding a capability, ask: **does the OS own this?** If yes, write it per platform. If not (computation, files, network, UI), share it.
+Availability is detected at runtime. On Linux, recording and audio rely on external tools; see [Runtime dependencies](#runtime-dependencies).
 
-The cost is not only the code. Three implementations mean three places a bug can hide, each reproducible only on its own machine, and behaviour drifts (`restore_minimized_window` already means three different things). **Verification, not implementation, is the real bottleneck** — a native path never tried on real hardware is not automatically more reliable than a portable one that has been.
+Windows has had the most testing on real hardware. Some features on macOS and Linux still need to be checked on real devices; see [docs/pending-device-verification.md](docs/pending-device-verification.md) (in Chinese).
 
-## Platform capabilities
+## Installation
 
-Each platform has its own native implementation behind a shared set of commands. **Capabilities and behaviour differ per platform** — the same button may go through entirely different system APIs, with different edge cases. See the table below; the available / unavailable marks under Preferences → "本机与模型" are probed by each adapter at runtime.
+Download the package for your platform from [Releases](https://github.com/Maxworkinghard/Application-Snapshot-for-system/releases). No public release is available yet, so for now [build from source](#build-from-source).
 
-Only the parts that do not depend on system capabilities are shared: settings, snapshot history, prompt polishing, the UI. Anything the OS itself provides where the platforms genuinely differ — recording, window control — is written separately for each. Picking a lowest-common-denominator implementation for the sake of uniformity produced something that was not good enough anywhere.
+System requirements:
 
-| | Windows | macOS | Linux |
-|---|---|---|---|
-| Window capture | xcap | xcap | xcap |
-| Window recording | Windows.Graphics.Capture + Media Foundation | Native ScreenCaptureKit window stream + AVAssetWriter | portal ScreenCast + PipeWire → ffmpeg (Wayland); ffmpeg `x11grab` (X11) |
-| Snapshot history, companion, prompt polishing | yes | yes | yes |
+- **macOS**: 14 or later; one universal package for Apple Silicon and Intel
+- **Windows**: 10 or 11, x64 or ARM64
+- **Linux**: x86_64 or aarch64 with an X11 or Wayland desktop session; the deb package needs Debian 12 / Ubuntu 24.04 or later
 
-**Device verification**: Windows is the primary verified platform (adapters, tray, shortcuts, capture/recording on real hardware). macOS and Linux capabilities are mainly validated via code paths, compile checks, and adapters; some macOS window adapters (capture, icons, Accessibility unminimize) have seen device testing. macOS recording now uses a native ScreenCaptureKit window stream and writes H.264 MP4 through AVAssetWriter. Linux `cargo check` is restored after fixing compile blockers; X11 paths (xcap / x11grab / xdotool / XDG autostart) follow the adapter implementation. Wayland portal ScreenCast, tray click behaviour, and packaged installers may still need local verification.
+The packages are not signed or notarized. On macOS, Control-click the app and choose Open the first time; on Windows, SmartScreen may block the installer.
 
-Items that cannot be verified on the development machine (macOS) are tracked in [docs/pending-device-verification.md](docs/pending-device-verification.md), each with the platform that must check it.
+### Permissions
 
-## Requirements
+On macOS, capture and recording need Screen Recording permission, capturing a minimized window needs Accessibility permission (to restore the window first), and recording the microphone needs Microphone permission.
 
-- **Recording**: Windows uses the built-in Windows.Graphics.Capture + Media Foundation and does not need ffmpeg; macOS uses a bundled ScreenCaptureKit sidecar and does not need external ffmpeg; Linux needs `ffmpeg` on `PATH`. On Linux, still captures that include the cursor also prefer ffmpeg `x11grab` (falling back without the cursor). Polishing does not need ffmpeg.
-- **Recording a minimized window**: once minimized, the system stops compositing the window and there is nothing to capture. On Windows it is restored first (same as capture); if it cannot be restored the call fails with a clear message instead of leaving an unplayable empty file.
-- **macOS permissions**: window capture and recording need Screen Recording permission; restoring a minimized window before capturing it needs Accessibility permission.
-- **macOS sidecar**: ScreenCaptureKit recording is provided by [src-tauri/snapshot-recorder/](src-tauri/snapshot-recorder/). Both `npm run tauri dev` and `npm run tauri build` prepare it automatically, and packaged builds place it next to the main executable in `Contents/MacOS/`.
-- **Prompt polishing** needs an OpenAI-compatible endpoint, configured under Settings. The API key goes to the OS keychain, never to a config file.
+### Runtime dependencies
 
-## About the names
+Windows and macOS need nothing extra (on Windows 10 the installer downloads the WebView2 runtime if needed). On Linux, install these as needed:
 
-The same thing goes by different names in a few places. Noted here so nobody
-"unifies" them later:
-
-| Where | Name |
+| Tool | Used for |
 |---|---|
-| Repository | `Application-Snapshot-for-system` |
-| UI and macOS .app | 应用快照 (Application Snapshot) |
-| Executable (`productName`) | `snapshot` |
-| Bundle identifier | `com.appsnapshot.prompt-pet-shortcut` |
+| `ffmpeg` | Window recording; screenshots that include the mouse pointer (without it, screenshots have no pointer) |
+| `pactl` (PulseAudio or PipeWire-Pulse) | Recording system audio and the microphone; ffmpeg must also be built with PulseAudio support |
+| `xdotool` | Restoring a minimized window before capture; scrolling capture |
+| StatusNotifierHost | System tray (built into KDE; GNOME needs the AppIndicator extension) |
 
-The `prompt-pet-shortcut` in that last one is an early project name. **It must
-not change**: the identifier is the key the OS uses to find the config directory
-and keychain entries, so changing it would orphan every installed user's
-settings and API key. It stays on purpose, not by oversight.
+## Usage
 
-## Run from source
+Once started, the companion appears on the desktop (showing the current app's icon by default) and the app has an icon in the system tray.
+
+- **Input box**: right-click the companion to open it. From here you can capture a window, capture the full screen, record a window, polish the text on the clipboard, or copy the last snapshot again. Type to filter commands; paste a block of text to start polishing it straight away.
+- **Shortcuts**: nothing is bound by default. On the Shortcuts (快捷操作) page you can bind a global shortcut to window snapshot, fullscreen snapshot, window recording, prompt polishing and opening the input box, plus scrolling capture on Linux.
+- **Capture**: by default a capture goes to the clipboard, which is cleared after 60 seconds (unless you copied something else in the meantime). In Preferences (偏好设置) you can switch to opening the annotation window or a save dialog instead. The clear delay, image format and snapshot folder are under Shortcuts → Clipboard & saving (快捷操作 → 剪贴板与保存).
+- **Recording**: recordings are saved as MP4 in your Downloads folder by default. The folder and whether to include system audio and the microphone are under Shortcuts → Recording (快捷操作 → 录制).
+- **Prompt polishing**: first enter the endpoint URL, model and API key under Preferences → Machine & model (偏好设置 → 本机与模型). The API key is stored in the OS keychain, never in a config file. Rewrite rules are managed under Preferences → Polishing rules (偏好设置 → 润色规则).
+- **Companion**: on the Companion (桌面伴侣) page, import a `.zip` of GIFs or a single GIF. Use one file per action; a file whose name contains `idle` becomes the default pose. Only GIF is supported and other files in the archive are skipped (each platform's WebView plays different video codecs, so video is not supported for now). Limits: 100 MB per archive, 50 MB per GIF.
+- **Appearance**: the Themes (主题库) page switches the layout, color scheme and motion.
+- **Launch at login**: turn on 开机时静默启动 in Preferences (偏好设置).
+
+## Build from source
+
+Requirements:
+
+- Node.js 22
+- Rust 1.98.1 (picked up automatically from `rust-toolchain.toml`)
+- The [Tauri 2 prerequisites](https://v2.tauri.app/start/prerequisites/) for your platform
+- On macOS, a Swift toolchain (Xcode or the Command Line Tools) to build the recording sidecar
+- On Debian / Ubuntu, `sudo bash scripts/linux/install-deps.sh` installs the build and runtime dependencies
 
 ```bash
 npm install
-npm run tauri dev
-```
-
-Production build:
-
-```bash
-npm run build          # front end only
+npm run tauri dev      # development
 npm run tauri build    # installer
 ```
 
+The macOS recording sidecar ([src-tauri/snapshot-recorder/](src-tauri/snapshot-recorder/)) is built automatically before `tauri dev` and `tauri build`. Linux build and environment-check scripts are described in [scripts/linux/README.md](scripts/linux/README.md).
 
-## Linux
+### Tests
 
 ```bash
-# Debian / Ubuntu — build + optional runtime deps
-sudo bash scripts/linux/install-deps.sh
-bash scripts/linux/check-env.sh
+npm test          # front-end unit tests
+npm run build     # type check + front-end build
 
-npm install
-npm run tauri dev            # development
-bash scripts/linux/build.sh  # release binary + deb/AppImage when bundlers succeed
+cd src-tauri
+cargo fmt --check
+cargo clippy --all-targets -- -D warnings
+cargo test
 ```
 
-| Optional tool | Feature |
+Every push and pull request runs [check.yml](.github/workflows/check.yml): the front-end tests and build, plus the Rust checks on Windows, macOS and Linux.
+
+## Project layout
+
+```text
+src/                    Front end (React + TypeScript)
+├── pages/              Main window pages
+└── windows/            Companion, input box, annotation and other separate windows
+src-tauri/              Native side (Rust)
+├── src/os/<platform>/  Per-platform native code: recording, window control, launch at login, etc.
+└── snapshot-recorder/  macOS recording sidecar (Swift + ScreenCaptureKit)
+scripts/                Build scripts; linux/ holds Linux dependency and packaging scripts
+docs/                   Documentation
+```
+
+### Implementation principles
+
+Capabilities the operating system owns (recording, window control and so on) are implemented separately on each platform with its native APIs, rather than settling for a lowest common denominator for the sake of uniform code. Everything that does not depend on the OS (settings, history, polishing, UI) is shared.
+
+Recording is how this came about: all three platforms once shared ffmpeg, and on Windows `gdigrab` recorded hardware-accelerated windows as black frames. Each platform now uses:
+
+| Platform | Recording |
 |---|---|
-| `ffmpeg` | Window recording (X11: `x11grab`; Wayland portal: `rawvideo` encode); cursor stills (falls back without cursor) |
-| `xdotool` | Restore a minimized target window before capture; scrolling capture paging |
-| StatusNotifierHost | System tray (KDE native; GNOME needs an AppIndicator extension) |
+| Windows | Windows.Graphics.Capture + Media Foundation |
+| macOS | ScreenCaptureKit window stream + AVAssetWriter |
+| Linux | portal ScreenCast + PipeWire → ffmpeg in Wayland sessions; ffmpeg `x11grab` in X11 sessions |
 
-Recording picks its backend from the session, not from `$DISPLAY`: a Wayland session always tries portal ScreenCast first, because XWayland leaves `$DISPLAY` set and `x11grab` cannot see native Wayland windows. Only when the portal is unavailable does it fall back to `x11grab`, and that fallback records the X server's view only. An X11 session goes straight to `x11grab`.
+Linux picks the backend from the session type, not from `$DISPLAY`: XWayland sets `$DISPLAY`, but `x11grab` cannot see native Wayland windows, so a Wayland session falls back to `x11grab` only when the portal is unavailable.
 
-**Autostart** is opt-in via Settings → 开机静默自启动. It writes `~/.config/autostart/com.appsnapshot.prompt-pet-shortcut.desktop`. An **optional** systemd `--user` unit example lives at `scripts/linux/com.appsnapshot.prompt-pet-shortcut.service.example` (advanced; never enabled by the app).
+Conversely, where platforms differ only in API names and not in results, a mature cross-platform library is used. Window capture, for example, uses xcap everywhere, which is itself three native implementations.
 
-More detail: [scripts/linux/README.md](scripts/linux/README.md).
+Every extra implementation is another place for bugs that only reproduce on one kind of machine, and behavior drifts between platforms over time. Verification, not implementation, is the real bottleneck: a native path never tried on real hardware is not necessarily more reliable than a portable one that has been.
 
-Every push and pull request runs [`.github/workflows/check.yml`](.github/workflows/check.yml): frontend `npm run build`, plus `cargo check` / `cargo test` on Linux (via `scripts/linux/install-deps.sh`), Windows, and macOS.
+## Releases
 
-## Shortcuts
+Pushing a `v*` tag runs [release.yml](.github/workflows/release.yml). It builds on native runners for each platform (macOS universal, Windows x64 / ARM64, Linux x86_64 / aarch64 deb and AppImage), writes `SHA256SUMS.txt`, and creates a draft pre-release to be checked by hand before publishing. The tag, the `VERSION` file and the version in `src-tauri/tauri.conf.json` must match.
 
-Nothing is bound by default. Snapshot, fullscreen capture, scrolling capture (Linux/X11 only for now), recording and prompt polishing can each be given a global shortcut on the Shortcuts page; they fire while the window is minimised.
+## License
 
-Post-capture behaviour depends on “after capture” and “auto-save local”: copy to clipboard by default, or open the annotate window / save-as dialog. Local history is written only when auto-save is on. Clipboard auto-clear delay is configurable (about 60 seconds by default; skipped if something else was copied meanwhile). Recordings are written as MP4 to the downloads folder by default; their independent destination can be opened or changed from Shortcuts → Clipboard & saving.
-
-## Companion assets
-
-Pick a `.zip` full of GIFs on the Companion page, or just pick a single GIF. **GIF is the only accepted format**; anything else inside the archive is skipped.
-
-Video (MP4 / WebM) is not supported for now: playback goes through each platform's embedded WebView, and the three engines accept different codecs — the same pack animates on one machine and shows a blank square on another.
-
-One file per action; a file name containing `idle` becomes the default pose. Assets are read on demand and never copied, so moving the original breaks the companion. Limits: 100MB per archive, 50MB per GIF.
-
-## Release
-
-Pushing a `v*` tag builds all three platforms — the macOS universal app bundle (zipped), the two Windows installers, and Linux `.deb` / `.AppImage` for x86_64 and aarch64 (native runners, no cross-compilation; Linux artifacts resume once the compile blockers fixed in this tree are on the default branch) — writes `SHA256SUMS.txt`, and creates a draft + pre-release. There is no signing and no notarization.
-
-There is no `LICENSE` file. No license has been added; copyright is reserved by default.
+No license has been chosen yet and the repository has no `LICENSE` file, so all rights are reserved by default.

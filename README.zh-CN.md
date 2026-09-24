@@ -1,123 +1,143 @@
-# Application Snapshot
+# 应用快照
 
 [![Check](https://github.com/Maxworkinghard/Application-Snapshot-for-system/actions/workflows/check.yml/badge.svg)](https://github.com/Maxworkinghard/Application-Snapshot-for-system/actions/workflows/check.yml)
 
-**简体中文** · [English](README.md)
+简体中文 | [English](README.md)
 
-界面里显示的名字是「应用快照」；打包产物按 Tauri 的 `productName` 命名，macOS 上是 `snapshot.app`。
+一个桌面截图、录屏小工具，顺带 Prompt 润色和一只桌面伴侣。基于 Tauri 2 + React，一套代码支持 Windows、macOS 和 Linux。
 
-截取当前应用窗口到剪贴板并留存本地历史，通过 OpenAI 兼容接口润色 Prompt，并在桌面上放一只会动的伴侣。
+## 功能
 
-## 仓库结构
+- **窗口快照**：截取指定应用的窗口，默认直接放进剪贴板，也可以截完打开标注或另存为。另有全屏截图，Linux（X11）上还有滚动长截图。
+- **窗口录制**：把窗口录成 MP4，可以同时录系统声音和麦克风。
+- **快照历史**：截图保存在本地，保留最近 200 张，随时可以再复制。
+- **Prompt 润色**：调用任意 OpenAI 兼容接口改写 Prompt，改写规则可以自己增删。
+- **桌面伴侣**：桌面上常驻一个悬浮小窗，默认显示当前应用的图标，也可以换成会动的 GIF 形象。右键它呼出输入框，截图、录制、润色都能从这里发起。
+- **全局快捷键**：以上操作都能绑定全局快捷键，主窗口最小化时也能用。
 
-**仓库根目录的 Tauri 2 工程就是整个应用**，一套代码覆盖三端：前端 React 在 [src/](src/)，原生侧在 [src-tauri/](src-tauri/)。更早的三套独立实现（Swift / C# / Rust）在主线覆盖之后已经删除，需要时从 git 历史里取。
+## 平台支持
 
-## 实现方式的取舍原则
+| 功能 | Windows | macOS | Linux |
+|---|:-:|:-:|:-:|
+| 窗口截图、全屏截图 | ✓ | ✓ | ✓ |
+| 窗口录制 | ✓ | ✓ | ✓ |
+| 录制时录系统声音 | ✓ | ✓ | ✓ |
+| 录制时录麦克风 | ✓ | macOS 15+ | ✓ |
+| 滚动长截图 | — | — | 仅 X11 |
+| 开机自启 | ✓ | ✓ | ✓ |
+| 快照历史、Prompt 润色、桌面伴侣 | ✓ | ✓ | ✓ |
 
-**系统自带的做法明显更好时，该平台单独实现，不迁就统一路径。** 判断依据是实际效果，不是代码整齐。录制就是这么改过来的：原先三端共用 ffmpeg，`gdigrab` 在硬件加速窗口上录出黑屏——为了统一选了个哪端都不够好的公约数。现在 Windows 走 WGC、macOS 走 ScreenCaptureKit、Linux 走 portal/x11grab，每端都比之前强。
+功能是否可用由应用在运行时检测。Linux 上的录制、录音等功能依赖外部工具，见[运行依赖](#运行依赖)。
 
-反过来，只是 API 名字不同、效果无实质差别的，用成熟的跨平台库或共享实现。窗口截图三端都用 xcap——它内部本来就是三套原生实现，只是维护的人不是我们。自己再写三遍，收益接近零。
+目前 Windows 上的真机验证最充分，macOS 和 Linux 还有部分功能待真机确认，清单见 [docs/pending-device-verification.md](docs/pending-device-verification.md)。
 
-新增能力前先问一句：**这个能力归操作系统管吗？** 归——各写各的；不归（计算、文件、网络、界面）——共享。
+## 安装
 
-成本不只在写代码。三套实现意味着三处可能藏 bug，且各自只能在对应机器上复现；行为也会漂移（`restore_minimized_window` 现在三端语义就不同）。**真正的瓶颈是验证而不是实现**——没在真机验过的原生实现，未必比验过的通用实现更可靠。
+从 [Releases](https://github.com/Maxworkinghard/Application-Snapshot-for-system/releases) 下载对应平台的安装包。目前还没有公开发布的版本，可以先[从源码构建](#从源码构建)。
 
-## 各平台能力
+系统要求：
 
-每个平台一套原生实现，共用同一组命令入口。**能力与行为按平台不同**——同一个按钮在三端可能走完全不同的系统 API，边界条件也不一样。差异见下表；偏好设置「本机与模型」里显示的可用 / 不可用，由各端 adapter 运行时探测。
+- **macOS**：14 及以上，Apple Silicon 和 Intel 共用一个 universal 包
+- **Windows**：10 / 11，x64 或 ARM64
+- **Linux**：x86_64 或 aarch64，X11 或 Wayland 桌面会话；deb 包需要 Debian 12 / Ubuntu 24.04 及以上
 
-共享的只是不依赖系统能力的部分：设置、快照历史、Prompt 润色、界面。凡是系统自己提供且各端做法有实质差异的（录制、窗口控制），一律各写各的——曾经为了三端统一而选公约数方案，结果是哪端都不够好。
+安装包没有正式签名和公证：macOS 首次打开要按住 Control 点击 →「打开」，Windows 上 SmartScreen 可能会拦截。
 
-| | Windows | macOS | Linux |
-|---|---|---|---|
-| 窗口截图 | xcap | xcap | xcap |
-| 窗口录制 | Windows.Graphics.Capture + Media Foundation | ScreenCaptureKit 原生窗口流 + AVAssetWriter | Wayland 走 portal ScreenCast + PipeWire → ffmpeg；X11 走 ffmpeg `x11grab` |
-| 快照历史、桌面伴侣、Prompt 润色 | 有 | 有 | 有 |
+### 权限
 
-**真机验证**：目前以 Windows 为主（adapter、托盘、快捷键、截图/录制等已在真机跑过）。macOS / Linux 能力主要来自代码路径、编译检查与适配层实现；macOS 的部分窗口能力（截图、图标、Accessibility 还原最小化）有过真机验证，录制已切到 ScreenCaptureKit 原生窗口流并由 AVAssetWriter 输出 H.264 MP4。Linux 在修复编译阻断后已恢复 `cargo check`；X11 路径（xcap / x11grab / xdotool / XDG 自启）按适配层实现，Wayland portal ScreenCast、托盘点击、打包安装包等仍可能需本机再验。
+macOS 上截图和录制需要「屏幕录制」权限，截最小化的窗口需要「辅助功能」权限（用来先把窗口还原），录麦克风需要麦克风权限。
 
-开发机（macOS）上无法验证的项目统一登记在 [docs/pending-device-verification.md](docs/pending-device-verification.md)，每条都注明应在哪一端补验。
+### 运行依赖
 
-## 依赖
+Windows 和 macOS 不需要另装东西（Windows 10 上安装程序会按需下载 WebView2 运行时）。Linux 上按需安装：
 
-- **录制**：Windows 走系统自带的 Windows.Graphics.Capture 与 Media Foundation，不需要 ffmpeg；macOS 使用随应用打包的 ScreenCaptureKit sidecar，不依赖外部 ffmpeg；Linux 需要 `ffmpeg` 在 `PATH` 中。Linux 上「截屏包含鼠标光标」的静帧也会优先走 ffmpeg `x11grab`（失败则回退为无光标截图）；润色不需要 ffmpeg。
-- **录制最小化的窗口**：最小化后系统不再为窗口合成画面，录不到任何内容。Windows 上会先把它还原再开录（与截图一致）；还原不了则明确报错，不会留下一个打不开的空文件。
-- **macOS 权限**：窗口截图与录制需要「屏幕录制」权限；还原已最小化的窗口再截图需要「辅助功能」权限。
-- **macOS sidecar**：ScreenCaptureKit 录制由 [src-tauri/snapshot-recorder/](src-tauri/snapshot-recorder/) 提供。`npm run tauri dev` 和 `npm run tauri build` 都会自动准备它，正式包内位于 `Contents/MacOS/` 主程序旁边。
-- **Prompt 润色**需要一个 OpenAI 兼容端点，在「模型设置」里填写。API Key 存入系统钥匙串，不写进配置文件。
-
-## 名字的来历
-
-同一个东西在几处叫法不同，记在这里免得下次有人去「统一」：
-
-| 出现的地方 | 名字 |
+| 工具 | 用途 |
 |---|---|
-| 仓库 | `Application-Snapshot-for-system` |
-| 界面与 macOS .app | 应用快照 |
-| 可执行文件（`productName`） | `snapshot` |
-| Bundle identifier | `com.appsnapshot.prompt-pet-shortcut` |
+| `ffmpeg` | 窗口录制；带鼠标指针的截图（没有时截图不带指针） |
+| `pactl`（PulseAudio 或 PipeWire-Pulse） | 录系统声音和麦克风，还要求 ffmpeg 带 PulseAudio 支持 |
+| `xdotool` | 截图前还原最小化的窗口；滚动长截图 |
+| StatusNotifierHost | 系统托盘（KDE 自带，GNOME 要装 AppIndicator 扩展） |
 
-最后那个里的 `prompt-pet-shortcut` 是项目早期的名字。**它不能改**——
-identifier 是系统用来认配置目录与钥匙串条目的键，改了等于让已安装用户的
-设置和 API Key 全部失联。留着它是有意为之，不是漏改。
+## 使用
 
-## 从源码运行
+启动后桌面上会出现伴侣（默认显示当前应用的图标），系统托盘里也有应用图标。
+
+- **输入框**：右键伴侣呼出。可以截一个窗口、全屏截图、录一个窗口、润色剪贴板里的文字、再复制上一张快照。打字可以筛选命令，粘贴一段文字会直接开始润色。
+- **快捷键**：默认一个都不绑定。在主窗口「快捷操作」页可以给窗口快照、全屏快照、窗口录制、润色 Prompt、呼出输入框各绑一个全局快捷键，Linux 上还有滚动长截图。
+- **截图**：截完默认放进剪贴板，60 秒后自动清空（期间复制过别的内容就不清）。「偏好设置」里可以改成截完打开标注或另存为；清空时间、图像格式和快照存放位置在「快捷操作 → 剪贴板与保存」里改。
+- **录制**：默认存成 MP4，放在系统「下载」目录。存放位置、是否同时录系统声音和麦克风在「快捷操作 → 录制」里设置。
+- **Prompt 润色**：先在「偏好设置 → 本机与模型」填好 OpenAI 兼容接口的地址、模型和 API Key，API Key 存在系统钥匙串里，不写进配置文件。改写规则在「偏好设置 → 润色规则」里管理。
+- **桌面伴侣**：在「桌面伴侣」页导入一个装着 GIF 的 `.zip`，或者单个 GIF。一个动作一个文件，文件名含 `idle` 的作为默认形象。只支持 GIF，压缩包里的其他格式会被跳过（各平台 WebView 能播的视频编码不一样，所以暂不支持视频）。压缩包上限 100 MB，单个 GIF 上限 50 MB。
+- **外观**：「主题库」页可以换布局（伴侣侧栏、时间线、今日流水、不要侧栏）、颜色和动效。
+- **开机自启**：在「偏好设置」里打开「开机时静默启动」。
+
+## 从源码构建
+
+需要：
+
+- Node.js 22
+- Rust 1.98.1（`rust-toolchain.toml` 会自动选用）
+- 各平台的 [Tauri 2 系统依赖](https://v2.tauri.app/start/prerequisites/)
+- macOS 另需 Swift 工具链（Xcode 或 Command Line Tools），用来编译录制 sidecar
+- Debian / Ubuntu 可以直接运行 `sudo bash scripts/linux/install-deps.sh`，装好编译和运行依赖
 
 ```bash
 npm install
-npm run tauri dev
+npm run tauri dev      # 开发模式
+npm run tauri build    # 打安装包
 ```
 
-正式构建：
+macOS 的录制 sidecar（[src-tauri/snapshot-recorder/](src-tauri/snapshot-recorder/)）会在 `tauri dev` 和 `tauri build` 之前自动编译。Linux 的构建和环境检查脚本见 [scripts/linux/README.md](scripts/linux/README.md)。
+
+### 测试
 
 ```bash
-npm run build          # 仅前端
-npm run tauri build    # 安装包
+npm test          # 前端单元测试
+npm run build     # 类型检查 + 前端构建
+
+cd src-tauri
+cargo fmt --check
+cargo clippy --all-targets -- -D warnings
+cargo test
 ```
 
+每次 push 和 PR 都会跑 [check.yml](.github/workflows/check.yml)：前端测试和构建，以及 Rust 侧检查在 Windows、macOS、Linux 上各跑一遍。
 
-## Linux
+## 项目结构
 
-```bash
-# Debian / Ubuntu — 编译与可选运行时依赖
-sudo bash scripts/linux/install-deps.sh
-bash scripts/linux/check-env.sh
-
-npm install
-npm run tauri dev            # 开发
-bash scripts/linux/build.sh  # 正式二进制；bundler 成功时还有 deb / AppImage
+```text
+src/                    前端（React + TypeScript）
+├── pages/              主窗口各页面
+└── windows/            伴侣、输入框、标注等独立窗口
+src-tauri/              原生侧（Rust）
+├── src/os/<平台>/      各平台的原生实现：录制、窗口控制、开机自启等
+└── snapshot-recorder/  macOS 录制 sidecar（Swift + ScreenCaptureKit）
+scripts/                构建脚本，linux/ 下是 Linux 的依赖安装与打包
+docs/                   文档
 ```
 
-| 可选工具 | 能力 |
+### 实现原则
+
+归操作系统管的能力（录制、窗口控制等），各平台用自己的原生 API 单独实现，不为了代码统一去选公约数方案。与系统无关的部分（设置、历史、润色、界面）三端共享。
+
+录制就是这么改过来的：原先三端共用 ffmpeg，结果 Windows 上 `gdigrab` 录硬件加速的窗口是黑屏。现在各平台的方案是：
+
+| 平台 | 录制方案 |
 |---|---|
-| `ffmpeg` | 窗口录制（X11：`x11grab`；Wayland portal：`rawvideo` 编码）；带光标静帧（失败回退无光标） |
-| `xdotool` | 截图前还原已最小化的目标窗口；滚动长截图翻页 |
-| StatusNotifierHost | 系统托盘（KDE 原生；GNOME 需 AppIndicator 扩展） |
+| Windows | Windows.Graphics.Capture + Media Foundation |
+| macOS | ScreenCaptureKit 窗口流 + AVAssetWriter |
+| Linux | Wayland 会话走 portal ScreenCast + PipeWire → ffmpeg；X11 会话走 ffmpeg `x11grab` |
 
-录制后端按**会话类型**选，不看 `$DISPLAY`：Wayland 会话一律先试 portal ScreenCast——因为 XWayland 会让 `$DISPLAY` 有值，而 `x11grab` 看不到原生 Wayland 窗口。只有门户不可用时才退回 `x11grab`，此时能力文案会明说这条退路只能录到 X server 的画面。X11 会话直接走 `x11grab`。
+Linux 按会话类型选后端，不看 `$DISPLAY`：XWayland 会让 `$DISPLAY` 有值，但 `x11grab` 看不到原生 Wayland 窗口，所以 Wayland 会话只有在 portal 不可用时才退回 `x11grab`。
 
-**开机自启**需在「设置 → 开机静默自启动」中勾选，才会写入 `~/.config/autostart/…desktop`（这是受支持的主路径）。可选的 systemd `--user` 单元示例见 `scripts/linux/com.appsnapshot.prompt-pet-shortcut.service.example`（高级；应用不会替你 enable）。
+反过来，各平台只是 API 名字不同、效果没有实质差别的，用成熟的跨平台库。比如窗口截图三端都用 xcap，它内部本来就是三套原生实现。
 
-细节见 [scripts/linux/README.md](scripts/linux/README.md)。
-
-每次 push / PR 会跑 [`.github/workflows/check.yml`](.github/workflows/check.yml)：前端 `npm run build`，以及 Linux（经 `scripts/linux/install-deps.sh`）、Windows、macOS 上的 `cargo check` / `cargo test`。
-
-## 快捷键
-
-默认不绑定任何键。应用快照、全屏截图、滚动长截图（目前仅 Linux/X11）、录制、润色 Prompt 都可以在「快捷操作」页各绑一个全局快捷键，窗口最小化时同样触发。
-
-截图完成后的行为由「截图完成后动作」与「自动写入本地文件」决定：默认复制到剪贴板；可选打开标注窗或另存为。仅在开启自动保存时写入本地历史。剪贴板自动清空时限可在设置中配置（默认约 60 秒；期间若又复制了别的内容则跳过这次清空）。录制默认保存为 MP4 到系统「下载」目录；可在「快捷操作 → 剪贴板与保存」中直接打开或更改独立的录制目录。
-
-## 伴侣素材
-
-在「桌面伴侣」页选一个装着多个 GIF 的 `.zip`，或者直接选一个 GIF。**目前只认 GIF**，压缩包内其它格式会被跳过。
-
-视频（MP4 / WebM）暂不支持：播放要交给各端内置的 WebView，而三端内核认的编码各不相同，同一个包在这台能动、在那台是一片空白。
-
-一个动作一个文件，文件名含 `idle` 的作为默认形象。素材按需读取、不会复制，所以移走原文件形象会失效。上限：整包 100MB，单个 GIF 50MB。
+多一套实现，就多一处只能在对应机器上复现的 bug，各端行为也会慢慢漂移。真正的瓶颈是验证而不是实现：没在真机上验过的原生实现，不一定比验过的通用实现可靠。
 
 ## 发布
 
-推 `v*` tag 会打三端的包——macOS universal（zip）、Windows 两个架构的安装程序、以及 Linux x86_64 与 aarch64 的 `.deb` / `.AppImage`（原生 runner，不交叉编译；Linux 编译阻断修复后 CI 可再产出这些产物）——生成 `SHA256SUMS.txt`，创建 draft + pre-release。当前无签名、无公证。
+推送 `v*` tag 会触发 [release.yml](.github/workflows/release.yml)：在各平台的原生 runner 上打包（macOS universal、Windows x64 / ARM64、Linux x86_64 / aarch64 的 deb 和 AppImage），生成 `SHA256SUMS.txt`，并创建草稿状态的 pre-release，人工检查后再发布。tag、`VERSION` 文件和 `src-tauri/tauri.conf.json` 里的版本号必须一致。
 
-仓库没有 `LICENSE` 文件。尚未添加许可证，默认保留版权。
+## 许可证
+
+还没有选定许可证，仓库里没有 `LICENSE` 文件，默认保留所有权利。
