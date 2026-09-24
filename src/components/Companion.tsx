@@ -145,7 +145,8 @@ export function Companion({ away = false, compact = false }: { away?: boolean; c
           </span>
         )}
       </button>
-      <div className="companion-floor" aria-hidden="true" />
+      {/* 地面线只留给时间线布局的紧凑版；伴侣侧栏里不画 */}
+      {compact && <div className="companion-floor" aria-hidden="true" />}
     </div>
   );
 }
