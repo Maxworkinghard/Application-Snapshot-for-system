@@ -28,7 +28,6 @@ export type AppContextValue = {
   activity: ActivityEntry[];
   clipboard: ClipboardState | null;
   recording: RecordingStatus;
-  snapshotCount: number | null;
   layout: LayoutTheme;
   setLayout: (layout: LayoutTheme) => void;
   themePreference: ThemePreference;

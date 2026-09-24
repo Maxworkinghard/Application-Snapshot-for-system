@@ -34,7 +34,7 @@ import { AppContext, errorText, useApp, type AppContextValue, type Notice, type 
 import { LedgerList, NavMark, NoticeLine, SideNav, TitleBar, TopNav } from "./app/Shell";
 import { Companion } from "./components/Companion";
 import { LoadingState } from "./components/LoadingState";
-import { useActivityLog, useClipboardState, useRecordingStatus, useSnapshotCount } from "./hooks/useLive";
+import { useActivityLog, useClipboardState, useRecordingStatus } from "./hooks/useLive";
 import { ShortcutsPage } from "./pages/ShortcutsPage";
 import { PromptPage } from "./pages/PromptPage";
 import { HistoryPage } from "./pages/HistoryPage";
@@ -121,7 +121,6 @@ export function App() {
   const activity = useActivityLog();
   const clipboard = useClipboardState();
   const recording = useRecordingStatus();
-  const snapshotCount = useSnapshotCount();
 
   const notify = useCallback((text: string, kind: NoticeKind = "info") => {
     if (noticeTimer.current !== null) window.clearTimeout(noticeTimer.current);
@@ -254,7 +253,6 @@ export function App() {
         activity,
         clipboard,
         recording,
-        snapshotCount,
         layout,
         setLayout,
         themePreference,
@@ -269,7 +267,7 @@ export function App() {
         consumeDraft: () => setPendingDraft(null),
       },
     [
-      settings, notify, notice, dismissNotice, conflicts, caps, activity, clipboard, recording, snapshotCount,
+      settings, notify, notice, dismissNotice, conflicts, caps, activity, clipboard, recording,
       layout, setLayout, themePreference, setThemePreference, motionPreference, setMotionPreference,
       page, navigate, pendingPreviewId, pendingDraft,
     ],

@@ -3,11 +3,9 @@ import {
   getClipboardState,
   getRecordingStatus,
   listActivity,
-  listSnapshots,
   onActivity,
   onClipboardChanged,
   onRecordingChanged,
-  onSnapshotsChanged,
 } from "../lib/backend";
 import type { ActivityEntry, ClipboardState, RecordingStatus } from "../types";
 
@@ -58,20 +56,6 @@ export function useRecordingStatus() {
   }, []);
   useTauriListener(() => onRecordingChanged((value) => setStatus(value ?? idle)));
   return status;
-}
-
-/** 历史条数（侧栏上显示）；截图入库或删除后刷新 */
-export function useSnapshotCount() {
-  const [count, setCount] = useState<number | null>(null);
-  const refresh = () =>
-    listSnapshots()
-      .then((list) => setCount(Array.isArray(list) ? list.length : 0))
-      .catch(() => {});
-  useEffect(() => {
-    void refresh();
-  }, []);
-  useTauriListener(() => onSnapshotsChanged(() => void refresh()));
-  return count;
 }
 
 /** 需要跟着时间走的显示（倒计时、录制时长）；不需要时不开计时器 */

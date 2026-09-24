@@ -47,7 +47,7 @@ export function TitleBar({ children, right, tall = false }: { children?: ReactNo
 type NavItem = { page: NavPage; label: string; trailing?: ReactNode };
 
 export function useNavItems(): { work: NavItem[]; settings: NavItem[] } {
-  const { conflicts, settings, snapshotCount } = useApp();
+  const { conflicts } = useApp();
   return {
     work: [
       {
@@ -55,16 +55,8 @@ export function useNavItems(): { work: NavItem[]; settings: NavItem[] } {
         label: "快捷操作",
         trailing: conflicts.length ? <span className="signal small" aria-label={`${conflicts.length} 个冲突`}>{conflicts.length}</span> : null,
       },
-      {
-        page: "prompt",
-        label: "Prompt 编辑",
-        trailing: settings.baseUrl && settings.model ? null : <span className="small quiet">未配置</span>,
-      },
-      {
-        page: "history",
-        label: "快照历史",
-        trailing: snapshotCount ? <span className="mono small quiet">{snapshotCount}</span> : null,
-      },
+      { page: "prompt", label: "Prompt" },
+      { page: "history", label: "快照历史" },
       { page: "pet", label: "桌面伴侣" },
     ],
     settings: [
