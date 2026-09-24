@@ -17,7 +17,7 @@ mod windows_recorder;
 use arboard::{Clipboard, ImageData};
 use base64::{engine::general_purpose::STANDARD as BASE64, Engine as _};
 use chrono::Local;
-use image::{DynamicImage, ImageFormat, RgbaImage};
+use image::{ImageFormat, RgbaImage};
 use parking_lot::Mutex;
 // 只有 macOS 的 recorder sidecar 要按行读子进程输出
 use serde::Serialize;

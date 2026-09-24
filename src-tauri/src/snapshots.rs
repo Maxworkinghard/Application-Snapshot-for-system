@@ -1,4 +1,5 @@
 use super::*;
+use image::buffer::ConvertBuffer;
 use serde::Deserialize;
 
 const SNAPSHOT_LIMIT: usize = 200;
@@ -100,13 +101,7 @@ pub(crate) fn store_snapshot(
     let id = format!("snap-{created_at}");
     let file_name = format!("{id}.{ext}");
     let path = dir.join(&file_name);
-    let dynamic = DynamicImage::ImageRgba8(image.clone());
-    // JPEG 不支持 alpha，先落到 RGB；PNG/WebP 可直接写 RGBA
-    let save_result = match format {
-        ImageFormat::Jpeg => dynamic.to_rgb8().save_with_format(&path, ImageFormat::Jpeg),
-        _ => dynamic.save_with_format(&path, format),
-    };
-    save_result.map_err(|error| format!("保存快照失败：{error}"))?;
+    write_image(image, &path, format).map_err(|error| format!("保存快照失败：{error}"))?;
     let size_bytes = fs::metadata(&path).map(|meta| meta.len()).unwrap_or(0);
     let record = SnapshotRecord {
         id,
@@ -125,6 +120,20 @@ pub(crate) fn store_snapshot(
     }
     write_snapshot_index(&index_path, &records)?;
     Ok(record)
+}
+
+/// 按格式写盘。JPEG 不支持 alpha，要先转成 RGB；PNG / WebP 直接写 RGBA。
+pub(crate) fn write_image(
+    image: &RgbaImage,
+    path: &Path,
+    format: ImageFormat,
+) -> image::ImageResult<()> {
+    if format == ImageFormat::Jpeg {
+        let rgb: image::RgbImage = image.convert();
+        rgb.save_with_format(path, format)
+    } else {
+        image.save_with_format(path, format)
+    }
 }
 
 /// 展开 `~/…`；其它路径原样返回。
@@ -269,5 +278,21 @@ mod tests {
         assert_eq!(mime_for_snapshot_file("a.JPG"), "image/jpeg");
         assert_eq!(mime_for_snapshot_file("a.webp"), "image/webp");
         assert_eq!(mime_for_snapshot_file("a.png"), "image/png");
+    }
+
+    #[test]
+    fn write_image_round_trips_every_supported_format() {
+        let image = RgbaImage::from_pixel(3, 2, image::Rgba([200, 100, 50, 128]));
+        for (format, ext) in [
+            (ImageFormat::Png, "png"),
+            (ImageFormat::Jpeg, "jpg"),
+            (ImageFormat::WebP, "webp"),
+        ] {
+            let path = std::env::temp_dir().join(format!("snapshot-write-image-test.{ext}"));
+            write_image(&image, &path, format).expect("写盘失败");
+            let decoded = image::open(&path).expect("写出的文件应能读回");
+            assert_eq!((decoded.width(), decoded.height()), (3, 2), "{ext}");
+            let _ = fs::remove_file(&path);
+        }
     }
 }
