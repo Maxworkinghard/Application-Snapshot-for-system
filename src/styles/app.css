@@ -280,60 +280,6 @@ select:disabled,
   min-height: 0;
 }
 
-/* 组织/工作区头部卡片 */
-.sidebar-workspace-header {
-  display: flex;
-  align-items: center;
-  gap: var(--space-2);
-  padding: 7px 8px;
-  margin-bottom: 24px;
-  border-radius: var(--radius-sm);
-  background: var(--bg-surface-subtle);
-  border: 1px solid var(--border-subtle);
-}
-
-.workspace-avatar-box {
-  width: 26px;
-  height: 26px;
-  border-radius: var(--radius-xs);
-  background: linear-gradient(135deg, rgba(99, 102, 241, 0.25), rgba(168, 85, 247, 0.25));
-  border: 1px solid rgba(99, 102, 241, 0.35);
-  display: grid;
-  place-items: center;
-  color: var(--accent-primary);
-  flex-shrink: 0;
-}
-
-.workspace-text-group {
-  display: flex;
-  flex-direction: column;
-  min-width: 0;
-  flex: 1;
-}
-
-.workspace-title-row {
-  display: flex;
-  align-items: center;
-  justify-content: space-between;
-}
-
-.workspace-name-text {
-  font-size: var(--text-body);
-  font-weight: 600;
-  color: var(--text-primary);
-  white-space: nowrap;
-  overflow: hidden;
-  text-overflow: ellipsis;
-}
-
-.workspace-meta-text {
-  font-size: var(--text-caption);
-  color: var(--text-tertiary);
-  white-space: nowrap;
-  overflow: hidden;
-  text-overflow: ellipsis;
-}
-
 /* 分组块 */
 .sidebar-group-block {
   margin-bottom: 22px;

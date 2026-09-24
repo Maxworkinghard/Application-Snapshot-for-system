@@ -128,10 +128,6 @@
     min-height: 150px;
   }
 
-  .sidebar-workspace-header {
-    margin-bottom: var(--space-3);
-  }
-
   .sidebar-group-block {
     margin-bottom: var(--space-3);
   }
