@@ -31,12 +31,7 @@ pub(crate) fn ocr_capability() -> OcrCapability {
 /// 识别历史库里的某张快照
 #[tauri::command]
 pub(crate) async fn ocr_snapshot(state: State<'_, AppState>, id: String) -> Result<String, String> {
-    let record = snapshots::read_snapshot_index(&snapshots::snapshot_index_path(&state))
-        .into_iter()
-        .find(|item| item.id == id)
-        .ok_or_else(|| "找不到这条快照".to_string())?;
-    let bytes = fs::read(snapshots::history_dir(&state).join(&record.file_name))
-        .map_err(|_| "快照文件已被移动或删除".to_string())?;
+    let (_, bytes) = snapshots::read_snapshot(&state, &id)?;
     // WinRT 这套调用是阻塞的，挪到阻塞线程池，别卡住界面
     tauri::async_runtime::spawn_blocking(move || ocr::adapter().recognize_png(&bytes))
         .await

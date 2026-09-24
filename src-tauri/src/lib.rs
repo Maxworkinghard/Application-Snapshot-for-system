@@ -1,5 +1,6 @@
 mod actions;
 mod capture;
+mod media;
 mod ocr;
 mod pet;
 mod platform;
@@ -106,6 +107,7 @@ pub fn run() {
         }))
         .plugin(shortcuts::plugin())
         .plugin(tauri_plugin_dialog::init())
+        .register_asynchronous_uri_scheme_protocol(media::SCHEME, media::handle)
         .manage(AppState {
             settings_path,
             snapshots_dir,
@@ -283,7 +285,6 @@ pub fn run() {
             pet::select_pet_appearance,
             pet::add_pet_asset,
             pet::delete_pet_asset,
-            pet::get_pet_asset_data_url,
             settings::save_shortcuts,
             shortcuts::get_shortcut_conflicts,
             settings::save_preferences,
@@ -297,7 +298,6 @@ pub fn run() {
             snapshots::list_snapshots,
             snapshots::open_snapshots_dir,
             recording::open_recordings_dir,
-            snapshots::get_snapshot_data_url,
             snapshots::delete_snapshot,
             snapshots::clear_snapshots,
             capture::ocr_capability,
@@ -320,8 +320,6 @@ pub fn run() {
 
 #[cfg(all(test, target_os = "macos"))]
 mod mac_icon_tests {
-    use base64::{engine::general_purpose::STANDARD as BASE64, Engine as _};
-
     #[test]
     fn finder_icon_encodes_as_64px_png() {
         let Ok(output) = std::process::Command::new("pgrep")
@@ -338,15 +336,7 @@ mod mac_icon_tests {
         else {
             return;
         };
-        let url =
-            crate::platform::mac_icon::png_data_url_for_pid(pid).expect("Finder 应当能取到图标");
-        assert!(
-            url.starts_with("data:image/png;base64,"),
-            "应返回 PNG data URL"
-        );
-        let png = BASE64
-            .decode(url.trim_start_matches("data:image/png;base64,"))
-            .expect("data URL 应为合法 base64");
+        let png = crate::platform::mac_icon::png_for_pid(pid, 64).expect("Finder 应当能取到图标");
         // 图标 TIFF 里有 1024×1024 原图；不真压尺寸的话这里会得到六百 KB 的大图
         let decoded = image::load_from_memory(&png).expect("导出的应为合法 PNG");
         assert_eq!(

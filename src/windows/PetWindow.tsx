@@ -2,26 +2,21 @@ import { useEffect, useRef, useState } from "react";
 import { getCurrentWindow, LogicalSize } from "@tauri-apps/api/window";
 import { AppWindow, PawPrint } from "lucide-react";
 import {
-  getPetAssetDataUrl,
   getPreviousApp,
   loadSettings,
   onPreviousAppChanged,
   onSettingsChanged,
   showQuickMenu,
 } from "../lib/backend";
+import { iconUrl, petUrl } from "../lib/media";
+import { MediaImage } from "../components/MediaImage";
 import type { PreviousApp, Settings } from "../types";
 
-/** 桌宠素材只有 GIF，直接当图片渲染即可。 */
-export function renderPetMedia(dataUrl: string, className: string) {
-  return <img key={dataUrl} className={className} src={dataUrl} alt="" draggable={false} />;
-}
-
 export function PetWindow() {
-  const [app, setApp] = useState<PreviousApp>({ id: null, name: "", title: "", iconDataUrl: null });
+  const [app, setApp] = useState<PreviousApp>({ id: null, pid: null, name: "", title: "" });
   const [appearanceId, setAppearanceId] = useState("app-icon");
   const [animations, setAnimations] = useState<string[]>([]);
   const [animationIndex, setAnimationIndex] = useState(0);
-  const [assetDataUrl, setAssetDataUrl] = useState<string | null>(null);
   const [petSize, setPetSize] = useState(60);
   const dragged = useRef(false);
 
@@ -44,19 +39,6 @@ export function PetWindow() {
       void settingsListener.then((unlisten) => unlisten());
     };
   }, []);
-
-  useEffect(() => {
-    let active = true;
-    if (appearanceId === "app-icon") {
-      setAssetDataUrl(null);
-      return () => { active = false; };
-    }
-    const entry = animations[animationIndex] ?? null;
-    void getPetAssetDataUrl(appearanceId, entry)
-      .then((value) => { if (active) setAssetDataUrl(value); })
-      .catch(() => { if (active) setAssetDataUrl(null); });
-    return () => { active = false; };
-  }, [appearanceId, animationIndex, animations]);
 
   useEffect(() => {
     if (appearanceId === "app-icon" || animations.length < 2) return;
@@ -112,6 +94,8 @@ export function PetWindow() {
     window.addEventListener("pointerup", finishClick);
   }
 
+  const petSrc = appearanceId === "app-icon" ? null : petUrl(appearanceId, animations[animationIndex] ?? null);
+
   function onContextMenu(event: React.MouseEvent) {
     event.preventDefault();
     void showQuickMenu(event.screenX, event.screenY);
@@ -127,11 +111,19 @@ export function PetWindow() {
     >
       <div className="pet-orb">
         {appearanceId !== "app-icon" ? (
-          assetDataUrl ? renderPetMedia(assetDataUrl, "pet-fade") : <PawPrint size={petSize - 10} />
-        ) : app.iconDataUrl ? (
-          <img src={app.iconDataUrl} alt={app.name} draggable={false} />
+          <MediaImage
+            key={petSrc ?? "none"}
+            className="pet-fade"
+            src={petSrc}
+            fallback={<PawPrint size={petSize - 10} />}
+          />
         ) : (
-          <AppWindow size={petSize - 12} />
+          <MediaImage
+            key={app.pid ?? "none"}
+            src={app.pid === null ? null : iconUrl(app.pid, petSize)}
+            alt={app.name}
+            fallback={<AppWindow size={petSize - 12} />}
+          />
         )}
       </div>
     </div>

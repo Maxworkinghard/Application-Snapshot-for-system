@@ -1,4 +1,4 @@
-import { convertFileSrc } from "@tauri-apps/api/core";
+import { soundUrl } from "./media";
 
 /** 试听提示音：有自定义文件就播文件，否则用 WebAudio 合成一声短促提示 */
 /**
@@ -37,10 +37,11 @@ export function previewHintSound(kind: "crisp" | "soft", customPath: string | nu
   const gain = Math.min(1, Math.max(0, volume / 100));
   try {
     if (customPath) {
-      const inTauri = "__TAURI_INTERNALS__" in window;
-      const audio = new Audio(inTauri ? convertFileSrc(customPath) : customPath);
+      // 原先用 asset 协议，但项目从没开启它，自定义音效其实一直放不出来
+      const audio = new Audio(soundUrl(customPath));
       audio.volume = gain;
-      void audio.play();
+      // 文件被移走等情况下播不出来就算了，不打断截图流程
+      audio.play().catch(() => {});
       return;
     }
     const AudioContextCtor =

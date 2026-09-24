@@ -1,4 +1,4 @@
-import { mockIPC, mockWindows } from "@tauri-apps/api/mocks";
+import { mockConvertFileSrc, mockIPC, mockWindows } from "@tauri-apps/api/mocks";
 import type { InvokeArgs } from "@tauri-apps/api/core";
 
 export type IPCHandler = (command: string, payload?: InvokeArgs) => unknown;
@@ -15,6 +15,8 @@ export function setupTauriMock(
 ) {
   const currentWindow = options.currentWindow ?? "main";
   mockWindows(currentWindow);
+  // 图片地址走 convertFileSrc（media:// 协议），测试里也要有它
+  mockConvertFileSrc("windows");
   Object.defineProperty(window.navigator, "userAgent", {
     configurable: true,
     value: options.userAgent ?? userAgents.windows,

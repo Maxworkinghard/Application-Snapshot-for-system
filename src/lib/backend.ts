@@ -11,7 +11,8 @@ import type {
   SnapshotRecord,
 } from "../types";
 
-// 前端调用后端的全部入口。浏览器预览时的假数据不在这里，见 preview.ts。
+// 前端调用后端的全部入口。浏览器预览时的假数据不在这里，见 preview.ts；
+// 图片与音频不走这里，而是由页面按地址直接取，见 media.ts。
 
 export const loadSettings = () => invoke<Settings>("load_settings");
 
@@ -31,9 +32,6 @@ export const selectPetAppearance = (id: string) => invoke<Settings>("select_pet_
 export const addPetAsset = (path: string) => invoke<Settings>("add_pet_asset", { path });
 
 export const deletePetAsset = (id: string) => invoke<Settings>("delete_pet_asset", { id });
-
-export const getPetAssetDataUrl = (id: string, entry: string | null = null) =>
-  invoke<string>("get_pet_asset_data_url", { id, entry });
 
 /** 后端校验、注册并落盘；有键注册不上时整组不生效、不保存，错误信息里列出这些键 */
 export const saveShortcuts = (shortcuts: ShortcutBinding[]) =>
@@ -88,8 +86,6 @@ export const listSnapshots = () => invoke<SnapshotRecord[]>("list_snapshots");
 export const openSnapshotsDir = () => invoke<string>("open_snapshots_dir");
 
 export const openRecordingsDir = () => invoke<string>("open_recordings_dir");
-
-export const getSnapshotDataUrl = (id: string) => invoke<string>("get_snapshot_data_url", { id });
 
 export const deleteSnapshot = (id: string) => invoke<SnapshotRecord[]>("delete_snapshot", { id });
 

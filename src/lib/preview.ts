@@ -104,7 +104,7 @@ async function handle(command: string, payload?: InvokeArgs): Promise<unknown> {
     case "fetch_models":
       return ["gpt-4.1", "gpt-4.1-mini", "gpt-4o-mini"];
     case "get_previous_app":
-      return { id: null, name: "上一个应用", title: "等待切换应用", iconDataUrl: null };
+      return { id: null, pid: null, name: "上一个应用", title: "等待切换应用" };
     case "capture_window":
       return "预览模式下不会读取系统窗口";
     case "toggle_recording":
@@ -124,8 +124,6 @@ async function handle(command: string, payload?: InvokeArgs): Promise<unknown> {
     case "delete_snapshot":
     case "clear_snapshots":
       return [];
-    case "get_snapshot_data_url":
-    case "get_pet_asset_data_url":
     case "ocr_snapshot":
     case "ocr_clipboard":
       return "";

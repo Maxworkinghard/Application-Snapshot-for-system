@@ -5,7 +5,7 @@ import type { InvokeArgs } from "@tauri-apps/api/core";
 import type { RecordingStatus } from "../types";
 import { setupTauriMock } from "../test/tauri";
 
-const windowList = [{ id: 73, appName: "Visual Studio Code", title: "notes.md", iconDataUrl: null }];
+const windowList = [{ id: 73, pid: 4242, appName: "Visual Studio Code", title: "notes.md" }];
 
 describe("quick menu recording picker", () => {
   it("opens the recording picker and starts recording the selected window id", async () => {

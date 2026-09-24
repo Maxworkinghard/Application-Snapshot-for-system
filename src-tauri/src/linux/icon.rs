@@ -5,8 +5,8 @@ use std::fs;
 use std::path::{Path, PathBuf};
 use std::process::Command;
 
-/// 尝试为 pid 找一张图标。失败返回 None，调用方显示占位即可。
-pub fn icon_for_process(pid: u32) -> Option<RgbaImage> {
+/// 尝试为 pid 找一张不超过 `size` 像素边长的图标。失败返回 None，调用方显示占位即可。
+pub fn icon_for_process(pid: u32, size: u32) -> Option<RgbaImage> {
     let exe = fs::read_link(format!("/proc/{pid}/exe")).ok()?;
     let name = exe.file_name()?.to_string_lossy().to_string();
     // 去掉常见后缀
@@ -16,7 +16,44 @@ pub fn icon_for_process(pid: u32) -> Option<RgbaImage> {
         .to_string();
 
     let icon_name = find_desktop_icon(&stem).unwrap_or(stem);
-    load_icon_file(&icon_name).or_else(|| load_named_icon(&icon_name))
+    load_icon_file(&icon_name)
+        .or_else(|| load_named_icon(&icon_name, size))
+        .map(|image| fit(image, size))
+}
+
+/// 比要的大就等比缩下来：窗口列表只显示 24px，没必要把 256px 的原图传给页面。
+fn fit(image: RgbaImage, size: u32) -> RgbaImage {
+    if image.width() <= size && image.height() <= size {
+        return image;
+    }
+    image::DynamicImage::ImageRgba8(image)
+        .resize(size, size, image::imageops::FilterType::Triangle)
+        .into_rgba8()
+}
+
+/// hicolor 主题的尺寸目录，按「刚好够用」排序：先由小到大取不小于 `size` 的，
+/// 都没有再由大到小取更小的。这样既不糊，也不白白读一张大图再缩。
+fn size_dirs_for(size: u32) -> Vec<&'static str> {
+    const AVAILABLE: [(u32, &str); 5] = [
+        (32, "32x32"),
+        (48, "48x48"),
+        (64, "64x64"),
+        (128, "128x128"),
+        (256, "256x256"),
+    ];
+    let mut dirs: Vec<&str> = AVAILABLE
+        .iter()
+        .filter(|(edge, _)| *edge >= size)
+        .map(|(_, dir)| *dir)
+        .collect();
+    dirs.extend(
+        AVAILABLE
+            .iter()
+            .rev()
+            .filter(|(edge, _)| *edge < size)
+            .map(|(_, dir)| *dir),
+    );
+    dirs
 }
 
 fn xdg_data_dirs() -> Vec<PathBuf> {
@@ -84,13 +121,11 @@ fn load_icon_file(icon: &str) -> Option<RgbaImage> {
     None
 }
 
-fn load_named_icon(name: &str) -> Option<RgbaImage> {
-    // 优先用 gtk-encode-symbolic-svg / 直接搜 hicolor；避免链 GTK。
-    // 常见尺寸从大到小。
-    let sizes = ["256x256", "128x128", "64x64", "48x48", "32x32"];
+fn load_named_icon(name: &str, edge: u32) -> Option<RgbaImage> {
+    // 直接搜 hicolor，避免链 GTK。
     let exts = ["png", "svg"];
     for root in xdg_data_dirs() {
-        for size in sizes {
+        for size in size_dirs_for(edge) {
             for ext in exts {
                 let candidate = root
                     .join("icons/hicolor")
@@ -99,7 +134,7 @@ fn load_named_icon(name: &str) -> Option<RgbaImage> {
                     .join(format!("{name}.{ext}"));
                 if candidate.is_file() {
                     if ext == "svg" {
-                        if let Some(png) = rasterize_svg(&candidate) {
+                        if let Some(png) = rasterize_svg(&candidate, edge) {
                             return Some(png);
                         }
                     } else if let Ok(img) = image::open(&candidate) {
@@ -121,10 +156,11 @@ fn load_named_icon(name: &str) -> Option<RgbaImage> {
     None
 }
 
-fn rasterize_svg(path: &Path) -> Option<RgbaImage> {
+fn rasterize_svg(path: &Path, edge: u32) -> Option<RgbaImage> {
     // 可选：rsvg-convert；没有就跳过 SVG
+    let edge = edge.to_string();
     let output = Command::new("rsvg-convert")
-        .args(["-w", "128", "-h", "128"])
+        .args(["-w", &edge, "-h", &edge])
         .arg(path)
         .output()
         .ok()?;
@@ -139,4 +175,29 @@ fn rasterize_svg(path: &Path) -> Option<RgbaImage> {
             let _ = Rgba([0, 0, 0, 0]);
             None
         })
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn picks_the_smallest_size_that_is_big_enough_first() {
+        assert_eq!(size_dirs_for(48)[0], "48x48");
+        assert_eq!(size_dirs_for(50)[0], "64x64");
+        assert_eq!(
+            size_dirs_for(300),
+            vec!["256x256", "128x128", "64x64", "48x48", "32x32"]
+        );
+        assert_eq!(
+            size_dirs_for(20),
+            vec!["32x32", "48x48", "64x64", "128x128", "256x256"]
+        );
+    }
+
+    #[test]
+    fn fit_shrinks_but_never_enlarges() {
+        assert_eq!(fit(RgbaImage::new(256, 256), 64).dimensions(), (64, 64));
+        assert_eq!(fit(RgbaImage::new(32, 32), 64).dimensions(), (32, 32));
+    }
 }
