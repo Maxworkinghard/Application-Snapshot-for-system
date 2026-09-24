@@ -106,6 +106,8 @@
 
 .side-nav { display: flex; flex-direction: column; gap: 20px; }
 .nav-group { display: flex; flex-direction: column; gap: 2px; }
+/* 今日流水：下半截还要放流水，导航两组连着排，不空行 */
+.layout-ledger .side-nav { gap: 2px; }
 .nav-item {
   display: flex; align-items: center; justify-content: space-between; gap: 8px;
   height: 30px; padding: 0; border: 0; background: none; color: var(--ink-3); text-align: left; white-space: nowrap;
