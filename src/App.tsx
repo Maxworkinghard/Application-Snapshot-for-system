@@ -67,6 +67,12 @@ const navGroups: Array<{ title: string; items: NavEntry[] }> = [
   },
 ];
 
+/**
+ * 自带内部滚动区的页面：高度要锁在窗口内，底部的面板才会一直可见。
+ * 快照历史原先漏在外面，卡片一多，「提取文字」的结果面板就被挤到屏幕下方看不见。
+ */
+const FULL_HEIGHT_PAGES = new Set<NavPage>(["prompt", "ocr", "history"]);
+
 /** 旧页面淡出的时长，必须和 styles 里 page-leave 的 animation-duration 对齐 */
 const PAGE_EXIT_MS = 120;
 
@@ -282,7 +288,7 @@ export function App() {
         <main className="window-main-canvas" ref={canvasRef}>
           <div
             key={shownPage}
-            className={`page-transition-layer ${isLeaving ? "is-leaving" : "is-entering"} ${shownPage === "prompt" || shownPage === "ocr" ? "is-fullheight-page" : ""}`}
+            className={`page-transition-layer ${isLeaving ? "is-leaving" : "is-entering"} ${FULL_HEIGHT_PAGES.has(shownPage) ? "is-fullheight-page" : ""}`}
           >
             {content}
           </div>
