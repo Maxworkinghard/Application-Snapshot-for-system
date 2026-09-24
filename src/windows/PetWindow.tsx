@@ -106,7 +106,7 @@ export function PetWindow() {
       className={`pet-window ${appearanceId === "app-icon" ? "app-icon" : "custom"}`}
       onPointerDown={onPointerDown}
       onContextMenu={onContextMenu}
-      title={appearanceId === "app-icon" && app.name ? `${app.name} · 右键打开功能` : "右键打开功能"}
+      title={appearanceId === "app-icon" && app.name ? `${app.name} · 右键打开输入框` : "右键打开输入框"}
       style={{ "--pet-icon-size": `${petSize - 4}px` } as React.CSSProperties}
     >
       <div className="pet-orb">

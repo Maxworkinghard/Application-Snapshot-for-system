@@ -1,218 +1,566 @@
-import { useEffect, useRef, useState } from "react";
+import { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState, type ReactNode } from "react";
 import { getCurrentWindow } from "@tauri-apps/api/window";
 import {
-  Camera,
-  CheckCircle2,
-  ChevronLeft,
-  CircleStop,
-  Loader2,
-  TextCursorInput,
-  Video,
-  X,
-  XCircle,
-} from "lucide-react";
-import {
-  captureWindow,
+  copySnapshot,
+  copyText,
   getRecordingStatus,
+  getShortcutConflicts,
   hideQuickMenu,
+  listSnapshots,
   listWindows,
-  polishClipboard,
-  setQuickMenuExpanded,
+  loadSettings,
+  onPaletteOpened,
+  onSettingsChanged,
+  polishText,
+  readClipboardText,
+  resizeQuickMenu,
+  runAction,
+  showMainWindow,
   toggleRecording,
 } from "../lib/backend";
-import { iconUrl } from "../lib/media";
+import { iconUrl, petThumbUrl, petUrl, thumbUrl } from "../lib/media";
+import { formatDuration, formatWhen } from "../lib/format";
+import { typingEntry } from "../lib/petNames";
+import { motionReduced } from "../lib/motion";
 import { MediaImage } from "../components/MediaImage";
-import type { CapturableWindow, RecordingStatus } from "../types";
+import { Keys } from "../components/ui/Keys";
+import type { CapturableWindow, RecordingStatus, Settings, ShortcutAction, SnapshotRecord } from "../types";
 
-type QuickStatus = { kind: "info" | "busy" | "ok" | "error"; text: string };
+type View = "menu" | "windows" | "polish";
+type Status = { kind: "busy" | "ok" | "error"; text: string };
+type Item = { id: string; label: ReactNode; hint?: ReactNode; keywords: string; run: () => void; muted?: boolean };
 
-/** 成功提示停留多久后自动收起菜单 */
+/** 成功类提示停留多久后自动收起 */
 const OK_HIDE_DELAY_MS = 900;
+/** 面板上方留给猫的空间（窗口本身透明） */
+const CAT_ROOM = 112;
+const EDGE = 40;
 
+const errorText = (error: unknown) => (error instanceof Error ? error.message : String(error));
+
+/**
+ * 输入框：右键桌宠或按「呼出输入框」快捷键出来。
+ * 能做的事列成几行；打字就筛选，粘贴一段文字就直接进润色。
+ * 键盘就能走完：↑ ↓ 选、↵ 执行、Esc 返回或关掉；润色时 Tab 换规则、Ctrl R 再来一次、Ctrl ← 看原文。
+ */
 export function QuickMenuWindow() {
-  const [page, setPage] = useState<"menu" | "windows">("menu");
-  /// 列表页是给截图用还是给录制用——决定点一行之后做什么
+  const [settings, setSettings] = useState<Settings | null>(null);
+  const [view, setView] = useState<View>("menu");
+  const [query, setQuery] = useState("");
+  const [cursor, setCursor] = useState(0);
   const [pickerMode, setPickerMode] = useState<"capture" | "record">("capture");
-  const [windows, setWindows] = useState<CapturableWindow[]>([]);
-  const [loading, setLoading] = useState(false);
-  const [status, setStatus] = useState<QuickStatus | null>(null);
+  const [windows, setWindows] = useState<CapturableWindow[] | null>(null);
   const [recording, setRecording] = useState<RecordingStatus>({ active: false, target: null, startedAt: null });
+  const [latest, setLatest] = useState<SnapshotRecord | null>(null);
+  const [conflicts, setConflicts] = useState<string[]>([]);
+  const [status, setStatus] = useState<Status | null>(null);
+  const [opening, setOpening] = useState(0);
+  const [now, setNow] = useState(() => Date.now());
+
+  // 润色
+  const [source, setSource] = useState("");
+  const [result, setResult] = useState<string | null>(null);
+  const [polishError, setPolishError] = useState<string | null>(null);
+  const [running, setRunning] = useState(false);
+  const [peek, setPeek] = useState(false);
+  const [templateId, setTemplateId] = useState<string | null>(null);
+  const [startedAt, setStartedAt] = useState(0);
+  const runToken = useRef(0);
+
+  const inputRef = useRef<HTMLInputElement>(null);
+  const resultRef = useRef<HTMLDivElement>(null);
+  const panelRef = useRef<HTMLDivElement>(null);
   const hideTimer = useRef<number | null>(null);
 
-  useEffect(() => {
-    void getRecordingStatus().then(setRecording);
-    const pending = getCurrentWindow().onFocusChanged(({ payload }) => {
-      if (payload) {
-        setPage("menu");
-        setStatus(null);
-        void setQuickMenuExpanded(false);
-      } else {
-        void hideQuickMenu();
-      }
-    });
-    return () => {
-      void pending.then((unlisten) => unlisten());
-    };
+  const refresh = useCallback(() => {
+    loadSettings().then(setSettings).catch(() => {});
+    getRecordingStatus().then((value) => value && setRecording(value)).catch(() => {});
+    listSnapshots()
+      .then((list) => setLatest(Array.isArray(list) && list.length ? list[0] : null))
+      .catch(() => {});
+    getShortcutConflicts()
+      .then((list) => setConflicts(Array.isArray(list) ? list : []))
+      .catch(() => {});
+  }, []);
+
+  const reset = useCallback(() => {
+    if (hideTimer.current !== null) window.clearTimeout(hideTimer.current);
+    runToken.current += 1;
+    setView("menu");
+    setQuery("");
+    setCursor(0);
+    setStatus(null);
+    setWindows(null);
+    setResult(null);
+    setPolishError(null);
+    setRunning(false);
+    setPeek(false);
+    setOpening((value) => value + 1);
+    window.setTimeout(() => inputRef.current?.focus(), 0);
   }, []);
 
   useEffect(() => {
-    void setQuickMenuExpanded(page === "windows" || Boolean(status?.text));
-  }, [page, status?.text]);
+    refresh();
+    const opened = onPaletteOpened(() => {
+      reset();
+      refresh();
+    });
+    const settingsListener = onSettingsChanged(setSettings);
+    const focus = getCurrentWindow().onFocusChanged(({ payload }) => {
+      if (!payload) void hideQuickMenu();
+    });
+    return () => {
+      void opened.then((unlisten) => unlisten()).catch(() => {});
+      void settingsListener.then((unlisten) => unlisten()).catch(() => {});
+      void focus.then((unlisten) => unlisten()).catch(() => {});
+    };
+  }, [refresh, reset]);
 
-  function showStatus(next: QuickStatus) {
-    if (hideTimer.current !== null) {
-      window.clearTimeout(hideTimer.current);
-      hideTimer.current = null;
-    }
+  useEffect(() => {
+    if (!recording.active && !running) return;
+    const timer = window.setInterval(() => setNow(Date.now()), 1000);
+    return () => window.clearInterval(timer);
+  }, [recording.active, running]);
+
+  const asset = settings?.petAssets.find((item) => item.id === settings.selectedAppearanceId && !item.missing) ?? null;
+  const headroom = asset ? CAT_ROOM : 24;
+
+  // 窗口高度跟着面板走：进润色、展开窗口列表时变高
+  useLayoutEffect(() => {
+    const panel = panelRef.current;
+    if (!panel) return;
+    const apply = () => void resizeQuickMenu(Math.ceil(panel.getBoundingClientRect().height) + headroom + EDGE).catch(() => {});
+    apply();
+    if (typeof ResizeObserver === "undefined") return;
+    const observer = new ResizeObserver(apply);
+    observer.observe(panel);
+    return () => observer.disconnect();
+  }, [headroom]);
+
+  function showStatus(next: Status | null, hideAfter = false) {
+    if (hideTimer.current !== null) window.clearTimeout(hideTimer.current);
     setStatus(next);
+    if (hideAfter) hideTimer.current = window.setTimeout(() => void hideQuickMenu(), OK_HIDE_DELAY_MS);
   }
 
-  /** 成功类提示短暂展示后自动收起；失败/进行中提示留在原地由用户处理 */
-  function scheduleHideAfterOk() {
-    hideTimer.current = window.setTimeout(() => void hideQuickMenu(), OK_HIDE_DELAY_MS);
-  }
+  const accelerator = (action: ShortcutAction) =>
+    settings?.shortcuts.find((item) => item.action === action)?.accelerator ?? null;
+  const shortcutHint = (action: ShortcutAction) => {
+    const value = accelerator(action);
+    if (!value) return null;
+    if (conflicts.includes(value)) return <span className="signal small">快捷键被占用</span>;
+    return <Keys value={value} quiet />;
+  };
 
-  async function openWindows(mode: "capture" | "record") {
-    setLoading(true);
-    showStatus({ kind: "info", text: "" });
+  async function openPicker(mode: "capture" | "record") {
     setPickerMode(mode);
-    setPage("windows");
+    setView("windows");
+    setQuery("");
+    setCursor(0);
+    setWindows(null);
+    showStatus(null);
     try {
       setWindows(await listWindows());
     } catch (error) {
-      showStatus({ kind: "error", text: error instanceof Error ? error.message : String(error) });
-    } finally {
-      setLoading(false);
+      setWindows([]);
+      showStatus({ kind: "error", text: errorText(error) });
     }
+    inputRef.current?.focus();
   }
 
-  function returnToMenu() {
-    setPage("menu");
-    showStatus({ kind: "info", text: "" });
-  }
-
-  async function capture(id: number) {
-    showStatus({ kind: "busy", text: "正在截取…" });
-    try {
-      showStatus({ kind: "ok", text: await captureWindow(id) });
-      scheduleHideAfterOk();
-    } catch (error) {
-      showStatus({ kind: "error", text: error instanceof Error ? error.message : String(error) });
-    }
-  }
-
-  async function record(targetId?: number) {
-    const wasActive = recording.active;
-    // 没在录、也没指定窗口，就先去选一个——与应用快照同样的流程
-    if (!wasActive && targetId === undefined) {
-      void openWindows("record");
+  async function pickWindow(item: CapturableWindow) {
+    if (pickerMode === "capture") {
+      // 后端先把输入框藏起来再截，免得截进画面；失败会记进活动，主窗口的猫会说
+      void runAction("capture", item.id).catch(() => {});
       return;
     }
-    showStatus(wasActive ? { kind: "busy", text: "正在停止并保存录制…" } : { kind: "busy", text: "正在启动录制…" });
+    showStatus({ kind: "busy", text: `正在开始录 ${item.appName}…` });
     try {
-      // 停止时不传目标；开始时传了就录指定窗口
-      const next = await toggleRecording(wasActive ? undefined : targetId);
+      const next = await toggleRecording(item.id);
       setRecording(next);
-      if (next.active) {
-        // 从列表页开录的要退回主菜单，否则看不到那个停止键
-        setPage("menu");
-        void setQuickMenuExpanded(false);
-        // 录制进行中菜单不自动收起，方便随时回来点“停止”
-        // Linux portal 会带回 message（须重新选窗/屏）；否则用默认文案
-        showStatus({
-          kind: "ok",
-          text: next.message?.trim()
-            || ("已开始录制 " + (next.target ?? "应用窗口")),
-        });
-      } else {
-        showStatus({ kind: "ok", text: wasActive ? "录制已保存" : "录制已停止" });
-        scheduleHideAfterOk();
-      }
+      setView("menu");
+      showStatus({ kind: "ok", text: next.message?.trim() || `开始录制 ${next.target ?? item.appName}` }, true);
     } catch (error) {
-      showStatus({ kind: "error", text: error instanceof Error ? error.message : String(error) });
+      showStatus({ kind: "error", text: errorText(error) });
     }
   }
 
-  async function polish() {
-    showStatus({ kind: "busy", text: "正在润色剪贴板，最长等待 180 秒…" });
+  async function stopRecording() {
+    showStatus({ kind: "busy", text: "正在停止并保存录像…" });
     try {
-      showStatus({ kind: "ok", text: await polishClipboard() });
-      scheduleHideAfterOk();
+      const next = await toggleRecording();
+      setRecording(next);
+      showStatus({ kind: "ok", text: next.active ? "录制还在继续" : "录制已保存" }, !next.active);
     } catch (error) {
-      showStatus({ kind: "error", text: error instanceof Error ? error.message : String(error) });
+      showStatus({ kind: "error", text: errorText(error) });
     }
   }
 
-  const statusIcon =
-    status?.kind === "busy" ? (
-      <Loader2 size={13} className="spin" />
-    ) : status?.kind === "ok" ? (
-      <CheckCircle2 size={13} />
-    ) : status?.kind === "error" ? (
-      <XCircle size={13} />
-    ) : null;
+  const run = useCallback(
+    async (text: string, template: string | null) => {
+      const token = ++runToken.current;
+      setRunning(true);
+      setPolishError(null);
+      setPeek(false);
+      setStartedAt(Date.now());
+      try {
+        const polished = await polishText(text, template);
+        if (token !== runToken.current) return;
+        setResult(polished);
+      } catch (error) {
+        if (token !== runToken.current) return;
+        setPolishError(errorText(error));
+      } finally {
+        if (token === runToken.current) setRunning(false);
+      }
+    },
+    [],
+  );
+
+  function enterPolish(text: string) {
+    const trimmed = text.trim();
+    if (!trimmed) return;
+    const template = settings?.activeTemplateId ?? null;
+    setSource(trimmed);
+    setResult(null);
+    setTemplateId(template);
+    setView("polish");
+    showStatus(null);
+    if (!settings?.baseUrl || !settings?.model) {
+      setPolishError("还没填模型接口，润色用不了。打开主窗口，在「偏好设置」里填。");
+      return;
+    }
+    void run(trimmed, template);
+  }
+
+  async function polishClipboardText() {
+    try {
+      enterPolish(await readClipboardText());
+    } catch (error) {
+      showStatus({ kind: "error", text: errorText(error) });
+    }
+  }
+
+  function cycleRule(step: number) {
+    const templates = settings?.templates ?? [];
+    if (templates.length < 2) return;
+    const index = Math.max(0, templates.findIndex((item) => item.id === templateId));
+    const next = templates[(index + step + templates.length) % templates.length];
+    setTemplateId(next.id);
+    if (settings?.baseUrl && settings.model) void run(source, next.id);
+  }
+
+  async function copyAndClose() {
+    if (!result) return;
+    try {
+      await copyText(result);
+      void hideQuickMenu();
+    } catch (error) {
+      showStatus({ kind: "error", text: errorText(error) });
+    }
+  }
+
+  const items = useMemo<Item[]>(() => {
+    const list: Item[] = [
+      {
+        id: "capture",
+        label: "截一个窗口…",
+        hint: shortcutHint("snapshot"),
+        keywords: "截图 截屏 窗口 快照 capture snapshot",
+        run: () => void openPicker("capture"),
+      },
+      {
+        id: "fullscreen",
+        label: "全屏截图",
+        hint: shortcutHint("fullscreen"),
+        keywords: "全屏 截图 截屏 屏幕 fullscreen",
+        run: () => void runAction("fullscreen").catch(() => {}),
+      },
+      recording.active
+        ? {
+            id: "record",
+            label: (
+              <>
+                停止录制 · {recording.target ?? "窗口"}
+                <span className="mono signal"> {formatDuration(now - (recording.startedAt ?? now))}</span>
+              </>
+            ),
+            hint: shortcutHint("record"),
+            keywords: "停止 录制 录屏 record stop",
+            run: () => void stopRecording(),
+          }
+        : {
+            id: "record",
+            label: "录一个窗口…",
+            hint: shortcutHint("record"),
+            keywords: "录制 录屏 视频 record",
+            run: () => void openPicker("record"),
+          },
+      {
+        id: "polish",
+        label: "润色剪贴板里的文字",
+        hint: shortcutHint("polish"),
+        keywords: "润色 改写 prompt 剪贴板 polish",
+        run: () => void polishClipboardText(),
+      },
+    ];
+    if (latest) {
+      list.push({
+        id: "again",
+        label: (
+          <span className="palette-again">
+            <img src={thumbUrl(latest.id)} alt="" />
+            再复制一次上一张
+          </span>
+        ),
+        hint: <span className="small quiet">{latest.appName} · {formatWhen(latest.createdAt)}</span>,
+        keywords: `再 复制 上一张 截图 ${latest.appName}`,
+        run: () =>
+          void copySnapshot(latest.id)
+            .then((text) => showStatus({ kind: "ok", text }, true))
+            .catch((error) => showStatus({ kind: "error", text: errorText(error) })),
+      });
+    }
+    list.push({
+      id: "main",
+      label: "打开主窗口",
+      hint: <span className="small quiet">历史、形象、设置</span>,
+      keywords: "主窗口 设置 历史 形象 伴侣 settings",
+      muted: true,
+      run: () => {
+        void showMainWindow();
+        void hideQuickMenu();
+      },
+    });
+    return list;
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [settings, recording, latest, conflicts, now]);
+
+  const visibleItems = useMemo<Item[]>(() => {
+    const needle = query.trim().toLowerCase();
+    if (!needle) return items;
+    const matches = items.filter((item) => item.keywords.toLowerCase().includes(needle));
+    const polishItem: Item = {
+      id: "polish-query",
+      label: (
+        <>
+          润色这段文字<span className="small quiet"> · {query.trim().length} 字</span>
+        </>
+      ),
+      hint: <span className="mono small quiet">↵</span>,
+      keywords: "",
+      run: () => enterPolish(query),
+    };
+    // 打的是一句话而不是命令：润色排第一
+    return needle.length >= 8 || matches.length === 0 ? [polishItem, ...matches] : [...matches, polishItem];
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [items, query, settings]);
+
+  const visibleWindows = useMemo(() => {
+    const needle = query.trim().toLowerCase();
+    return (windows ?? []).filter(
+      (item) => !needle || item.appName.toLowerCase().includes(needle) || item.title.toLowerCase().includes(needle),
+    );
+  }, [windows, query]);
+
+  // 进润色后键盘焦点落在结果区，Tab / ↵ / Esc 才接得住
+  useEffect(() => {
+    if (view === "polish") resultRef.current?.focus();
+  }, [view]);
+
+  const rowCount = view === "menu" ? visibleItems.length : view === "windows" ? visibleWindows.length : 0;
+  useEffect(() => setCursor(0), [query, view]);
+
+  function onKeyDown(event: React.KeyboardEvent) {
+    if (view === "polish") {
+      if (event.key === "Escape") {
+        event.preventDefault();
+        runToken.current += 1;
+        setRunning(false);
+        setView("menu");
+        setQuery("");
+        window.setTimeout(() => inputRef.current?.focus(), 0);
+      } else if (event.key === "Tab") {
+        event.preventDefault();
+        cycleRule(event.shiftKey ? -1 : 1);
+      } else if (event.key === "Enter" && !event.shiftKey) {
+        event.preventDefault();
+        void copyAndClose();
+      } else if ((event.ctrlKey || event.metaKey) && event.key.toLowerCase() === "r") {
+        event.preventDefault();
+        if (!running) void run(source, templateId);
+      } else if ((event.ctrlKey || event.metaKey) && event.key === "ArrowLeft") {
+        event.preventDefault();
+        setPeek((value) => !value);
+      }
+      return;
+    }
+    if (event.key === "ArrowDown") {
+      event.preventDefault();
+      setCursor((value) => (rowCount ? (value + 1) % rowCount : 0));
+    } else if (event.key === "ArrowUp") {
+      event.preventDefault();
+      setCursor((value) => (rowCount ? (value - 1 + rowCount) % rowCount : 0));
+    } else if (event.key === "Enter") {
+      event.preventDefault();
+      if (view === "menu") visibleItems[cursor]?.run();
+      else if (visibleWindows[cursor]) void pickWindow(visibleWindows[cursor]);
+    } else if (event.key === "Escape") {
+      event.preventDefault();
+      if (view === "windows") {
+        setView("menu");
+        setQuery("");
+      } else if (query) setQuery("");
+      else void hideQuickMenu();
+    }
+  }
+
+  const templates = settings?.templates ?? [];
+  const templateName = templates.find((item) => item.id === templateId)?.name ?? "默认规则";
+  const catEntry = asset ? (view === "polish" ? typingEntry(asset.animations) ?? asset.entry : asset.entry) : null;
+  const catSrc = asset ? (motionReduced() ? petThumbUrl(asset.id) : petUrl(asset.id, catEntry || null)) : null;
 
   return (
-    <div className="quick-menu">
-      {page === "windows" && (
-        <header className="quick-header">
-          <button onClick={returnToMenu}><ChevronLeft size={17} /></button>
-          <strong>{pickerMode === "record" ? "选择要录制的窗口" : "选择要截取的窗口"}</strong>
-          <button onClick={() => void hideQuickMenu()}><X size={16} /></button>
-        </header>
-      )}
-
-      {page === "menu" ? (
-        <div className="quick-actions menu-only">
-          <button onClick={() => void openWindows("capture")}>
-            <span className="quick-action-icon violet"><Camera size={16} /></span>
-            <strong>应用快照</strong>
-          </button>
-          <button
-            disabled={status?.kind === "busy"}
-            aria-busy={status?.kind === "busy"}
-            onClick={() => void record()}
-          >
-            <span className="quick-action-icon red">{recording.active ? <CircleStop size={16} /> : <Video size={16} />}</span>
-            <strong>{recording.active ? "停止录制" : "录制"}</strong>
-          </button>
-          <button onClick={() => void polish()}>
-            <span className="quick-action-icon amber"><TextCursorInput size={16} /></span>
-            <strong>润色 Prompt</strong>
-          </button>
-        </div>
-      ) : (
-        <div className="window-picker">
-          {loading && <p className="quick-empty">正在读取窗口…</p>}
-          {!loading && windows.length === 0 && (
-            <p className="quick-empty">
-              {pickerMode === "record" ? "没有找到可录制的窗口" : "没有找到可截取的窗口"}
-            </p>
-          )}
-          {windows.map((item) => (
-            <button
-              key={item.id}
-              onClick={() => void (pickerMode === "record" ? record(item.id) : capture(item.id))}
-              title={pickerMode === "record" ? "录制这个窗口" : "截取这个窗口"}
-            >
-              <span className="window-icon">
-                <MediaImage
-                  src={iconUrl(item.pid, 24)}
-                  fallback={pickerMode === "record" ? <Video size={17} /> : <Camera size={17} />}
+    <div
+      className="palette-root"
+      style={{ paddingTop: headroom }}
+      onMouseDown={(event) => {
+        // 点在面板外面（透明区域）就收起
+        if (event.target === event.currentTarget) void hideQuickMenu();
+      }}
+      onKeyDown={onKeyDown}
+    >
+      <div className="palette-wrap" key={opening}>
+        {catSrc && <img className="palette-cat" key={catSrc} src={catSrc} alt="" draggable={false} />}
+        <div className="palette" ref={panelRef} role="dialog" aria-label="应用快照输入框">
+          {view === "polish" ? (
+            <div className="palette-polish">
+              <div className="palette-source small">
+                <span className="quiet">原文</span>
+                <span className="palette-source-text">{source}</span>
+                {result && <span className="mono quiet">{source.length} → {result.length} 字</span>}
+              </div>
+              <div className="palette-result" tabIndex={-1} ref={resultRef} aria-live="polite">
+                {running ? (
+                  <p className="palette-busy">
+                    <span className="busy-line" aria-hidden="true" />
+                    正在按「{templateName}」润色 · <span className="mono">{Math.floor((now - startedAt) / 1000)}</span> 秒
+                  </p>
+                ) : polishError ? (
+                  <p className="signal">
+                    {polishError}　{settings?.baseUrl && settings.model && (
+                      <button type="button" className="link" onClick={() => void run(source, templateId)}>重试</button>
+                    )}
+                  </p>
+                ) : (
+                  <p className="palette-result-text">{peek ? source : result}</p>
+                )}
+              </div>
+              <div className="palette-foot small">
+                <button type="button" className="text-btn palette-rule" onClick={() => cycleRule(1)} disabled={templates.length < 2}>
+                  <span className="strong">{templateName}</span>
+                  {templates.length > 1 && <span className="mono quiet">Tab 换规则</span>}
+                </button>
+                <span className="spacer" />
+                <button type="button" className="text-btn ink-2" onClick={() => setPeek((value) => !value)} disabled={!result}>
+                  {peek ? "看结果" : "看原文"}<span className="mono quiet">Ctrl ←</span>
+                </button>
+                <button type="button" className="text-btn ink-2" onClick={() => void run(source, templateId)} disabled={running}>
+                  再来一次<span className="mono quiet">Ctrl R</span>
+                </button>
+                <button type="button" className="btn btn-primary" onClick={() => void copyAndClose()} disabled={!result || running}>
+                  复制并关闭<span className="mono">↵</span>
+                </button>
+              </div>
+            </div>
+          ) : (
+            <>
+              <div className="palette-input-row">
+                {view === "windows" && (
+                  <button type="button" className="palette-back" aria-label="返回" onClick={() => { setView("menu"); setQuery(""); }}>
+                    <svg width="7" height="12" viewBox="0 0 7 12" aria-hidden="true"><path d="M6 1L1 6l5 5" fill="none" stroke="currentColor" strokeWidth="1.4" /></svg>
+                  </button>
+                )}
+                <input
+                  ref={inputRef}
+                  autoFocus
+                  className="palette-input"
+                  value={query}
+                  onChange={(event) => setQuery(event.target.value)}
+                  onPaste={(event) => {
+                    if (view !== "menu") return;
+                    const text = event.clipboardData.getData("text");
+                    // 粘进来的是一段话：不用再按回车，直接去润色
+                    if (text.includes("\n") || text.trim().length > 40) {
+                      event.preventDefault();
+                      enterPolish(text);
+                    }
+                  }}
+                  placeholder={
+                    view === "windows"
+                      ? pickerMode === "capture" ? "选一个要截的窗口，打字筛选" : "选一个要录的窗口，打字筛选"
+                      : "要做什么？也可以直接粘贴文字来润色"
+                  }
+                  aria-label={view === "windows" ? "筛选窗口" : "命令，或要润色的文字"}
+                  spellCheck={false}
                 />
-              </span>
-              <span><strong>{item.appName}</strong><small>{item.title}</small></span>
-            </button>
-          ))}
-        </div>
-      )}
+                <span className="mono small quiet">Esc</span>
+              </div>
 
-      {status && status.text && (
-        <div className={"quick-status " + status.kind} role="status">
-          {statusIcon}
-          <span>{status.text}</span>
+              {view === "menu" ? (
+                <div className="palette-list" role="listbox" aria-label="动作">
+                  {visibleItems.map((item, index) => (
+                    <button
+                      key={item.id}
+                      type="button"
+                      role="option"
+                      aria-selected={index === cursor}
+                      className={`palette-item ${index === cursor ? "is-on" : ""} ${item.muted ? "is-muted" : ""} ${item.id === "main" && index > 0 ? "is-apart" : ""}`}
+                      onMouseMove={() => setCursor(index)}
+                      onClick={item.run}
+                    >
+                      <span className="palette-label">{item.label}</span>
+                      {item.hint}
+                    </button>
+                  ))}
+                </div>
+              ) : (
+                <div className="palette-list palette-windows" role="listbox" aria-label={pickerMode === "capture" ? "选择要截取的窗口" : "选择要录制的窗口"}>
+                  {windows === null && <p className="palette-empty small quiet">正在读取窗口…</p>}
+                  {windows !== null && visibleWindows.length === 0 && (
+                    <p className="palette-empty small quiet">{query ? "没有匹配的窗口" : "没有找到可用的窗口"}</p>
+                  )}
+                  {visibleWindows.map((item, index) => (
+                    <button
+                      key={item.id}
+                      type="button"
+                      role="option"
+                      aria-selected={index === cursor}
+                      className={`palette-item ${index === cursor ? "is-on" : ""}`}
+                      onMouseMove={() => setCursor(index)}
+                      onClick={() => void pickWindow(item)}
+                    >
+                      <span className="palette-window">
+                        <span className="palette-icon">
+                          <MediaImage src={iconUrl(item.pid, 20)} fallback={<span className="palette-icon-blank" />} />
+                        </span>
+                        <span className="palette-window-name">{item.appName}</span>
+                        <span className="palette-window-title small quiet">{item.title}</span>
+                      </span>
+                    </button>
+                  ))}
+                </div>
+              )}
+            </>
+          )}
+          {status && (
+            <div className={`palette-status small is-${status.kind}`} role="status">
+              {status.kind === "busy" && <span className="busy-dot" aria-hidden="true" />}
+              {status.text}
+            </div>
+          )}
         </div>
-      )}
+      </div>
     </div>
   );
 }

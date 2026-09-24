@@ -6,15 +6,17 @@ import { PetWindow } from "./windows/PetWindow";
 import { QuickMenuWindow } from "./windows/QuickMenuWindow";
 import { AnnotateWindow } from "./windows/AnnotateWindow";
 import { applyTheme, listenThemeChanges, readTheme } from "./lib/theme";
+import { applyMotion, listenMotionChanges, readMotionPreference, resolveMotion } from "./lib/prefs";
 import "./styles/variables.css";
-import "./styles/app.css";
 import "./styles.css";
-import "./styles/responsive.css";
+import "./styles/app.css";
 
-// 各个 WebView 独立，每个都要在首帧前套上主题，避免浅色闪一下
+// 各个 WebView 独立，每个都要在首帧前套上主题与动效档位，避免浅色闪一下
 applyTheme(readTheme());
-// 设置页改了主题后，其余窗口靠这条广播当场跟上，不必重开
+applyMotion(resolveMotion(readMotionPreference()));
+// 主窗口改了之后，其余窗口靠广播当场跟上，不必重开
 listenThemeChanges(applyTheme);
+listenMotionChanges(applyMotion);
 
 function mount() {
   const label = getCurrentWindow().label;

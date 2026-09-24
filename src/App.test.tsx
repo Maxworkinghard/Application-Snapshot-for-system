@@ -92,6 +92,7 @@ describe("global shortcuts", () => {
       return undefined;
     });
 
-    expect(await screen.findByText("这些快捷键没能注册，可能已被其他程序占用：Alt+Shift+2")).toBeTruthy();
+    // 冲突由侧栏的猫说出来，按键写成人读的样子
+    expect(await screen.findByText("Alt Shift 2 没能注册，可能被别的程序占用了")).toBeTruthy();
   });
 });

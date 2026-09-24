@@ -18,7 +18,11 @@ fn normalize_draft(raw: &str, empty_hint: &str) -> Result<String, String> {
 
 /// 真正干活的那一段：拿设置 + 草稿，调模型，返回改写后的文本。
 /// 剪贴板命令和界面命令都走这里，避免两份实现漂移。
-async fn run_polish(state: &State<'_, AppState>, original: &str) -> Result<String, String> {
+async fn run_polish(
+    state: &State<'_, AppState>,
+    original: &str,
+    template_id: Option<&str>,
+) -> Result<(String, String), String> {
     let settings = state.settings.lock().clone();
     if settings.base_url.is_empty() || settings.model.is_empty() {
         return Err("尚未配置润色服务，请先在 Prompt 页面完成配置".into());
@@ -32,12 +36,24 @@ async fn run_polish(state: &State<'_, AppState>, original: &str) -> Result<Strin
     } else {
         None
     };
-    let prompt = settings
+    // 输入框里按 Tab 换规则时指定模板；不指定就用当前生效的那条
+    let wanted = template_id.unwrap_or(&settings.active_template_id);
+    let template = settings
         .templates
         .iter()
-        .find(|item| item.id == settings.active_template_id)
+        .find(|item| item.id == wanted)
+        .or_else(|| {
+            settings
+                .templates
+                .iter()
+                .find(|item| item.id == settings.active_template_id)
+        });
+    let prompt = template
         .map(|item| item.content.as_str())
         .unwrap_or(DEFAULT_PROMPT);
+    let rule_name = template
+        .map(|item| item.name.clone())
+        .unwrap_or_else(|| "润色".into());
     let endpoint = make_endpoint(&settings.base_url)?;
     let client = reqwest::Client::builder()
         .timeout(Duration::from_secs(180))
@@ -68,7 +84,24 @@ async fn run_polish(state: &State<'_, AppState>, original: &str) -> Result<Strin
         .pointer("/choices/0/message/content")
         .and_then(Value::as_str)
         .ok_or_else(|| "润色服务未返回内容".to_string())?;
-    Ok(strip_reasoning(polished))
+    Ok((strip_reasoning(polished), rule_name))
+}
+
+/// 成功与失败都记一条活动，时间线和猫的播报靠它
+fn log_polish(app: &AppHandle, original: &str, result: &Result<(String, String), String>) {
+    match result {
+        Ok((polished, rule)) => activity::record(
+            app,
+            activity::Activity::new("polish", rule.clone())
+                .meta(format!(
+                    "{} → {} 字",
+                    original.chars().count(),
+                    polished.chars().count()
+                ))
+                .detail(truncate(polished, 4000)),
+        ),
+        Err(error) => activity::record_error(app, "润色失败", error),
+    }
 }
 
 /// 剥掉 R1 一类推理模型吐出的思维链
@@ -83,21 +116,30 @@ fn strip_reasoning(raw: &str) -> String {
 /// 界面用：收草稿、回改写结果，不碰剪贴板
 #[tauri::command]
 pub(crate) async fn polish_text(
+    app: AppHandle,
     state: State<'_, AppState>,
     text: String,
+    template_id: Option<String>,
 ) -> Result<String, String> {
     let original = normalize_draft(&text, "请先输入待润色的草稿")?;
-    run_polish(&state, &original).await
+    let result = run_polish(&state, &original, template_id.as_deref()).await;
+    log_polish(&app, &original, &result);
+    result.map(|(polished, _)| polished)
 }
 
 /// 快捷键与便携坞用：就地替换剪贴板
 #[tauri::command]
-pub(crate) async fn polish_clipboard(state: State<'_, AppState>) -> Result<String, String> {
+pub(crate) async fn polish_clipboard(
+    app: AppHandle,
+    state: State<'_, AppState>,
+) -> Result<String, String> {
     let raw = Clipboard::new()
         .and_then(|mut clipboard| clipboard.get_text())
         .map_err(|_| "剪贴板没有文字，请先复制 Prompt".to_string())?;
     let original = normalize_draft(&raw, "剪贴板没有文字，请先复制 Prompt")?;
-    let polished = run_polish(&state, &original).await?;
+    let result = run_polish(&state, &original, None).await;
+    log_polish(&app, &original, &result);
+    let (polished, _) = result?;
     let current = Clipboard::new()
         .and_then(|mut clipboard| clipboard.get_text())
         .unwrap_or_default();

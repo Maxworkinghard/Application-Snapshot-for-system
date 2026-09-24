@@ -7,11 +7,51 @@ use serde::Deserialize;
 pub(crate) struct PetAsset {
     pub(crate) id: String,
     pub(crate) name: String,
+    /// 实际读取的文件。新导入的会复制进应用数据目录，旧版导入的仍指向原位置
     pub(crate) path: String,
     #[serde(default)]
     pub(crate) entry: String,
     #[serde(default)]
     pub(crate) animations: Vec<String>,
+    /// 导入时用户选的原文件，只做展示
+    #[serde(default)]
+    pub(crate) source: String,
+    #[serde(default)]
+    pub(crate) size_bytes: u64,
+    #[serde(default)]
+    pub(crate) imported_at: u64,
+    /// 最近一次被选为伴侣的时间，形象架按它排序
+    #[serde(default)]
+    pub(crate) last_used_at: u64,
+    /// 素材文件找不到了（旧版按原路径读取，原文件被移走就会这样）。每次读盘重算
+    #[serde(default)]
+    pub(crate) missing: bool,
+}
+
+/// 名字超过这个长度就截断，免得形象架上一行放不下
+const PET_NAME_LIMIT: usize = 40;
+
+pub(crate) fn refresh_missing(assets: &mut [PetAsset]) {
+    for asset in assets {
+        asset.missing = !Path::new(&asset.path).is_file();
+    }
+}
+
+fn pets_dir(state: &AppState) -> &Path {
+    &state.pets_dir
+}
+
+fn thumb_path(state: &AppState, id: &str) -> PathBuf {
+    pets_dir(state).join(format!("{id}.thumb.png"))
+}
+
+/// 选中后广播、落盘、顺手把桌宠窗口叫出来
+fn commit(app: &AppHandle, state: &AppState, settings: &mut Settings) -> Result<Settings, String> {
+    refresh_missing(&mut settings.pet_assets);
+    persist_settings(&state.settings_path, settings)?;
+    let result = settings.clone();
+    emit_settings(app, &result);
+    Ok(result)
 }
 
 #[tauri::command]
@@ -21,26 +61,105 @@ pub(crate) fn select_pet_appearance(
     id: String,
 ) -> Result<Settings, String> {
     let mut settings = state.settings.lock();
-    if id != "app-icon" && !settings.pet_assets.iter().any(|asset| asset.id == id) {
-        return Err("找不到这个形象".into());
+    if id != "app-icon" {
+        let asset = settings
+            .pet_assets
+            .iter_mut()
+            .find(|asset| asset.id == id)
+            .ok_or_else(|| "找不到这个形象".to_string())?;
+        if !Path::new(&asset.path).is_file() {
+            return Err("这个形象的素材文件找不到了".into());
+        }
+        asset.last_used_at = now_millis();
     }
     settings.selected_appearance_id = id;
-    persist_settings(&state.settings_path, &settings)?;
+    let result = commit(&app, &state, &mut settings)?;
     if let Some(window) = app.get_webview_window("pet") {
         let _ = window.show();
     }
-    let result = settings.clone();
-    emit_settings(&app, &result);
     Ok(result)
 }
 
+#[derive(Serialize)]
+#[serde(rename_all = "camelCase")]
+pub(crate) struct PetImportFailure {
+    path: String,
+    reason: String,
+}
+
+#[derive(Serialize)]
+#[serde(rename_all = "camelCase")]
+pub(crate) struct PetImportResult {
+    settings: Settings,
+    imported: usize,
+    failed: Vec<PetImportFailure>,
+}
+
+/// 一次导入多个 ZIP / GIF（对话框多选或拖进窗口）。
+///
+/// 每个文件复制一份进应用数据目录再用：原先按原路径读取，用户清一次「下载」文件夹，
+/// 形象就大面积失效。坏的那几个单独列出原因，不连累其它。
 #[tauri::command]
-pub(crate) fn add_pet_asset(
+pub(crate) fn add_pet_assets(
     app: AppHandle,
     state: State<'_, AppState>,
-    path: String,
-) -> Result<Settings, String> {
-    let canonical = fs::canonicalize(path.trim()).map_err(|_| "无法读取桌宠文件".to_string())?;
+    paths: Vec<String>,
+) -> Result<PetImportResult, String> {
+    let mut imported = Vec::new();
+    let mut failed = Vec::new();
+    for path in paths {
+        match prepare_import(&state, &path) {
+            Ok(asset) => imported.push(asset),
+            Err(reason) => failed.push(PetImportFailure { path, reason }),
+        }
+    }
+    let count = imported.len();
+    let mut settings = state.settings.lock();
+    for asset in imported {
+        let id = match settings
+            .pet_assets
+            .iter_mut()
+            .find(|existing| !existing.source.is_empty() && existing.source == asset.source)
+        {
+            // 同一个原文件再导入一次：当作更新，保留名字与 id
+            Some(existing) => {
+                let old_path = existing.path.clone();
+                existing.path = asset.path;
+                existing.entry = asset.entry;
+                existing.animations = asset.animations;
+                existing.size_bytes = asset.size_bytes;
+                existing.last_used_at = asset.last_used_at;
+                if old_path != existing.path {
+                    remove_owned_file(&state, &old_path);
+                }
+                let _ = fs::remove_file(thumb_path(&state, &existing.id));
+                existing.id.clone()
+            }
+            None => {
+                let id = asset.id.clone();
+                settings.pet_assets.push(asset);
+                id
+            }
+        };
+        settings.selected_appearance_id = id;
+    }
+    let result = commit(&app, &state, &mut settings)?;
+    drop(settings);
+    if count > 0 {
+        if let Some(window) = app.get_webview_window("pet") {
+            let _ = window.show();
+        }
+    }
+    Ok(PetImportResult {
+        settings: result,
+        imported: count,
+        failed,
+    })
+}
+
+/// 校验一个文件、复制进应用目录、读出动作表；还没登记进设置
+fn prepare_import(state: &AppState, raw_path: &str) -> Result<PetAsset, String> {
+    let canonical = fs::canonicalize(raw_path.trim()).map_err(|_| "无法读取这个文件".to_string())?;
     if !canonical.is_file() {
         return Err("请选择一个 ZIP 压缩包或 GIF 图片".into());
     }
@@ -51,55 +170,80 @@ pub(crate) fn add_pet_asset(
         .to_lowercase();
     let single_gif = extension == "gif";
     if extension != "zip" && !single_gif {
-        return Err("桌宠形象只支持 ZIP 压缩包或单个 GIF".into());
+        return Err("只支持 ZIP 压缩包或单个 GIF".into());
     }
-    let metadata = fs::metadata(&canonical).map_err(|error| error.to_string())?;
+    let size_bytes = fs::metadata(&canonical)
+        .map_err(|error| error.to_string())?
+        .len();
     // 单个 GIF 按单动画的上限算，压缩包按整包算
     let limit = if single_gif { 50 } else { 100 } * 1024 * 1024;
-    if metadata.len() > limit {
+    if size_bytes > limit {
         return Err(if single_gif {
-            "桌宠 GIF 不能超过 50MB".to_string()
+            "GIF 不能超过 50MB".to_string()
         } else {
-            "桌宠压缩包不能超过 100MB".to_string()
+            "压缩包不能超过 100MB".to_string()
         });
     }
     let animations = find_pet_animation_entries(&canonical)?;
-    let preview_entry = animations
+    let entry = animations
         .first()
         .cloned()
         .ok_or_else(|| "这份素材里没有可用动画".to_string())?;
-    let path = canonical.to_string_lossy().to_string();
+
+    let now = now_millis();
+    // 同一毫秒导入多个时靠序号区分
+    static SEQUENCE: AtomicU64 = AtomicU64::new(0);
+    let id = format!("pet-{now}-{}", SEQUENCE.fetch_add(1, Ordering::Relaxed));
+    let dir = pets_dir(state);
+    fs::create_dir_all(dir).map_err(|error| format!("无法创建素材目录：{error}"))?;
+    let stored = dir.join(format!("{id}.{extension}"));
+    fs::copy(&canonical, &stored).map_err(|error| format!("复制素材失败：{error}"))?;
+
+    Ok(PetAsset {
+        id,
+        name: canonical
+            .file_stem()
+            .and_then(|value| value.to_str())
+            .map(|stem| truncate(stem, PET_NAME_LIMIT))
+            .unwrap_or_else(|| "伴侣".into()),
+        path: stored.to_string_lossy().to_string(),
+        entry,
+        animations,
+        source: canonical.to_string_lossy().to_string(),
+        size_bytes,
+        imported_at: now,
+        last_used_at: now,
+        missing: false,
+    })
+}
+
+/// 只删我们自己复制进来的文件，用户原来的文件不碰
+fn remove_owned_file(state: &AppState, path: &str) {
+    let path = Path::new(path);
+    if path.starts_with(pets_dir(state)) {
+        let _ = fs::remove_file(path);
+    }
+}
+
+#[tauri::command]
+pub(crate) fn rename_pet_asset(
+    app: AppHandle,
+    state: State<'_, AppState>,
+    id: String,
+    name: String,
+) -> Result<Settings, String> {
+    let name = name.trim();
+    if name.is_empty() {
+        return Err("名字不能为空".into());
+    }
     let mut settings = state.settings.lock();
-    if let Some(existing) = settings
+    let asset = settings
         .pet_assets
         .iter_mut()
-        .find(|asset| asset.path == path)
-    {
-        existing.entry = preview_entry;
-        existing.animations = animations;
-        settings.selected_appearance_id = existing.id.clone();
-    } else {
-        let asset = PetAsset {
-            id: format!("pet-{}", now_millis()),
-            name: canonical
-                .file_stem()
-                .and_then(|value| value.to_str())
-                .unwrap_or("桌宠")
-                .to_string(),
-            path,
-            entry: preview_entry,
-            animations,
-        };
-        settings.selected_appearance_id = asset.id.clone();
-        settings.pet_assets.push(asset);
-    }
-    persist_settings(&state.settings_path, &settings)?;
-    if let Some(window) = app.get_webview_window("pet") {
-        let _ = window.show();
-    }
-    let result = settings.clone();
-    emit_settings(&app, &result);
-    Ok(result)
+        .find(|asset| asset.id == id)
+        .ok_or_else(|| "找不到这个形象".to_string())?;
+    asset.name = truncate(name, PET_NAME_LIMIT);
+    commit(&app, &state, &mut settings)
 }
 
 #[tauri::command]
@@ -112,18 +256,42 @@ pub(crate) fn delete_pet_asset(
         return Err("默认应用图标不可删除".into());
     }
     let mut settings = state.settings.lock();
-    let original_len = settings.pet_assets.len();
-    settings.pet_assets.retain(|asset| asset.id != id);
-    if settings.pet_assets.len() == original_len {
-        return Err("找不到这个形象".into());
-    }
+    let position = settings
+        .pet_assets
+        .iter()
+        .position(|asset| asset.id == id)
+        .ok_or_else(|| "找不到这个形象".to_string())?;
+    let removed = settings.pet_assets.remove(position);
+    remove_owned_file(&state, &removed.path);
+    let _ = fs::remove_file(thumb_path(&state, &removed.id));
     if settings.selected_appearance_id == id {
         settings.selected_appearance_id = default_appearance_id();
     }
-    persist_settings(&state.settings_path, &settings)?;
-    let result = settings.clone();
-    emit_settings(&app, &result);
-    Ok(result)
+    commit(&app, &state, &mut settings)
+}
+
+/// 形象架上的静态缩略图：默认动作的第一帧。几十个 GIF 同时动起来既吵又费电，
+/// 架子上只放静态帧，只有当前那只会动。首次取用时生成并缓存。
+pub(crate) fn read_thumbnail(state: &AppState, id: &str) -> Result<Vec<u8>, String> {
+    let path = thumb_path(state, id);
+    if let Ok(bytes) = fs::read(&path) {
+        return Ok(bytes);
+    }
+    let gif = read_animation(state, id, None)?;
+    let frame = image::load_from_memory_with_format(&gif, ImageFormat::Gif)
+        .map_err(|_| "读不出这份素材的第一帧".to_string())?
+        .to_rgba8();
+    let small = image::imageops::thumbnail(
+        &frame,
+        frame.width().min(200),
+        (frame.height() as f64 * frame.width().min(200) as f64 / frame.width().max(1) as f64)
+            .round()
+            .max(1.0) as u32,
+    );
+    let png = capture::encode_png(&small)?;
+    fs::create_dir_all(pets_dir(state)).map_err(|error| error.to_string())?;
+    let _ = fs::write(&path, &png);
+    Ok(png)
 }
 
 /// 读出某个形象的一段 GIF 动画（媒体协议用）。不指定动作时取该形象的默认动作。

@@ -1,56 +1,91 @@
-import React, { useEffect, useState } from "react";
-import {
-  Camera,
-  FolderOpen,
-  Layers,
-  MonitorSmartphone,
-  RotateCcw,
-  Save,
-  TextCursorInput,
-  X,
-} from "lucide-react";
+import React, { useEffect, useMemo, useState } from "react";
 import { open } from "@tauri-apps/plugin-dialog";
-import { openRecordingsDir, platformCapabilities, savePreferences, saveShortcuts } from "../lib/backend";
-import { normalizeKey } from "../lib/format";
-import { KbdBadge } from "../components/ui/KbdBadge";
-import { SegGroup } from "../components/ui/SegGroup";
-import { PrefToggle } from "../components/ui/PrefToggle";
-import type { PlatformCapabilities, Settings, ShortcutAction, ShortcutBinding } from "../types";
+import { openRecordingsDir, savePreferences, saveShortcuts } from "../lib/backend";
+import { middleTruncatePath, normalizeKey, shortcutKeys } from "../lib/format";
+import { Keys } from "../components/ui/Keys";
+import { Choices } from "../components/ui/Choices";
+import { Switch } from "../components/ui/Switch";
+import { errorText, useApp } from "../app/context";
+import type { Settings, ShortcutAction, ShortcutBinding } from "../types";
 
-const actionLabels: Record<ShortcutAction, { name: string; tag?: string }> = {
+export const ACTION_LABELS: Record<ShortcutAction, { name: string; tag: string }> = {
   snapshot: { name: "窗口快照", tag: "前台窗口" },
   fullscreen: { name: "全屏快照", tag: "主显示器" },
   scrolling: { name: "滚动长截图", tag: "窗口连拍" },
   record: { name: "窗口录制", tag: "MP4" },
   polish: { name: "润色 Prompt", tag: "剪贴板" },
+  palette: { name: "呼出输入框", tag: "任意位置" },
 };
 
-export function ShortcutsPage({
-  settings,
-  onSaved,
-  notify,
-}: {
-  settings: Settings;
-  onSaved: (value: Settings) => void;
-  notify: (message: string) => void;
-}) {
+const MODIFIERS = ["Control", "Shift", "Alt", "Meta"];
+
+function pressedModifiers(event: React.KeyboardEvent): string[] {
+  const parts: string[] = [];
+  if (event.ctrlKey || event.metaKey) parts.push("CommandOrControl");
+  if (event.altKey) parts.push("Alt");
+  if (event.shiftKey) parts.push("Shift");
+  return parts;
+}
+
+/** 全局快捷键列表 + 保存条。改动先留在本页，按「保存」才交给后端校验、注册、落盘 */
+export function ShortcutsPanel() {
+  const { settings, onSaved, notify, conflicts, setConflicts, caps } = useApp();
   const [shortcuts, setShortcuts] = useState(settings.shortcuts);
   const [recording, setRecording] = useState<ShortcutAction | null>(null);
+  const [held, setHeld] = useState<string[]>([]);
+  const [rejected, setRejected] = useState<{ action: ShortcutAction; key: string } | null>(null);
   const [saving, setSaving] = useState(false);
+
   useEffect(() => setShortcuts(settings.shortcuts), [settings.shortcuts]);
 
-  function captureShortcut(action: ShortcutAction, event: React.KeyboardEvent<HTMLDivElement>) {
+  const changed = useMemo(
+    () =>
+      shortcuts.filter((item) => {
+        const saved = settings.shortcuts.find((binding) => binding.action === item.action);
+        return (saved?.accelerator ?? null) !== item.accelerator;
+      }).length,
+    [shortcuts, settings.shortcuts],
+  );
+
+  function stopRecording() {
+    setRecording(null);
+    setHeld([]);
+  }
+
+  function onRowKeyDown(action: ShortcutAction, event: React.KeyboardEvent<HTMLButtonElement>) {
+    if (recording !== action) {
+      if (event.key === "Enter" || event.key === " ") {
+        event.preventDefault();
+        setRecording(action);
+        setRejected(null);
+      }
+      return;
+    }
     event.preventDefault();
     event.stopPropagation();
-    if (["Control", "Shift", "Alt", "Meta"].includes(event.key)) return;
-    const parts: string[] = [];
-    if (event.ctrlKey || event.metaKey) parts.push("CommandOrControl");
-    if (event.altKey) parts.push("Alt");
-    if (event.shiftKey) parts.push("Shift");
-    if (parts.length === 0) return;
-    const accelerator = [...parts, normalizeKey(event.key)].join("+");
-    setShortcuts((items) => items.map((item) => item.action === action ? { ...item, accelerator } : item));
-    setRecording(null);
+    if (event.key === "Escape") {
+      stopRecording();
+      return;
+    }
+    const modifiers = pressedModifiers(event);
+    if (MODIFIERS.includes(event.key)) {
+      setHeld(modifiers);
+      return;
+    }
+    const key = normalizeKey(event.key);
+    if (modifiers.length === 0) {
+      // 原先这里是静默 return，用户按了没反应还以为坏了
+      setRejected({ action, key });
+      return;
+    }
+    const accelerator = [...modifiers, key].join("+");
+    setShortcuts((items) => items.map((item) => (item.action === action ? { ...item, accelerator } : item)));
+    setRejected(null);
+    stopRecording();
+  }
+
+  function onRowKeyUp(action: ShortcutAction, event: React.KeyboardEvent<HTMLButtonElement>) {
+    if (recording === action) setHeld(pressedModifiers(event));
   }
 
   async function save() {
@@ -58,277 +93,244 @@ export function ShortcutsPage({
     try {
       // 校验（含重复）、注册、落盘都在后端一步完成；有键注册不上时整组不生效也不保存
       onSaved(await saveShortcuts(shortcuts));
-      notify("快捷键已保存并立即生效");
+      setConflicts([]);
+      notify("快捷键已保存，立即生效");
     } catch (error) {
-      notify(error instanceof Error ? error.message : String(error));
+      notify(errorText(error), "error");
     } finally {
       setSaving(false);
     }
   }
 
-  // 这里只剩快捷键行上的「录制不可用」角标需要 caps
-  const [caps, setCaps] = useState<PlatformCapabilities | null>(null);
-  useEffect(() => {
-    void platformCapabilities()
-      .then(setCaps)
-      .catch(() => setCaps(null));
-  }, []);
-
-  async function updatePrefs(patch: Partial<Settings>, message?: string) {
-    try {
-      onSaved(await savePreferences(patch));
-      if (message) notify(message);
-    } catch (error) {
-      notify(error instanceof Error ? error.message : String(error));
-    }
-  }
-
-  async function chooseSaveDir() {
-    try {
-      const selected = await open({ directory: true, multiple: false });
-      if (typeof selected === "string") await updatePrefs({ saveDir: selected }, "保存目录已更新");
-    } catch {
-      notify("当前环境不支持选择目录");
-    }
-  }
-
-  async function chooseRecordingDir() {
-    try {
-      const selected = await open({ directory: true, multiple: false });
-      if (typeof selected === "string") {
-        await updatePrefs({ recordingDir: selected }, "录制目录已更新");
-      }
-    } catch {
-      notify("当前环境不支持选择目录");
-    }
-  }
-
-  async function revealRecordings() {
-    try {
-      // 目录可能还没建过（一次都没录过），后端会先建再打开
-      await openRecordingsDir();
-    } catch (error) {
-      notify(error instanceof Error ? error.message : String(error));
-    }
-  }
-
   const renderRow = (binding: ShortcutBinding) => {
+    const label = ACTION_LABELS[binding.action] ?? { name: binding.action, tag: "" };
     const isRecording = recording === binding.action;
+    const saved = settings.shortcuts.find((item) => item.action === binding.action)?.accelerator ?? null;
+    const conflicted = Boolean(binding.accelerator && binding.accelerator === saved && conflicts.includes(binding.accelerator));
+    const unavailable = binding.action === "record" && caps && !caps.recording.available;
+    const rejection = rejected?.action === binding.action ? rejected.key : null;
     return (
-      <div
-        key={binding.action}
-        role="button"
-        tabIndex={0}
-        aria-label={`快捷键：${actionLabels[binding.action].name}，当前按键：${binding.accelerator || "未设置"}`}
-        className={`shortcut-interactive-row compact-row ${isRecording ? "is-recording-mode" : ""}`}
-        onClick={() => {
-          // 这一行是"录制快捷键"的选中态，不是执行功能：点它=选中开始录制，再点一次=取消选中
-          setRecording(isRecording ? null : binding.action);
-        }}
-        onKeyDown={(event) => {
-          if (isRecording) {
-            captureShortcut(binding.action, event);
-          } else if (event.key === "Enter" || event.key === " ") {
-            event.preventDefault();
-            setRecording(binding.action);
-          }
-        }}
-      >
-        <div className="action-identity-col">
-          <span className="action-leading-icon">
-            {binding.action === "snapshot" ? <MonitorSmartphone size={15} />
-              : binding.action === "fullscreen" ? <Camera size={15} />
-              : binding.action === "scrolling" ? <Layers size={15} />
-              : binding.action === "record" ? <span className="record-symbol" />
-              : <TextCursorInput size={15} />}
+      <div key={binding.action} className={`key-row ${isRecording ? "is-recording" : ""}`}>
+        <button
+          type="button"
+          className="key-row-main"
+          aria-label={`快捷键：${label.name}，当前按键：${binding.accelerator || "未设置"}`}
+          onClick={() => {
+            // 这一行是「录快捷键」的选中态，不是执行功能：点它开始录，再点一次取消
+            setRejected(null);
+            if (isRecording) stopRecording();
+            else setRecording(binding.action);
+          }}
+          onKeyDown={(event) => onRowKeyDown(binding.action, event)}
+          onKeyUp={(event) => onRowKeyUp(binding.action, event)}
+          onBlur={() => isRecording && stopRecording()}
+        >
+          <span className="key-row-text">
+            <span className="key-row-name">
+              <span className={isRecording ? "strong" : ""}>{label.name}</span>
+              <span className="quiet small">{isRecording ? "正在录新组合键" : label.tag}</span>
+            </span>
+            {conflicted && <span className="signal small">没注册上，这组键已被其他程序占用</span>}
+            {unavailable && !conflicted && <span className="quiet small">{caps?.recording.detail || "此系统录不了窗口"}</span>}
+            {rejection && (
+              <span className="signal small">只按了 {rejection}。至少要带上 Ctrl、Alt、Shift 中的一个</span>
+            )}
           </span>
-          <span className="action-name">{actionLabels[binding.action].name}</span>
-          {actionLabels[binding.action].tag && (
-            <span className="action-tag">{actionLabels[binding.action].tag}</span>
-          )}
-          {binding.action === "record" && caps && !caps.recording.available && (
-            <span className="action-tag" title={caps.recording.detail}>录制不可用</span>
-          )}
-        </div>
-
-        <div className="action-keycap-col">
-          {isRecording ? (
-            <div className="recording-active-capsule">
-              <span className="pulse-dot-recording" />
-              <span className="recording-prompt-text">按下新组合键…</span>
-            </div>
-          ) : (
-            <>
-              <div className="kbd-badge-anchor">
-                {/* 整行本身就是录制触发区，这里只呈现当前绑定状态，不再放重复的按钮 */}
-                <KbdBadge shortcut={binding.accelerator} size="sm" />
-              </div>
-              <button
-                className="clear-keycap-ghost-btn"
-                title="清除绑定"
-                disabled={!binding.accelerator}
-                onClick={(event) => {
-                  event.stopPropagation();
-                  setShortcuts((items) => items.map((item) => item.action === binding.action ? { ...item, accelerator: null } : item));
-                }}
-              ><X size={14} /></button>
-            </>
-          )}
-        </div>
+          <span className="key-row-value">
+            {isRecording ? (
+              <span className="keys-pending">
+                {held.length > 0 && <Keys value={held.join("+")} />}
+                <span className="kbd-slot" aria-hidden="true" />
+                <span className="quiet small">Esc 取消</span>
+              </span>
+            ) : binding.accelerator ? (
+              <Keys value={binding.accelerator} struck={conflicted} />
+            ) : (
+              <span className="quiet small">未设置</span>
+            )}
+          </span>
+        </button>
+        {!isRecording && binding.accelerator && (
+          <button
+            type="button"
+            className="key-row-clear"
+            aria-label={`清除「${label.name}」的快捷键`}
+            onClick={() =>
+              setShortcuts((items) => items.map((item) => (item.action === binding.action ? { ...item, accelerator: null } : item)))
+            }
+          >
+            清除
+          </button>
+        )}
       </div>
     );
   };
 
-  // 录制态下点击页面空白处（非快捷键行）也算取消选中
-  function onPageClick(event: React.MouseEvent<HTMLDivElement>) {
-    if (!recording) return;
-    if ((event.target as HTMLElement).closest(".shortcut-interactive-row")) return;
-    setRecording(null);
-  }
-
   return (
-    <div className="shortcut-hub-unified-layout" onClick={onPageClick}>
-      <header className="hub-top-strip">
-        <div className="hub-title-line">
-          <h1 className="hub-heading">快捷操作</h1>
-        </div>
-        <div className="hub-top-actions">
-          <button
-            className="hub-reset-btn"
-            onClick={() => setShortcuts(shortcuts.map((item) => ({ ...item, accelerator: null })))}
-            title="清除全部绑定"
-          >
-            <RotateCcw size={14} />
-            <span>全部清除</span>
-          </button>
-        </div>
-      </header>
-
-      <div className="hub-two-col-grid">
-        <div className="hub-shortcuts-col">
-          <section className="hub-section-block">
-            <div className="section-label-bar">
-              <span className="section-name">全局快捷键</span>
-              <span className="section-count tabular-nums">{shortcuts.length} 项</span>
-            </div>
-            <div className="shortcuts-list-table">
-              {shortcuts.map(renderRow)}
-            </div>
-          </section>
-        </div>
-
-        <div className="hub-preferences-col">
-          <section className="hub-section-block">
-            <div className="section-label-bar">
-              <span className="section-name">剪贴板与保存</span>
-            </div>
-            <div className="preferences-group-card">
-              <div className="pref-item-row">
-                <span className="pref-title">自动清空剪贴板</span>
-                <SegGroup
-                  ariaLabel="自动清空剪贴板"
-                  value={settings.clipboardAutoClear}
-                  onChange={(value) => void updatePrefs({ clipboardAutoClear: value })}
-                  options={[
-                    { value: "30s", label: "30秒" },
-                    { value: "60s", label: "60秒" },
-                    { value: "5m", label: "5分钟" },
-                    { value: "never", label: "不清除" },
-                  ]}
-                />
-              </div>
-              <div className="pref-item-row">
-                <span className="pref-title">快照图像格式</span>
-                <SegGroup
-                  ariaLabel="快照图像格式"
-                  value={settings.snapshotFormat}
-                  onChange={(value) => void updatePrefs({ snapshotFormat: value })}
-                  options={[
-                    { value: "png", label: "PNG 无损" },
-                    { value: "jpeg", label: "JPEG" },
-                    { value: "webp", label: "WebP" },
-                  ]}
-                />
-              </div>
-              <div className="pref-item-row folder-row">
-                <span className="pref-title">快照保存目录</span>
-                <div className="folder-picker-box">
-                  <span className="folder-path-text" title={settings.saveDir || undefined}>
-                    {settings.saveDir || "默认快照目录"}
-                  </span>
-                  <button type="button" className="folder-action-btn" onClick={() => void chooseSaveDir()}>
-                    <FolderOpen size={12} />
-                    更改
-                  </button>
-                </div>
-              </div>
-            </div>
-          </section>
-
-          <section className="hub-section-block">
-            <div className="section-label-bar">
-              <span className="section-name">录制设置</span>
-            </div>
-            <div className="preferences-group-card">
-              <div className="pref-item-row folder-row">
-                <span className="pref-title">录制保存目录</span>
-                <div className="folder-picker-box">
-                  <span className="folder-path-text" title={settings.recordingDir || undefined}>
-                    {settings.recordingDir || (settings.saveDir ? "跟随上面的本地保存目录" : "默认下载目录")}
-                  </span>
-                  <button type="button" className="folder-action-btn" onClick={() => void chooseRecordingDir()}>
-                    <FolderOpen size={12} />
-                    更改
-                  </button>
-                  <button type="button" className="folder-action-btn" onClick={() => void revealRecordings()}>
-                    打开
-                  </button>
-                  {settings.recordingDir && (
-                    <button
-                      type="button"
-                      className="folder-action-btn"
-                      onClick={() => void updatePrefs({ recordingDir: "" }, "已恢复默认录制目录")}
-                      title="清除后跟随上面的本地保存目录，没设过则落到下载目录"
-                    >
-                      恢复默认
-                    </button>
-                  )}
-                </div>
-              </div>
-              <div className="pref-item-row recording-audio-row">
-                <div className="recording-audio-copy">
-                  <span className="pref-title">系统音频</span>
-                  <small>{caps?.recordingSystemAudio.detail ?? "录制电脑正在播放的声音"}</small>
-                </div>
-                <PrefToggle
-                  value={settings.recordSystemAudio}
-                  label="录制系统音频"
-                  disabled={!caps?.recordingSystemAudio.available && !settings.recordSystemAudio}
-                  onChange={(value) => void updatePrefs({ recordSystemAudio: value })}
-                />
-              </div>
-              <div className="pref-item-row recording-audio-row">
-                <div className="recording-audio-copy">
-                  <span className="pref-title">麦克风</span>
-                  <small>{caps?.recordingMicrophone.detail ?? "录制麦克风输入"}</small>
-                </div>
-                <PrefToggle
-                  value={settings.recordMicrophone}
-                  label="录制麦克风"
-                  disabled={!caps?.recordingMicrophone.available && !settings.recordMicrophone}
-                  onChange={(value) => void updatePrefs({ recordMicrophone: value })}
-                />
-              </div>
-            </div>
-          </section>
-        </div>
-      </div>
-
-      <div className="hub-bottom-status-strip">
-        <button className="primary-button" onClick={save} disabled={saving}>
-          <Save size={16} /> {saving ? "保存中…" : "保存快捷键"}
+    <section className="panel panel-shortcuts">
+      <div className="panel-head">
+        <h2 className="panel-title">全局快捷键</h2>
+        <button
+          type="button"
+          className="text-btn quiet small"
+          onClick={() => setShortcuts(shortcuts.map((item) => ({ ...item, accelerator: null })))}
+        >
+          全部清除
         </button>
       </div>
+      <p className="panel-hint">点一行，再按下新组合键。窗口最小化时也生效。</p>
+      <div className="rows">{shortcuts.map(renderRow)}</div>
+      <div className="save-bar">
+        <span className="small ink-2">{changed > 0 ? `改了 ${changed} 处，还没保存` : ""}</span>
+        <span className="save-bar-actions">
+          {changed > 0 && (
+            <button type="button" className="text-btn ink-2" onClick={() => setShortcuts(settings.shortcuts)}>撤销</button>
+          )}
+          <button
+            type="button"
+            className="btn btn-primary"
+            aria-label="保存快捷键"
+            onClick={() => void save()}
+            disabled={saving || changed === 0}
+          >
+            {saving ? "保存中…" : "保存"}
+          </button>
+        </span>
+      </div>
+    </section>
+  );
+}
+
+/** 剪贴板、图片格式、保存位置、录制——这一组和快捷键页放在一起，都是截图的去向 */
+export function StoragePanel() {
+  const { settings, onSaved, notify, caps } = useApp();
+
+  async function update(patch: Partial<Settings>, message?: string) {
+    try {
+      onSaved(await savePreferences(patch));
+      if (message) notify(message);
+    } catch (error) {
+      notify(errorText(error), "error");
+    }
+  }
+
+  async function pickDir(key: "saveDir" | "recordingDir") {
+    try {
+      const selected = await open({ directory: true, multiple: false });
+      if (typeof selected === "string") await update({ [key]: selected }, key === "saveDir" ? "快照保存位置已更改" : "录像保存位置已更改");
+    } catch {
+      notify("当前环境不支持选择目录", "error");
+    }
+  }
+
+  const recordingDirLabel = settings.recordingDir
+    ? middleTruncatePath(settings.recordingDir)
+    : settings.saveDir
+      ? "跟随快照目录"
+      : "系统「下载」目录";
+
+  return (
+    <section className="panel panel-storage">
+      <h2 className="panel-title">剪贴板与保存</h2>
+      <div className="rows">
+        <div className="row">
+          <span className="row-label">自动清空剪贴板</span>
+          <Choices
+            ariaLabel="自动清空剪贴板"
+            value={settings.clipboardAutoClear}
+            onChange={(value) => void update({ clipboardAutoClear: value })}
+            options={[
+              { value: "30s", label: "30 秒" },
+              { value: "60s", label: "60 秒" },
+              { value: "5m", label: "5 分钟" },
+              { value: "never", label: "不清空" },
+            ]}
+          />
+        </div>
+        <div className="row">
+          <span className="row-label">图像格式</span>
+          <Choices
+            ariaLabel="图像格式"
+            value={settings.snapshotFormat}
+            onChange={(value) => void update({ snapshotFormat: value })}
+            options={[
+              { value: "png", label: "PNG" },
+              { value: "jpeg", label: "JPEG" },
+              { value: "webp", label: "WebP" },
+            ]}
+          />
+        </div>
+        <div className="row row-stack">
+          <div className="row-line">
+            <span className="row-label">快照存到</span>
+            <button type="button" className="link small" onClick={() => void pickDir("saveDir")}>更改</button>
+          </div>
+          <span className="mono small ink-2 nowrap" title={settings.saveDir || undefined}>
+            {settings.saveDir ? middleTruncatePath(settings.saveDir) : "应用数据目录（默认）"}
+          </span>
+        </div>
+      </div>
+
+      <h2 className="panel-title panel-title-gap">录制</h2>
+      <div className="rows">
+        <div className="row row-stack">
+          <div className="row-line">
+            <span className="row-label">录像存到</span>
+            <span className="row-links small">
+              <button type="button" className="link" onClick={() => openRecordingsDir().catch((error) => notify(errorText(error), "error"))}>打开</button>
+              <button type="button" className="link" onClick={() => void pickDir("recordingDir")}>更改</button>
+              {settings.recordingDir && (
+                <button type="button" className="link" onClick={() => void update({ recordingDir: "" }, "已恢复默认录像位置")}>恢复默认</button>
+              )}
+            </span>
+          </div>
+          <span className={`small nowrap ${settings.recordingDir ? "mono ink-2" : "quiet"}`} title={settings.recordingDir || undefined}>
+            {recordingDirLabel}
+          </span>
+        </div>
+        <div className="row">
+          <span className="row-label-stack">
+            <label htmlFor="switch-system-audio" className="row-label">同时录系统声音</label>
+            {caps && !caps.recordingSystemAudio.available && <span className="quiet small">{caps.recordingSystemAudio.detail}</span>}
+          </span>
+          <Switch
+            id="switch-system-audio"
+            label="同时录系统声音"
+            value={settings.recordSystemAudio}
+            disabled={Boolean(caps && !caps.recordingSystemAudio.available && !settings.recordSystemAudio)}
+            onChange={(value) => void update({ recordSystemAudio: value })}
+          />
+        </div>
+        <div className="row">
+          <span className="row-label-stack">
+            <label htmlFor="switch-microphone" className="row-label">同时录麦克风</label>
+            {caps && !caps.recordingMicrophone.available && <span className="quiet small">{caps.recordingMicrophone.detail}</span>}
+          </span>
+          <Switch
+            id="switch-microphone"
+            label="同时录麦克风"
+            value={settings.recordMicrophone}
+            disabled={Boolean(caps && !caps.recordingMicrophone.available && !settings.recordMicrophone)}
+            onChange={(value) => void update({ recordMicrophone: value })}
+          />
+        </div>
+      </div>
+    </section>
+  );
+}
+
+export function ShortcutsPage() {
+  return (
+    <div className="page-grid page-grid-2">
+      <ShortcutsPanel />
+      <StoragePanel />
     </div>
   );
 }
+
+/** 给别处用：某个动作当前绑的键（输入框里要显示） */
+export function acceleratorOf(settings: Settings, action: ShortcutAction) {
+  return settings.shortcuts.find((item) => item.action === action)?.accelerator ?? null;
+}
+
+export { shortcutKeys };

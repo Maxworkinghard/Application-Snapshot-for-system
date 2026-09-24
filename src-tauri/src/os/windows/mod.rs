@@ -21,7 +21,8 @@ pub(crate) use icon::app_icon_png;
 pub(crate) use window::restore_minimized;
 
 /// 本平台支持的全局快捷键动作，顺序即设置页的显示顺序
-pub(crate) const SHORTCUT_ACTIONS: &[&str] = &["snapshot", "fullscreen", "record", "polish"];
+pub(crate) const SHORTCUT_ACTIONS: &[&str] =
+    &["snapshot", "fullscreen", "record", "polish", "palette"];
 
 /// 一次进行中的录制
 pub(crate) struct Recording(recorder::ActiveRecording);

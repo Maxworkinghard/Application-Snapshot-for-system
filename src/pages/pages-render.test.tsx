@@ -83,17 +83,28 @@ describe("B2 拆页后逐页渲染", () => {
   });
 
   it.each([
-    ["Prompt 编辑", "当前规则:"],
-    ["快照历史", "快照历史库"],
-    ["桌面伴侣", "伴侣悬浮演示"],
-    ["偏好设置", "截屏与行为"],
-    ["界面主题", "主题对主窗口、桌面伴侣与快捷菜单同时生效。"],
+    [/^Prompt 编辑/, "改规则"],
+    [/^快照历史/, "还没有快照"],
+    [/^桌面伴侣/, "全部形象"],
+    [/^偏好设置/, "截屏与行为"],
+    [/^主题库/, "布局"],
   ])("导航到「%s」能渲染出该页独有内容", async (navLabel, marker) => {
     await renderApp();
     const user = userEvent.setup();
     await user.click(screen.getByRole("button", { name: navLabel }));
-    // 页面切换有 PAGE_EXIT_MS 的淡出延时，等新页面内容出现
-    expect(await screen.findByText(marker, {}, { timeout: 2000 })).toBeTruthy();
+    // 换页不等旧页淡出，新页内容应当马上出现
+    expect(await screen.findAllByText(marker, { exact: false })).not.toHaveLength(0);
+  });
+
+  it("主题库里换成「时间线」：侧栏消失，标题栏出现「今天」", async () => {
+    await renderApp();
+    const user = userEvent.setup();
+    await user.click(screen.getByRole("button", { name: /^主题库/ }));
+    await user.click(await screen.findByRole("radio", { name: /时间线/ }));
+    expect(await screen.findByRole("button", { name: "今天" })).toBeTruthy();
+    expect(screen.queryByRole("button", { name: "快捷操作" })).toBeNull();
+    await waitFor(() => expect(window.localStorage.getItem("snapshot-layout")).toBe("timeline"));
+    window.localStorage.removeItem("snapshot-layout");
   });
 });
 // jsdom 未实现 Element.prototype.scrollTo；App 换页后会调用它回到顶部。

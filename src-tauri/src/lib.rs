@@ -1,6 +1,8 @@
 mod actions;
+mod activity;
 mod capabilities;
 mod capture;
+mod clipboard;
 mod media;
 mod pet;
 mod polish;
@@ -55,6 +57,15 @@ use xcap::{Monitor, Window};
 struct AppState {
     settings_path: PathBuf,
     snapshots_dir: PathBuf,
+    /// 快照缩略图，放在应用数据目录，不往用户选的保存目录里塞东西
+    thumbs_dir: PathBuf,
+    /// 导入时复制进来的伴侣素材与它们的缩略图
+    pets_dir: PathBuf,
+    activity: Mutex<activity::ActivityLog>,
+    /// 剪贴板里是不是我们放的图、多久后清
+    clipboard: Mutex<Option<clipboard::ClipboardState>>,
+    /// 每放一次图、每次手动清空/取消都加一，让过期的清空线程自己作废
+    clipboard_generation: AtomicU64,
     settings: Mutex<settings::Settings>,
     tracker: Arc<Mutex<tracker::TrackerState>>,
     recorder: Mutex<recording::Recorder>,
@@ -95,10 +106,13 @@ pub fn run() {
         .unwrap_or_else(std::env::temp_dir)
         .join(&identifier)
         .join("settings.json");
-    let snapshots_dir = dirs::data_dir()
+    let data_dir = dirs::data_dir()
         .unwrap_or_else(std::env::temp_dir)
-        .join(&identifier)
-        .join("snapshots");
+        .join(&identifier);
+    let snapshots_dir = data_dir.join("snapshots");
+    let thumbs_dir = data_dir.join("thumbs");
+    let pets_dir = data_dir.join("pets");
+    let activity_path = settings_path.with_file_name("activity.json");
     let settings = settings::read_settings(&settings_path);
 
     tauri::Builder::default()
@@ -114,6 +128,11 @@ pub fn run() {
         .manage(AppState {
             settings_path,
             snapshots_dir,
+            thumbs_dir,
+            pets_dir,
+            activity: Mutex::new(activity::ActivityLog::load(activity_path)),
+            clipboard: Mutex::new(None),
+            clipboard_generation: AtomicU64::new(0),
             settings: Mutex::new(settings),
             tracker: Arc::new(Mutex::new(tracker::TrackerState::default())),
             recorder: Mutex::new(recording::Recorder::default()),
@@ -171,6 +190,7 @@ pub fn run() {
             let failed = shortcuts::register_all(app.handle(), &settings.shortcuts);
             if !failed.is_empty() {
                 eprintln!("snapshot: {}", shortcuts::conflict_message(&failed));
+                activity::record_error(app.handle(), "快捷键没注册上", &failed.join("、"));
                 *state.shortcut_conflicts.lock() = failed;
             }
 
@@ -192,7 +212,7 @@ pub fn run() {
                     "open-settings" => actions::show_main_window(app.clone()),
                     "quit" => {
                         if let Some(state) = app.try_state::<AppState>() {
-                            state.recorder.lock().stop();
+                            let _ = state.recorder.lock().stop();
                         }
                         app.exit(0);
                     }
@@ -264,7 +284,8 @@ pub fn run() {
             settings::save_prompt_settings,
             settings::fetch_models,
             pet::select_pet_appearance,
-            pet::add_pet_asset,
+            pet::add_pet_assets,
+            pet::rename_pet_asset,
             pet::delete_pet_asset,
             settings::save_shortcuts,
             shortcuts::get_shortcut_conflicts,
@@ -279,12 +300,19 @@ pub fn run() {
             snapshots::list_snapshots,
             snapshots::open_snapshots_dir,
             recording::open_recordings_dir,
-            snapshots::delete_snapshot,
-            snapshots::clear_snapshots,
+            snapshots::delete_snapshots,
+            snapshots::copy_snapshot,
+            activity::list_activity,
+            clipboard::get_clipboard_state,
+            clipboard::clear_clipboard_now,
+            clipboard::keep_clipboard,
+            clipboard::copy_text,
+            clipboard::read_clipboard_text,
             capabilities::platform_capabilities,
             actions::show_quick_menu,
-            actions::set_quick_menu_expanded,
+            actions::resize_quick_menu,
             actions::hide_quick_menu,
+            actions::run_action,
             actions::show_main_window,
             capture::get_annotate_image,
             capture::annotate_get_title,
@@ -333,10 +361,13 @@ mod pet_asset_tests {
         #[cfg(target_os = "linux")]
         assert_eq!(
             actions,
-            vec!["snapshot", "record", "polish", "scrolling", "fullscreen"]
+            vec!["snapshot", "record", "polish", "scrolling", "fullscreen", "palette"]
         );
         #[cfg(not(target_os = "linux"))]
-        assert_eq!(actions, vec!["snapshot", "record", "polish", "fullscreen"]);
+        assert_eq!(
+            actions,
+            vec!["snapshot", "record", "polish", "fullscreen", "palette"]
+        );
 
         // 已绑定的键不能在迁移中丢失
         let snapshot = settings

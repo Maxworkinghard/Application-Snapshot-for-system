@@ -279,6 +279,7 @@ pub(crate) fn read_settings(path: &PathBuf) -> Settings {
             asset.entry = asset.animations[0].clone();
         }
     }
+    super::pet::refresh_missing(&mut settings.pet_assets);
     if settings.selected_appearance_id != "app-icon"
         && !settings
             .pet_assets

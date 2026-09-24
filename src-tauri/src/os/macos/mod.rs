@@ -21,7 +21,8 @@ pub(crate) use recorder::{start_recording, Recording};
 pub(crate) use window::restore_minimized;
 
 /// 本平台支持的全局快捷键动作，顺序即设置页的显示顺序
-pub(crate) const SHORTCUT_ACTIONS: &[&str] = &["snapshot", "fullscreen", "record", "polish"];
+pub(crate) const SHORTCUT_ACTIONS: &[&str] =
+    &["snapshot", "fullscreen", "record", "polish", "palette"];
 
 /// xcap 截不到光标：截完按窗口原点与 DPI 比例把当前系统光标合成上去。
 /// 返回的第二项是光标没合成上的原因（截图本身仍然成功）。

@@ -22,6 +22,7 @@ pub(crate) fn plugin() -> tauri::plugin::TauriPlugin<tauri::Wry> {
             tauri::async_runtime::spawn(async move {
                 if let Err(error) = actions::perform(&app, &action).await {
                     eprintln!("snapshot: shortcut action {action} failed: {error}");
+                    activity::record_error(&app, actions::action_failure_title(&action), &error);
                 }
             });
         })

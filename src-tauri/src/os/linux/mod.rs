@@ -23,7 +23,7 @@ pub(crate) use window::restore_minimized;
 
 /// 本平台支持的全局快捷键动作，顺序即设置页的显示顺序（滚动长截图只有 Linux/X11 有）
 pub(crate) const SHORTCUT_ACTIONS: &[&str] =
-    &["snapshot", "fullscreen", "scrolling", "record", "polish"];
+    &["snapshot", "fullscreen", "scrolling", "record", "polish", "palette"];
 
 /// 一次进行中的录制（ffmpeg 子进程 + 可选 portal）
 pub(crate) struct Recording(recording::ActiveRecording);
