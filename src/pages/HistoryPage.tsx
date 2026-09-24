@@ -15,18 +15,17 @@ import {
 import {
   clearSnapshots,
   deleteSnapshot,
-  getSnapshotDataUrl,
   listSnapshots,
   ocrSnapshot,
   openSnapshotsDir,
 } from "../lib/backend";
 import { formatBytes, formatWhen } from "../lib/format";
+import { snapshotUrl } from "../lib/media";
 import { LoadingState } from "../components/LoadingState";
 import type { SnapshotRecord } from "../types";
 
 export function HistoryPage({ notify }: { notify: (message: string) => void }) {
   const [records, setRecords] = useState<SnapshotRecord[]>([]);
-  const [thumbs, setThumbs] = useState<Record<string, string>>({});
   const [loading, setLoading] = useState(true);
   const [query, setQuery] = useState("");
   const [preview, setPreview] = useState<SnapshotRecord | null>(null);
@@ -55,25 +54,6 @@ export function HistoryPage({ notify }: { notify: (message: string) => void }) {
   }
 
   useEffect(() => { void refresh(); }, []);
-
-  // 缩略图按需拉取，已取过的不重复请求
-  useEffect(() => {
-    let active = true;
-    const missing = records.filter((item) => !thumbs[item.id]);
-    if (missing.length === 0) return;
-    void Promise.all(
-      missing.map(async (item) => {
-        try {
-          return [item.id, await getSnapshotDataUrl(item.id)] as const;
-        } catch {
-          return [item.id, ""] as const;
-        }
-      }),
-    ).then((entries) => {
-      if (active) setThumbs((prev) => ({ ...prev, ...Object.fromEntries(entries) }));
-    });
-    return () => { active = false; };
-  }, [records]);
 
   useEffect(() => {
     if (!preview && !confirmClear) return;
@@ -106,7 +86,6 @@ export function HistoryPage({ notify }: { notify: (message: string) => void }) {
     setClearing(true);
     try {
       setRecords(await clearSnapshots());
-      setThumbs({});
       setPreview(null);
       setConfirmClear(false);
       notify("已清空快照历史");
@@ -193,7 +172,8 @@ export function HistoryPage({ notify }: { notify: (message: string) => void }) {
                 onClick={() => { setPreview(item); setOcrText(""); }}
                 title="放大预览"
               >
-                {thumbs[item.id] && <img className="card-preview-art" src={thumbs[item.id]} alt="" />}
+                {/* 滚到附近才加载、解码不占主线程：200 张历史也只读眼前那几张 */}
+                <img className="card-preview-art" src={snapshotUrl(item.id)} alt="" loading="lazy" decoding="async" />
                 <span className="stage-zoom-hint">
                   <Maximize2 size={14} />
                   <span>放大预览</span>
@@ -329,9 +309,7 @@ export function HistoryPage({ notify }: { notify: (message: string) => void }) {
             </div>
 
             <div className="lightbox-stage">
-              {thumbs[preview.id]
-                ? <img className="lightbox-art" src={thumbs[preview.id]} alt="" style={{ objectFit: "contain" }} />
-                : <div className="polish-placeholder"><span className="inline-spinner" />图片加载中…</div>}
+              <img className="lightbox-art" src={snapshotUrl(preview.id)} alt="" style={{ objectFit: "contain" }} />
             </div>
 
             <div className="lightbox-meta-row">

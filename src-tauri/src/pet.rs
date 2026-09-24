@@ -126,12 +126,12 @@ pub(crate) fn delete_pet_asset(
     Ok(result)
 }
 
-#[tauri::command]
-pub(crate) fn get_pet_asset_data_url(
-    state: State<'_, AppState>,
-    id: String,
-    entry: Option<String>,
-) -> Result<String, String> {
+/// 读出某个形象的一段 GIF 动画（媒体协议用）。不指定动作时取该形象的默认动作。
+pub(crate) fn read_animation(
+    state: &AppState,
+    id: &str,
+    entry: Option<&str>,
+) -> Result<Vec<u8>, String> {
     let asset = state
         .settings
         .lock()
@@ -143,14 +143,15 @@ pub(crate) fn get_pet_asset_data_url(
     let archive_path = PathBuf::from(&asset.path);
     let requested = entry.filter(|value| !value.is_empty());
     let entry_name = if let Some(requested) = requested {
+        // 只认登记过的动作名，不能借路径读压缩包里的任意条目
         if !asset
             .animations
             .iter()
-            .any(|candidate| candidate == &requested)
+            .any(|candidate| candidate == requested)
         {
             return Err("压缩包内没有这个动画".into());
         }
-        requested
+        requested.to_string()
     } else if asset.entry.is_empty() {
         find_pet_animation_entries(&archive_path)?
             .into_iter()
@@ -168,7 +169,7 @@ pub(crate) fn get_pet_asset_data_url(
         if bytes.len() > 50 * 1024 * 1024 {
             return Err("桌宠动画不能超过 50MB".into());
         }
-        return Ok(format!("data:image/gif;base64,{}", BASE64.encode(bytes)));
+        return Ok(bytes);
     }
     let file = fs::File::open(&archive_path).map_err(|_| "桌宠压缩包已被移动或删除".to_string())?;
     let mut archive = zip::ZipArchive::new(file).map_err(|_| "桌宠压缩包已损坏".to_string())?;
@@ -182,7 +183,7 @@ pub(crate) fn get_pet_asset_data_url(
     entry
         .read_to_end(&mut bytes)
         .map_err(|_| "读取桌宠动画失败".to_string())?;
-    Ok(format!("data:image/gif;base64,{}", BASE64.encode(bytes)))
+    Ok(bytes)
 }
 
 /// 收集一份桌宠素材里可用的动作。

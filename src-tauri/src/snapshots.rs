@@ -202,19 +202,15 @@ pub(crate) fn list_snapshots(state: State<'_, AppState>) -> Vec<SnapshotRecord> 
     alive
 }
 
-#[tauri::command]
-pub(crate) fn get_snapshot_data_url(
-    state: State<'_, AppState>,
-    id: String,
-) -> Result<String, String> {
-    let record = read_snapshot_index(&snapshot_index_path(&state))
+/// 按 id 读出一张快照的文件字节与类型（媒体协议与 OCR 共用）。
+pub(crate) fn read_snapshot(state: &AppState, id: &str) -> Result<(&'static str, Vec<u8>), String> {
+    let record = read_snapshot_index(&snapshot_index_path(state))
         .into_iter()
         .find(|item| item.id == id)
         .ok_or_else(|| "找不到这条快照".to_string())?;
-    let bytes = fs::read(history_dir(&state).join(&record.file_name))
+    let bytes = fs::read(history_dir(state).join(&record.file_name))
         .map_err(|_| "快照文件已被移动或删除".to_string())?;
-    let mime = mime_for_snapshot_file(&record.file_name);
-    Ok(format!("data:{mime};base64,{}", BASE64.encode(bytes)))
+    Ok((mime_for_snapshot_file(&record.file_name), bytes))
 }
 
 #[tauri::command]

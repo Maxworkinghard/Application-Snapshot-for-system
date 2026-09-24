@@ -4,18 +4,19 @@ use super::*;
 #[serde(rename_all = "camelCase")]
 pub(crate) struct PreviousApp {
     id: Option<u32>,
+    /// 图标由页面按需经 media://icon/<pid>/<边长> 取，这里只给 pid
+    pid: Option<u32>,
     name: String,
     title: String,
-    icon_data_url: Option<String>,
 }
 
 impl Default for PreviousApp {
     fn default() -> Self {
         Self {
             id: None,
+            pid: None,
             name: "等待切换应用".into(),
             title: String::new(),
-            icon_data_url: None,
         }
     }
 }
@@ -24,9 +25,9 @@ impl Default for PreviousApp {
 #[serde(rename_all = "camelCase")]
 pub(crate) struct CapturableWindow {
     id: u32,
+    pid: u32,
     app_name: String,
     title: String,
-    icon_data_url: Option<String>,
 }
 
 #[derive(Clone, Debug)]
@@ -78,14 +79,13 @@ pub(crate) fn list_capturable_windows() -> Result<Vec<CapturableWindow>, String>
             if title.trim().is_empty() {
                 return None;
             }
-            let pid = window.pid().ok()?;
             Some((
                 area,
                 CapturableWindow {
                     id: window.id().ok()?,
+                    pid: window.pid().ok()?,
                     app_name: window.app_name().unwrap_or_else(|_| "应用".into()),
                     title,
-                    icon_data_url: app_icon_data_url(pid),
                 },
             ))
         })
@@ -158,9 +158,9 @@ pub(crate) fn start_tracker(app: AppHandle, tracker: Arc<Mutex<TrackerState>>) {
                         if let Some(previous) = state.previous.as_ref() {
                             state.previous_view = PreviousApp {
                                 id: Some(previous.id),
+                                pid: Some(previous.pid),
                                 name: previous.app_name.clone(),
                                 title: previous.title.clone(),
-                                icon_data_url: app_icon_data_url(previous.pid),
                             };
                             let _ = app.emit("previous-app-changed", &state.previous_view);
                         }
@@ -173,27 +173,28 @@ pub(crate) fn start_tracker(app: AppHandle, tracker: Arc<Mutex<TrackerState>>) {
 }
 
 #[cfg(any(target_os = "windows", target_os = "linux"))]
-fn rgba_to_data_url(image: RgbaImage) -> Option<String> {
+fn rgba_to_png(image: RgbaImage) -> Option<Vec<u8>> {
     let mut bytes = Vec::new();
     image
         .write_to(&mut Cursor::new(&mut bytes), ImageFormat::Png)
         .ok()?;
-    Some(format!("data:image/png;base64,{}", BASE64.encode(bytes)))
+    Some(bytes)
 }
 
+/// 进程图标，按页面实际显示的像素边长取（媒体协议用）。
 #[cfg(target_os = "windows")]
-fn app_icon_data_url(pid: u32) -> Option<String> {
-    platform::windows_icon::icon_for_process(pid).and_then(rgba_to_data_url)
+pub(crate) fn app_icon_png(pid: u32, size: u32) -> Option<Vec<u8>> {
+    platform::windows_icon::icon_for_process(pid, size).and_then(rgba_to_png)
 }
 
 #[cfg(target_os = "macos")]
-fn app_icon_data_url(pid: u32) -> Option<String> {
-    platform::mac_icon::png_data_url_for_pid(pid)
+pub(crate) fn app_icon_png(pid: u32, size: u32) -> Option<Vec<u8>> {
+    platform::mac_icon::png_for_pid(pid, size)
 }
 
 #[cfg(target_os = "linux")]
-fn app_icon_data_url(pid: u32) -> Option<String> {
-    linux::icon_for_process(pid).and_then(rgba_to_data_url)
+pub(crate) fn app_icon_png(pid: u32, size: u32) -> Option<Vec<u8>> {
+    linux::icon_for_process(pid, size).and_then(rgba_to_png)
 }
 
 #[cfg(all(
@@ -201,7 +202,7 @@ fn app_icon_data_url(pid: u32) -> Option<String> {
     not(target_os = "macos"),
     not(target_os = "linux")
 ))]
-fn app_icon_data_url(_pid: u32) -> Option<String> {
+pub(crate) fn app_icon_png(_pid: u32, _size: u32) -> Option<Vec<u8>> {
     None
 }
 
