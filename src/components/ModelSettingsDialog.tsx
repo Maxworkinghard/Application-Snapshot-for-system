@@ -9,11 +9,14 @@ export function ModelSettingsDialog({
   onSaved,
   notify,
   onClose,
+  leaving = false,
 }: {
   settings: Settings;
   onSaved: (value: Settings) => void;
   notify: (message: string, kind?: "info" | "error") => void;
   onClose: () => void;
+  /** 正在退场（淡出、缩一点），这时不再接收点击 */
+  leaving?: boolean;
 }) {
   const [baseUrl, setBaseUrl] = useState(settings.baseUrl);
   const [model, setModel] = useState(settings.model);
@@ -74,7 +77,7 @@ export function ModelSettingsDialog({
   }
 
   return createPortal(
-    <div className="dialog-backdrop" onClick={onClose}>
+    <div className={`dialog-backdrop ${leaving ? "is-leaving" : ""}`} onClick={onClose}>
       <div
         className="dialog dialog-wide"
         role="dialog"

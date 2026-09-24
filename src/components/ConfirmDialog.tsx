@@ -9,6 +9,7 @@ export function ConfirmDialog({
   busy = false,
   onConfirm,
   onCancel,
+  leaving = false,
 }: {
   title: string;
   body: string;
@@ -16,6 +17,7 @@ export function ConfirmDialog({
   busy?: boolean;
   onConfirm: () => void;
   onCancel: () => void;
+  leaving?: boolean;
 }) {
   const confirmRef = useRef<HTMLButtonElement>(null);
   useEffect(() => {
@@ -31,7 +33,7 @@ export function ConfirmDialog({
   }, [onCancel]);
 
   return createPortal(
-    <div className="dialog-backdrop" onClick={onCancel}>
+    <div className={`dialog-backdrop ${leaving ? "is-leaving" : ""}`} onClick={onCancel}>
       <div
         className="dialog"
         role="alertdialog"

@@ -32,14 +32,20 @@
   --text-small: 12px;
   --text-lead: 15px;
 
-  /* 动效：只有四档时长，见 lib/motion.ts */
-  --t-press: 90ms;
-  --t-fade: 160ms;
-  --t-open: 220ms;
-  --t-theme: 280ms;
-  --rise: 4px;
-  --ease-out: cubic-bezier(0.2, 0, 0, 1);
-  --ease-in: cubic-bezier(0.4, 0, 1, 1);
+  /* 动效：见 lib/motion.ts。进场慢一点、退场快一点，换页和指示条用同一档 */
+  --t-press: 100ms;   /* 按下、悬停变色 */
+  --t-fade: 180ms;    /* 小状态：开关、选中变色 */
+  --t-open: 320ms;    /* 进场与移动：换页、指示条滑动、弹层、列表入场 */
+  --t-exit: 160ms;    /* 所有退场 */
+  --t-theme: 520ms;   /* 换颜色：从点的地方铺开 */
+  --rise: 10px;       /* 小东西进场的位移 */
+  --shift: 32px;      /* 换页时新页滑进来的距离 */
+  --stagger: 24ms;    /* 列表逐个入场的间隔 */
+  --settle-from: 0.97; /* 换布局时新布局从这个比例落定 */
+  --ease-out: cubic-bezier(0.2, 0, 0, 1);          /* 标准：移动、指示条 */
+  --ease-enter: cubic-bezier(0.05, 0.7, 0.1, 1);   /* 进场：先快后稳稳落定 */
+  --ease-exit: cubic-bezier(0.3, 0, 0.8, 0.15);    /* 退场：加速离开 */
+  --ease-in: var(--ease-exit);
   --ease-cat: cubic-bezier(0.34, 1.56, 0.64, 1);
 }
 
@@ -64,12 +70,16 @@
   --shadow-dialog: 0 8px 24px rgba(0, 0, 0, 0.45);
 }
 
-/* 减弱：只留淡入淡出，不做位移，不回弹 */
+/* 减弱：只留淡入淡出，不做位移，不回弹（时长不砍到看不见） */
 [data-motion="reduced"] {
   --t-press: 0ms;
-  --t-fade: 120ms;
-  --t-open: 120ms;
-  --t-theme: 120ms;
+  --t-fade: 150ms;
+  --t-open: 200ms;
+  --t-exit: 150ms;
+  --t-theme: 240ms;
   --rise: 0px;
+  --shift: 0px;
+  --stagger: 0ms;
+  --settle-from: 1;
   --ease-cat: var(--ease-out);
 }

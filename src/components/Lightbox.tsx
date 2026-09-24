@@ -36,6 +36,9 @@ export function Lightbox({
   const [currentId, setCurrentId] = useState(startId);
   const [box, setBox] = useState<{ width: number; height: number } | null>(null);
   const [armedDelete, setArmedDelete] = useState(false);
+  const [isClosing, setIsClosing] = useState(false);
+  // 翻页方向：下一张从右边滑进来，上一张从左边
+  const [direction, setDirection] = useState<1 | -1>(1);
   const stageRef = useRef<HTMLDivElement>(null);
   const imageRef = useRef<HTMLImageElement>(null);
   const opened = useRef(false);
@@ -70,6 +73,7 @@ export function Lightbox({
   const close = useCallback(async () => {
     if (closing.current) return;
     closing.current = true;
+    setIsClosing(true);
     if (imageRef.current && record) await shrinkTo(imageRef.current, thumbRect(record.id));
     onClose();
   }, [onClose, record]);
@@ -79,6 +83,7 @@ export function Lightbox({
       const next = records[index + delta];
       if (next) {
         setArmedDelete(false);
+        setDirection(delta > 0 ? 1 : -1);
         setCurrentId(next.id);
       }
     },
@@ -122,7 +127,7 @@ export function Lightbox({
 
   // 挂到 body 上：页面切换的位移动画会让祖先变成定位容器，放在里面会被框住
   return createPortal(
-    <div className="lightbox" role="dialog" aria-modal="true" aria-label={`放大查看：${record.appName}`}>
+    <div className={`lightbox ${isClosing ? "is-closing" : ""}`} role="dialog" aria-modal="true" aria-label={`放大查看：${record.appName}`}>
       <div className="lightbox-head">
         <button type="button" className="lightbox-back" onClick={() => void close()}>
           <svg width="7" height="12" viewBox="0 0 7 12" aria-hidden="true"><path d="M6 1L1 6l5 5" fill="none" stroke="currentColor" strokeWidth="1.4" /></svg>
@@ -141,7 +146,7 @@ export function Lightbox({
             <img
               key={record.id}
               ref={imageRef}
-              className={`lightbox-image ${opened.current ? "is-swapped" : ""}`}
+              className={`lightbox-image ${opened.current ? "is-swapped" : ""} ${direction < 0 ? "from-prev" : ""}`}
               src={snapshotUrl(record.id)}
               alt={record.appName}
               style={{ width: box.width, height: box.height }}

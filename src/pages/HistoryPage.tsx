@@ -8,7 +8,7 @@ import {
   savePreferences,
 } from "../lib/backend";
 import { formatBytes, formatClock, groupByDay } from "../lib/format";
-import { useFlip, wait, DURATION } from "../lib/motion";
+import { useFlip, wait, DURATION, stagger, usePresence } from "../lib/motion";
 import { SnapshotThumb } from "../components/SnapshotThumb";
 import { Lightbox } from "../components/Lightbox";
 import { ConfirmDialog } from "../components/ConfirmDialog";
@@ -170,10 +170,19 @@ export function HistoryPage() {
     [records, selected],
   );
 
-  if (records === null) return <LoadingState text="正在读取快照历史…" />;
-
-  const total = records.length;
+  const total = records?.length ?? 0;
   const allSelected = total > 0 && selected.size === total;
+  // 退场时文案别跟着变成「删除 0 张」：打开那一刻的文案一直留到对话框淡出
+  const confirmDialog = usePresence(
+    confirming
+      ? {
+          title: allSelected ? `删除全部 ${total} 张快照？` : `删除选中的 ${selected.size} 张快照？`,
+          label: `删除 ${selected.size} 张`,
+        }
+      : null,
+  );
+
+  if (records === null) return <LoadingState text="正在读取快照历史…" />;
 
   const header = selecting ? (
     <div className="history-bar">
@@ -259,6 +268,8 @@ export function HistoryPage() {
       </p>
     );
   } else {
+    // 逐个入场只数前十几张：再往后已经在屏幕外，等也白等
+    let order = 0;
     body = (
       <div className="history-groups" ref={listRef}>
         {groups.map((group) => {
@@ -280,6 +291,7 @@ export function HistoryPage() {
                   <figure
                     key={item.id}
                     data-flip-key={item.id}
+                    style={stagger(order++)}
                     className={`shot ${leaving.has(item.id) ? "is-leaving" : ""} ${fresh.has(item.id) ? "is-fresh" : ""}`}
                   >
                     <SnapshotThumb
@@ -328,12 +340,13 @@ export function HistoryPage() {
           onDelete={(id) => void remove([id])}
         />
       )}
-      {confirming && (
+      {confirmDialog.item && (
         <ConfirmDialog
-          title={allSelected ? `删除全部 ${total} 张快照？` : `删除选中的 ${selected.size} 张快照？`}
+          title={confirmDialog.item.title}
           body="图片文件会从本机一起删掉，没法恢复。"
-          confirmLabel={`删除 ${selected.size} 张`}
+          confirmLabel={confirmDialog.item.label}
           busy={deleting}
+          leaving={confirmDialog.leaving}
           onCancel={() => setConfirming(false)}
           onConfirm={() => void remove([...selected]).then(() => allSelected && exitSelecting())}
         />

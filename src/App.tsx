@@ -29,9 +29,9 @@ import {
   type LayoutTheme,
   type MotionPreference,
 } from "./lib/prefs";
-import { withViewTransition } from "./lib/motion";
+import { viewTransition, type TransitionDirection } from "./lib/motion";
 import { AppContext, errorText, useApp, type AppContextValue, type Notice, type NoticeKind } from "./app/context";
-import { LedgerList, NoticeLine, SideNav, TitleBar, TopNav } from "./app/Shell";
+import { LedgerList, NavMark, NoticeLine, SideNav, TitleBar, TopNav } from "./app/Shell";
 import { Companion } from "./components/Companion";
 import { LoadingState } from "./components/LoadingState";
 import { useActivityLog, useClipboardState, useRecordingStatus, useSnapshotCount } from "./hooks/useLive";
@@ -60,6 +60,22 @@ function mapPage(page: NavPage, layout: LayoutTheme): NavPage {
   if (layout === "timeline") return ["shortcuts", "prefs", "themes"].includes(page) ? "settings" : home;
   if (page === "settings") return "themes";
   return home;
+}
+
+/** 导航里的先后顺序：往后走新页从下面（或右边）来，往回走从上面（或左边）来 */
+const NAV_ORDER: Record<LayoutTheme, NavPage[]> = {
+  companion: ["shortcuts", "prompt", "history", "pet", "prefs", "themes"],
+  ledger: ["shortcuts", "prompt", "history", "pet", "prefs", "themes"],
+  topbar: ["shortcuts", "prompt", "history", "pet", "prefs", "themes"],
+  timeline: ["home", "prompt", "history", "pet", "settings"],
+};
+
+function directionFor(layout: LayoutTheme, from: NavPage, to: NavPage): TransitionDirection {
+  const order = NAV_ORDER[layout];
+  const forward = order.indexOf(to) >= order.indexOf(from);
+  // 侧栏是竖排，换页上下走；标题栏里的导航是横排，换页左右走
+  const vertical = layout === "companion" || layout === "ledger";
+  return vertical ? (forward ? "down" : "up") : forward ? "right" : "left";
 }
 
 /** 普通提示自己消失，出错的多留一会儿（伴侣布局里由猫说，别处浮在左下角） */
@@ -164,14 +180,15 @@ export function App() {
     setThemePreferenceState(next);
     persistThemePreference(next);
     const mode = resolveTheme(next);
-    withViewTransition(() => applyTheme(mode));
+    // 从点的那个选项铺开新颜色
+    if (document.documentElement.dataset.theme !== mode) viewTransition("theme", () => applyTheme(mode));
     broadcastTheme(mode);
   }, []);
 
   useEffect(() => {
     if (themePreference !== "system") return;
     return watchSystemTheme((mode) => {
-      applyTheme(mode);
+      viewTransition("theme", () => applyTheme(mode));
       broadcastTheme(mode);
     });
   }, [themePreference]);
@@ -192,20 +209,35 @@ export function App() {
     });
   }, [motionPreference]);
 
-  // 换布局：结构变了就当翻一页，整窗交叉淡化，不让零件各自飞
+  const pageRef = useRef(page);
+  const layoutRef = useRef(layout);
+  pageRef.current = page;
+  layoutRef.current = layout;
+
+  // 换布局：结构变了就当翻一页，新布局整体淡入、轻轻落定，不让零件各自飞
   const setLayout = useCallback((next: LayoutTheme) => {
-    withViewTransition(() => {
+    if (next === layoutRef.current) return;
+    viewTransition("layout", () => {
       setLayoutState(next);
       setPage((current) => mapPage(current, next));
     });
     persistLayout(next);
   }, []);
 
+  // 换页：旧页往反方向退半步淡掉，新页从导航的方向滑进来；导航下的墨线跟着滑过去
   const navigate = useCallback<AppContextValue["navigate"]>((next, options) => {
     if (options?.previewId) setPendingPreviewId(options.previewId);
     if (options?.draft) setPendingDraft(options.draft);
-    setPage(next);
-    mainRef.current?.scrollTo?.({ top: 0 });
+    const from = pageRef.current;
+    if (next === from) return;
+    viewTransition(
+      "page",
+      () => {
+        setPage(next);
+        mainRef.current?.scrollTo?.({ top: 0 });
+      },
+      { direction: directionFor(layoutRef.current, from, next) },
+    );
   }, []);
 
   const value = useMemo<AppContextValue | null>(
@@ -325,6 +357,7 @@ function TimelineLinks() {
           onClick={() => navigate(link.page)}
         >
           {link.label}
+          {page === link.page && <NavMark />}
         </button>
       ))}
     </nav>

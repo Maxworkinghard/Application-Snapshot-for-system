@@ -46,6 +46,13 @@ const errorText = (error: unknown) => (error instanceof Error ? error.message : 
 export function QuickMenuWindow() {
   const [settings, setSettings] = useState<Settings | null>(null);
   const [view, setView] = useState<View>("menu");
+  // 往里走（选窗口、润色）新内容从右边进来，退回菜单从左边回来；刚打开时不额外动
+  const previousView = useRef<View>("menu");
+  const enterClass = useRef("");
+  if (previousView.current !== view) {
+    enterClass.current = view === "menu" ? "enter-back" : "enter-forward";
+    previousView.current = view;
+  }
   const [query, setQuery] = useState("");
   const [cursor, setCursor] = useState(0);
   const [pickerMode, setPickerMode] = useState<"capture" | "record">("capture");
@@ -86,6 +93,8 @@ export function QuickMenuWindow() {
   const reset = useCallback(() => {
     if (hideTimer.current !== null) window.clearTimeout(hideTimer.current);
     runToken.current += 1;
+    previousView.current = "menu";
+    enterClass.current = "";
     setView("menu");
     setQuery("");
     setCursor(0);
@@ -434,7 +443,7 @@ export function QuickMenuWindow() {
         {catSrc && <img className="palette-cat" key={catSrc} src={catSrc} alt="" draggable={false} />}
         <div className="palette" ref={panelRef} role="dialog" aria-label="应用快照输入框">
           {view === "polish" ? (
-            <div className="palette-polish">
+            <div className={`palette-polish ${enterClass.current}`}>
               <div className="palette-source small">
                 <span className="quiet">原文</span>
                 <span className="palette-source-text">{source}</span>
@@ -508,7 +517,7 @@ export function QuickMenuWindow() {
               </div>
 
               {view === "menu" ? (
-                <div className="palette-list" role="listbox" aria-label="动作">
+                <div className={`palette-list ${enterClass.current}`} role="listbox" aria-label="动作">
                   {visibleItems.map((item, index) => (
                     <button
                       key={item.id}
@@ -525,7 +534,7 @@ export function QuickMenuWindow() {
                   ))}
                 </div>
               ) : (
-                <div className="palette-list palette-windows" role="listbox" aria-label={pickerMode === "capture" ? "选择要截取的窗口" : "选择要录制的窗口"}>
+                <div className={`palette-list palette-windows ${enterClass.current}`} role="listbox" aria-label={pickerMode === "capture" ? "选择要截取的窗口" : "选择要录制的窗口"}>
                   {windows === null && <p className="palette-empty small quiet">正在读取窗口…</p>}
                   {windows !== null && visibleWindows.length === 0 && (
                     <p className="palette-empty small quiet">{query ? "没有匹配的窗口" : "没有找到可用的窗口"}</p>

@@ -1,6 +1,7 @@
 import { useMemo, useState } from "react";
 import { copyText, openRecordingsDir } from "../lib/backend";
 import { formatClock, groupByDay } from "../lib/format";
+import { stagger } from "../lib/motion";
 import { parseSize } from "../lib/activity";
 import { SnapshotThumb } from "../components/SnapshotThumb";
 import { Companion } from "../components/Companion";
@@ -48,6 +49,7 @@ export function TimelineHome() {
     setDraft("");
   }
 
+  let order = 0;
   const renderEntry = (entry: ActivityEntry) => {
     let body: React.ReactNode;
     if (entry.kind === "capture") {
@@ -116,7 +118,7 @@ export function TimelineHome() {
       );
     }
     return (
-      <article className="entry" key={entry.id}>
+      <article className="entry" key={entry.id} style={stagger(order++)}>
         <time className="mono small quiet">{formatClock(entry.at)}</time>
         {body}
       </article>

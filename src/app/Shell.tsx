@@ -2,6 +2,7 @@ import type { ReactNode } from "react";
 import { getCurrentWindow } from "@tauri-apps/api/window";
 import { formatClock } from "../lib/format";
 import { shortLabel } from "../lib/activity";
+import { usePresence } from "../lib/motion";
 import { errorText, useApp } from "./context";
 import type { NavPage } from "../types";
 
@@ -73,7 +74,10 @@ export function useNavItems(): { work: NavItem[]; settings: NavItem[] } {
   };
 }
 
-/** 侧栏导航：只有字。当前页是墨色加粗，其余灰字——不加底色、不加竖条 */
+/** 当前页字下那道墨线。换页时它会从旧的一项滑到新的一项（view-transition-name: nav-mark） */
+export const NavMark = () => <span className="nav-mark" aria-hidden="true" />;
+
+/** 侧栏导航：只有字。当前页墨色加粗、字下一道线，其余灰字——不加底色 */
 export function SideNav() {
   const { page, navigate } = useApp();
   const { work, settings } = useNavItems();
@@ -85,7 +89,10 @@ export function SideNav() {
       aria-current={page === entry.page ? "page" : undefined}
       onClick={() => navigate(entry.page)}
     >
-      <span>{entry.label}</span>
+      <span className="nav-label">
+        {entry.label}
+        {page === entry.page && <NavMark />}
+      </span>
       {entry.trailing}
     </button>
   );
@@ -115,6 +122,7 @@ export function TopNav() {
           >
             {entry.label}
             {entry.trailing}
+            {page === entry.page && <NavMark />}
           </button>
         ))}
       </nav>
@@ -129,6 +137,7 @@ export function TopNav() {
             onClick={() => navigate(entry.page)}
           >
             {entry.label}
+            {page === entry.page && <NavMark />}
           </button>
         ))}
       </nav>
@@ -174,10 +183,16 @@ export function LedgerList() {
 
 /** 没有猫的地方，一句话提示浮在左下角：普通的自己消失，出错的留着等你关 */
 export function NoticeLine() {
-  const { notice, dismissNotice } = useApp();
+  const { notice: live, dismissNotice } = useApp();
+  // 到时间或点了关闭：往下沉一点淡出，而不是啪一下没了
+  const { item: notice, leaving } = usePresence(live);
   if (!notice) return null;
   return (
-    <div key={notice.id} className={`notice-line ${notice.kind === "error" ? "is-error" : ""}`} role={notice.kind === "error" ? "alert" : "status"}>
+    <div
+      key={notice.id}
+      className={`notice-line ${notice.kind === "error" ? "is-error" : ""} ${leaving ? "is-leaving" : ""}`}
+      role={notice.kind === "error" ? "alert" : "status"}
+    >
       <span>{notice.text}</span>
       {notice.kind === "error" && (
         <button type="button" aria-label="关闭提示" onClick={dismissNotice}>

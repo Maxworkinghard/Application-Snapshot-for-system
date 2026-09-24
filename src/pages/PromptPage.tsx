@@ -1,6 +1,7 @@
 import { useEffect, useMemo, useRef, useState } from "react";
 import { copyText, polishText, savePromptSettings } from "../lib/backend";
 import { Keys } from "../components/ui/Keys";
+import { usePresence, useSlidingMark } from "../lib/motion";
 import { ModelSettingsDialog } from "../components/ModelSettingsDialog";
 import { errorText, useApp } from "../app/context";
 import type { PromptTemplate } from "../types";
@@ -18,6 +19,7 @@ export function PromptPage() {
   const [editingRule, setEditingRule] = useState(false);
   const [savingRules, setSavingRules] = useState(false);
   const [editingModel, setEditingModel] = useState(false);
+  const modelDialog = usePresence(editingModel || null);
 
   const [text, setText] = useState("");
   const [original, setOriginal] = useState<string | null>(null);
@@ -30,6 +32,7 @@ export function PromptPage() {
   const [startedAt, setStartedAt] = useState(0);
   const [, forceTick] = useState(0);
   const textareaRef = useRef<HTMLTextAreaElement>(null);
+  const tabsRef = useSlidingMark<HTMLDivElement>(`${original !== null}-${peeking}`);
 
   useEffect(() => {
     setTemplates(settings.templates);
@@ -215,7 +218,7 @@ export function PromptPage() {
 
       <div className="prompt-tabs">
         {original !== null ? (
-          <div role="tablist" className="tabs">
+          <div role="tablist" className="tabs has-mark" ref={tabsRef}>
             <button type="button" role="tab" aria-selected={!peeking} className={`tab ${!peeking ? "is-on" : ""}`} onClick={() => setPeeking(false)}>结果</button>
             <button type="button" role="tab" aria-selected={peeking} className={`tab ${peeking ? "is-on" : ""}`} onClick={() => setPeeking(true)}>原文</button>
           </div>
@@ -282,8 +285,14 @@ export function PromptPage() {
         </span>
       </div>
 
-      {editingModel && (
-        <ModelSettingsDialog settings={settings} onSaved={onSaved} notify={notify} onClose={() => setEditingModel(false)} />
+      {modelDialog.item && (
+        <ModelSettingsDialog
+          settings={settings}
+          onSaved={onSaved}
+          notify={notify}
+          onClose={() => setEditingModel(false)}
+          leaving={modelDialog.leaving}
+        />
       )}
     </div>
   );

@@ -5,6 +5,7 @@ import { fileNameOf } from "../lib/format";
 import { previewHintSound } from "../lib/sound";
 import { Switch } from "../components/ui/Switch";
 import { Choices } from "../components/ui/Choices";
+import { usePresence } from "../lib/motion";
 import { ModelSettingsDialog } from "../components/ModelSettingsDialog";
 import { errorText, useApp } from "../app/context";
 import type { Settings } from "../types";
@@ -139,6 +140,7 @@ export function BehaviorPanel() {
 export function MachinePanel() {
   const { settings, caps } = useApp();
   const [editingModel, setEditingModel] = useState(false);
+  const modelDialog = usePresence(editingModel || null);
   const { onSaved, notify } = useApp();
 
   const capabilities = caps
@@ -177,8 +179,14 @@ export function MachinePanel() {
           </div>
         ))}
       </div>
-      {editingModel && (
-        <ModelSettingsDialog settings={settings} onSaved={onSaved} notify={notify} onClose={() => setEditingModel(false)} />
+      {modelDialog.item && (
+        <ModelSettingsDialog
+          settings={settings}
+          onSaved={onSaved}
+          notify={notify}
+          onClose={() => setEditingModel(false)}
+          leaving={modelDialog.leaving}
+        />
       )}
     </section>
   );

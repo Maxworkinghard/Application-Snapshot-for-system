@@ -3,9 +3,60 @@
 .window { --titlebar-h: 34px; display: flex; flex-direction: column; height: 100vh; background: var(--paper); color: var(--ink); position: relative; }
 .window.layout-topbar { --titlebar-h: 44px; }
 
-::view-transition-old(root), ::view-transition-new(root) {
-  animation-duration: var(--t-theme);
-  animation-timing-function: var(--ease-out);
+/* ---------- 过渡（View Transitions，见 lib/motion.ts） ---------- */
+
+/* 过渡播放中照样能点：点下一项就直接打断当前这次 */
+::view-transition { pointer-events: none; }
+::view-transition-old(*), ::view-transition-new(*) { mix-blend-mode: normal; }
+
+:root { --vt-x: 0px; --vt-y: 0px; }
+:root[data-vt-dir="down"] { --vt-y: var(--shift); }
+:root[data-vt-dir="up"] { --vt-y: calc(var(--shift) * -1); }
+:root[data-vt-dir="right"] { --vt-x: var(--shift); }
+:root[data-vt-dir="left"] { --vt-x: calc(var(--shift) * -1); }
+
+/* 换页：只有内容区在动，侧栏和标题栏原地不动 */
+:root[data-vt="page"] .main { view-transition-name: page; }
+:root[data-vt="page"] .nav-mark { view-transition-name: nav-mark; }
+:root[data-vt="page"]::view-transition-old(root),
+:root[data-vt="page"]::view-transition-new(root) { animation: none; }
+:root[data-vt="page"]::view-transition-group(page) { overflow: clip; animation: none; }
+/* 旧页：很快淡掉（两页别叠在一起糊成一片），同时朝反方向退一小步 */
+:root[data-vt="page"]::view-transition-old(page) {
+  animation: vt-fade-out 110ms var(--ease-out) both, vt-slide-out var(--t-open) var(--ease-out) both;
+}
+/* 新页：等旧页差不多淡完再出来，从导航的方向滑进来落定 */
+:root[data-vt="page"]::view-transition-new(page) {
+  animation: vt-fade-in 230ms var(--ease-out) 90ms both, vt-slide-in var(--t-open) var(--ease-enter) both;
+}
+/* 墨线从旧的一项滑到新的一项 */
+::view-transition-group(nav-mark) { animation-duration: var(--t-open); animation-timing-function: var(--ease-out); }
+::view-transition-old(nav-mark) { animation: none; opacity: 0; }
+::view-transition-new(nav-mark) { animation: none; }
+
+/* 换布局：结构全变了，两张叠着交叉淡化会糊成一团——旧布局先退到纸面，新布局再从纸面上浮起来落定 */
+:root[data-vt="layout"]::view-transition { background: var(--paper); }
+:root[data-vt="layout"]::view-transition-old(root) {
+  animation: vt-fade-out 140ms var(--ease-out) both, vt-shrink 140ms var(--ease-exit) both;
+}
+:root[data-vt="layout"]::view-transition-new(root) {
+  animation: vt-fade-in 260ms var(--ease-out) 110ms both, vt-settle calc(var(--t-open) + 80ms) var(--ease-enter) 110ms both;
+}
+
+/* 换颜色：新颜色从点的地方圆形铺开 */
+:root[data-vt="theme"]::view-transition-old(root) { animation: none; }
+:root[data-vt="theme"]::view-transition-new(root) { animation: vt-reveal var(--t-theme) var(--ease-out) both; }
+[data-motion="reduced"][data-vt="theme"]::view-transition-new(root) { animation: vt-fade-in var(--t-theme) var(--ease-out) both; }
+
+@keyframes vt-fade-in { from { opacity: 0; } }
+@keyframes vt-fade-out { to { opacity: 0; } }
+@keyframes vt-slide-in { from { transform: translate(var(--vt-x), var(--vt-y)); } }
+@keyframes vt-slide-out { to { transform: translate(calc(var(--vt-x) * -0.4), calc(var(--vt-y) * -0.4)); } }
+@keyframes vt-settle { from { transform: scale(var(--settle-from)); } }
+@keyframes vt-shrink { to { transform: scale(calc(2 - var(--settle-from))); } }
+@keyframes vt-reveal {
+  from { clip-path: circle(0 at var(--vt-ox, 50%) var(--vt-oy, 50%)); }
+  to { clip-path: circle(var(--vt-r, 150%) at var(--vt-ox, 50%) var(--vt-oy, 50%)); }
 }
 
 /* ---------- 标题栏 ---------- */
@@ -30,14 +81,14 @@
 .top-nav { display: flex; align-items: stretch; gap: 22px; }
 .top-nav-right { gap: 16px; margin-right: 10px; }
 .top-item {
-  display: flex; align-items: center; gap: 6px; padding: 0; margin-bottom: -1px;
-  border: 0; border-bottom: 2px solid transparent; background: none; color: var(--ink-3); white-space: nowrap;
-  transition: color var(--t-press) var(--ease-out), border-color var(--t-fade) var(--ease-out);
+  position: relative; display: flex; align-items: center; gap: 6px; padding: 0;
+  border: 0; background: none; color: var(--ink-3); white-space: nowrap;
+  transition: color var(--t-press) var(--ease-out);
 }
 .top-item:hover { color: var(--ink); }
-.top-item.is-on { color: var(--ink); font-weight: 600; border-bottom-color: var(--ink); }
-.titlebar:not(.is-tall) .top-item { border-bottom: 0; margin-bottom: 0; }
-.titlebar:not(.is-tall) .top-item.is-on { text-decoration: underline; text-underline-offset: 5px; text-decoration-thickness: 1.5px; }
+.top-item.is-on { color: var(--ink); font-weight: 600; }
+.top-item > .nav-mark { bottom: -1px; height: 2px; }
+.titlebar:not(.is-tall) .top-item > .nav-mark { bottom: 7px; height: 1.5px; }
 
 /* ---------- 骨架 ---------- */
 
@@ -47,7 +98,9 @@
 .main { flex: 1 1 auto; min-width: 0; min-height: 0; overflow-y: auto; overflow-x: hidden; }
 .shell-full .main { overflow-y: auto; }
 
-.page-view { min-height: 100%; animation: rise-in var(--t-fade) var(--ease-out) backwards; }
+/* 没有 View Transitions 时（第一次打开、旧 WebView），新页自己淡入；有的话交给上面的换页过渡 */
+.page-view { min-height: 100%; animation: rise-in var(--t-open) var(--ease-enter) backwards; }
+:root[data-vt] .page-view { animation: none; }
 
 /* ---------- 侧栏导航：只有字 ---------- */
 
@@ -61,17 +114,30 @@
 .nav-item:hover { color: var(--ink); }
 .nav-item.is-on { color: var(--ink); font-weight: 600; }
 .nav-item .small { font-weight: 400; }
+.nav-label { position: relative; }
+.nav-mark { position: absolute; left: 0; right: 0; bottom: -4px; height: 1.5px; background: var(--ink); pointer-events: none; }
+/* 侧栏是竖排：标记是字左边的一道竖线，换页时在空白里上下滑，不会从字上划过去 */
+.nav-item .nav-mark { left: -12px; right: auto; top: 2px; bottom: 2px; width: 2px; height: auto; }
 
 /* ---------- 伴侣 ---------- */
 
-.companion { display: flex; flex-direction: column; flex: 1 1 auto; justify-content: flex-end; min-height: 0; transition: opacity var(--t-fade) var(--ease-in), transform var(--t-fade) var(--ease-in); }
-.companion.is-away { opacity: 0; transform: translateY(16px); pointer-events: none; }
+.companion {
+  display: flex; flex-direction: column; flex: 1 1 auto; justify-content: flex-end; min-height: 0;
+  transition: opacity var(--t-open) var(--ease-enter), transform var(--t-open) var(--ease-enter);
+}
+/* 去「桌面伴侣」页时猫从侧栏下去（那页的舞台上已经有它了），回来时再上来 */
+.companion.is-away {
+  opacity: 0; transform: translateY(24px); pointer-events: none;
+  transition-duration: var(--t-exit); transition-timing-function: var(--ease-exit);
+}
 .companion-say {
   position: relative; display: grid; gap: 4px; margin: 0 0 10px; padding: 8px 10px;
   border: 1px solid var(--rule); border-radius: 3px; background: var(--paper-raised);
   font-size: var(--text-small); line-height: 18px; overflow-wrap: anywhere;
-  animation: rise-in var(--t-fade) var(--ease-out);
+  animation: rise-in var(--t-open) var(--ease-enter);
 }
+.companion-say.is-leaving { animation: say-out var(--t-exit) var(--ease-exit) both; pointer-events: none; }
+@keyframes say-out { to { opacity: 0; transform: translateY(6px) scale(0.98); } }
 .companion-say.tone-error { border-color: var(--signal-soft); }
 .companion-say.tone-error > span:first-child { color: var(--signal); }
 .companion-say.tone-rec > span:first-child { color: var(--signal); font-weight: 600; }
@@ -112,8 +178,10 @@
   position: fixed; left: 16px; bottom: 16px; z-index: 40; max-width: min(520px, calc(100vw - 32px));
   display: flex; align-items: center; gap: 12px; min-height: 34px; padding: 6px 14px;
   border-radius: 3px; background: var(--ink); color: var(--on-ink); font-size: var(--text-small); line-height: 18px;
-  animation: rise-in var(--t-fade) var(--ease-out);
+  animation: rise-in var(--t-open) var(--ease-enter);
 }
+.notice-line.is-leaving { animation: notice-out var(--t-exit) var(--ease-exit) both; pointer-events: none; }
+@keyframes notice-out { to { opacity: 0; transform: translateY(8px); } }
 .notice-line.is-error { border: 1px solid var(--signal); background: var(--paper-raised); color: var(--ink); padding-right: 6px; }
 .notice-line button { display: grid; place-items: center; width: 24px; height: 24px; padding: 0; border: 0; background: none; color: var(--ink-2); flex: 0 0 auto; }
 
@@ -177,7 +245,7 @@
 .prompt-bar { display: flex; align-items: center; gap: 20px; min-height: 32px; flex-wrap: wrap; row-gap: 4px; }
 .rule-picker { display: flex; align-items: center; gap: 8px; }
 .prompt-bar-links { display: flex; align-items: center; gap: 14px; }
-.rule-editor { display: grid; gap: 8px; margin-top: 10px; animation: rise-in var(--t-fade) var(--ease-out); }
+.rule-editor { display: grid; gap: 8px; margin-top: 10px; animation: rise-in var(--t-open) var(--ease-enter); }
 .rule-name { font-weight: 600; }
 .rule-body { min-height: 120px; max-height: 32vh; resize: vertical; font-family: var(--font-mono); font-size: 12px; line-height: 19px; }
 .prompt-tabs { display: flex; align-items: flex-end; justify-content: space-between; margin-top: 12px; }
@@ -190,7 +258,7 @@
   animation: fade-in var(--t-fade) var(--ease-out);
 }
 .prompt-busy .busy-line { width: 200px; }
-.prompt-failure { margin: 10px 0 0; font-size: var(--text-small); color: var(--signal); animation: rise-in var(--t-fade) var(--ease-out); }
+.prompt-failure { margin: 10px 0 0; font-size: var(--text-small); color: var(--signal); animation: rise-in var(--t-open) var(--ease-enter); }
 .prompt-failure .link { margin-left: 8px; color: var(--ink); }
 .prompt-foot { display: flex; align-items: center; justify-content: space-between; gap: 10px; margin-top: 12px; }
 .prompt-hint { display: flex; align-items: center; gap: 8px; }
@@ -210,14 +278,16 @@
 .day-items { display: flex; flex-wrap: wrap; gap: 14px 18px; align-items: flex-start; }
 .shot {
   display: flex; flex-direction: column; gap: 6px; width: fit-content; min-width: 112px; max-width: 200px; margin: 0;
-  transition: opacity var(--t-fade) var(--ease-in), transform var(--t-fade) var(--ease-in);
+  transition: opacity var(--t-exit) var(--ease-exit), transform var(--t-exit) var(--ease-exit);
+  animation: rise-in var(--t-open) var(--ease-enter) both;
+  animation-delay: calc(var(--i, 0) * var(--stagger));
 }
 .shot-caption { display: flex; flex-direction: column; max-width: 150px; font-size: var(--text-small); line-height: 18px; }
 .shot-name { overflow: hidden; white-space: nowrap; text-overflow: ellipsis; }
-.shot.is-leaving { opacity: 0; transform: scale(0.96); }
-.shot.is-fresh { animation: shot-in var(--t-open) var(--ease-out) both; }
+.shot.is-leaving { opacity: 0; transform: scale(0.92); }
+.shot.is-fresh { animation: shot-in var(--t-open) var(--ease-enter) both; }
 .shot.is-fresh .thumb { animation: fresh-mark 1.2s var(--ease-out) both; }
-@keyframes shot-in { from { opacity: 0; transform: translateY(-6px); } }
+@keyframes shot-in { from { opacity: 0; transform: translateY(-10px) scale(0.96); } }
 @keyframes fresh-mark { from { outline-color: var(--ink); } to { outline-color: transparent; } }
 
 /* ---------- 放大查看 ---------- */
@@ -225,8 +295,15 @@
 .lightbox {
   position: fixed; inset: var(--titlebar-h, 34px) 0 0 0; z-index: 30;
   display: flex; flex-direction: column; background: var(--overlay); color: var(--overlay-ink);
-  animation: fade-in var(--t-fade) var(--ease-out);
+  /* 只淡底色，不淡整个容器：图是从缩略图长出来的实物，一开始就该是不透明的 */
+  animation: backdrop-in var(--t-open) var(--ease-out);
+  transition: background-color var(--t-exit) var(--ease-exit);
 }
+@keyframes backdrop-in { from { background-color: transparent; } }
+/* 关的时候：图缩回缩略图，底色和四周的字同时退掉 */
+.lightbox.is-closing { background-color: transparent; }
+.lightbox.is-closing .lightbox-head, .lightbox.is-closing .lightbox-foot, .lightbox.is-closing .lightbox-arrow { opacity: 0; transition: opacity var(--t-exit) var(--ease-exit); }
+.lightbox-head, .lightbox-foot, .lightbox-arrow { animation: fade-in var(--t-open) var(--ease-out) 80ms both; }
 .lightbox-head { display: flex; align-items: center; gap: 20px; height: 40px; padding: 0 20px; flex: 0 0 auto; }
 .lightbox-back { display: flex; align-items: center; gap: 8px; padding: 0; border: 0; background: none; color: var(--overlay-ink); }
 .lightbox-title { flex: 1; min-width: 0; overflow: hidden; white-space: nowrap; text-overflow: ellipsis; text-align: center; }
@@ -237,7 +314,10 @@
 .lightbox-arrow:hover:not(:disabled) { background: color-mix(in srgb, var(--overlay-ink) 5%, transparent); }
 .lightbox-stage { display: grid; place-items: center; flex: 1 1 auto; min-width: 0; padding: 12px 0; }
 .lightbox-image { display: block; object-fit: contain; outline: 1px solid color-mix(in srgb, var(--overlay-ink) 12%, transparent); background: #000; }
-.lightbox-image.is-swapped { animation: fade-in var(--t-fade) var(--ease-out); }
+.lightbox-image.is-swapped { animation: swap-next var(--t-open) var(--ease-enter); }
+.lightbox-image.is-swapped.from-prev { animation-name: swap-prev; }
+@keyframes swap-next { from { opacity: 0; transform: translateX(calc(var(--shift) * 1.5)); } }
+@keyframes swap-prev { from { opacity: 0; transform: translateX(calc(var(--shift) * -1.5)); } }
 .lightbox-foot { display: flex; align-items: center; gap: 22px; height: 48px; padding: 0 20px; flex: 0 0 auto; font-size: var(--text-small); }
 .lightbox-meta { flex: 1; min-width: 0; overflow: hidden; white-space: nowrap; text-overflow: ellipsis; color: var(--overlay-ink-2); font-size: 12px; }
 .lightbox-actions { display: flex; gap: 22px; }
@@ -252,7 +332,10 @@
 .layout-topbar .pet-page, .layout-timeline .pet-page { padding-left: 32px; }
 .pet-current { display: flex; flex-direction: column; min-width: 0; }
 .pet-stage { display: flex; align-items: flex-end; justify-content: center; height: 250px; flex: 0 0 auto; }
-.pet-stage-image { display: block; max-height: 232px; max-width: 100%; object-fit: contain; animation: fade-in var(--t-fade) var(--ease-out); }
+.pet-stage-image { display: block; max-height: 232px; max-width: 100%; object-fit: contain; animation: fade-in var(--t-open) var(--ease-out); }
+/* 从架子上飞过来的替身还在路上时，真图先藏着，落地那一刻再露出来 */
+.pet-stage-image.is-landing { opacity: 0; animation: none; }
+.pet-stage-image.is-landed { animation: none; }
 .pet-floor { height: 2px; background: var(--ink); flex: 0 0 auto; }
 .pet-name-line { display: flex; align-items: baseline; gap: 10px; margin-top: 14px; min-height: 26px; }
 .pet-name { margin: 0; font-size: var(--text-lead); line-height: 22px; font-weight: 600; overflow-wrap: anywhere; }
@@ -264,13 +347,14 @@
 
 .pet-shelf-area { display: flex; flex-direction: column; min-width: 0; }
 .pet-shelf-area .panel-head { min-height: 32px; align-items: center; }
-.import-failures { display: flex; align-items: baseline; justify-content: space-between; gap: 12px; margin: 0 0 12px; padding: 8px 0; border-top: 1px solid var(--signal-soft); border-bottom: 1px solid var(--signal-soft); animation: rise-in var(--t-fade) var(--ease-out); }
+.import-failures { display: flex; align-items: baseline; justify-content: space-between; gap: 12px; margin: 0 0 12px; padding: 8px 0; border-top: 1px solid var(--signal-soft); border-bottom: 1px solid var(--signal-soft); animation: rise-in var(--t-open) var(--ease-enter); }
 .shelf { position: relative; display: grid; grid-template-columns: repeat(auto-fill, minmax(84px, 1fr)); row-gap: 16px; margin-top: 4px; }
-.shelf-item { display: flex; flex-direction: column; min-width: 0; }
+.shelf-item { display: flex; flex-direction: column; min-width: 0; animation: rise-in var(--t-open) var(--ease-enter) both; animation-delay: calc(var(--i, 0) * var(--stagger)); }
 .shelf-button { display: flex; flex-direction: column; align-items: stretch; min-width: 0; padding: 0; border: 0; background: none; }
 .shelf-figure {
   display: flex; align-items: flex-end; justify-content: center; height: 72px;
   border-bottom: 1px solid var(--rule-strong); margin-bottom: 1px;
+  transition: border-color var(--t-fade) var(--ease-out);
 }
 .shelf-figure img { display: block; max-height: 66px; max-width: 86%; object-fit: contain; transition: transform var(--t-fade) var(--ease-out); }
 .shelf-figure .app-glyph { margin-bottom: 8px; }
@@ -341,7 +425,7 @@
 .stream-day { margin-top: 20px; }
 .stream-day-title { display: flex; align-items: center; gap: 12px; margin: 0; font-size: var(--text-small); font-weight: 600; }
 .stream-day-title::after { content: ""; flex: 1; height: 1px; background: var(--rule); }
-.entry { display: grid; grid-template-columns: 44px minmax(0, 1fr); column-gap: 14px; padding: 12px 0; border-bottom: 1px solid var(--rule-soft); animation: rise-in var(--t-fade) var(--ease-out); }
+.entry { display: grid; grid-template-columns: 44px minmax(0, 1fr); column-gap: 14px; padding: 12px 0; border-bottom: 1px solid var(--rule-soft); animation: rise-in var(--t-open) var(--ease-enter) both; animation-delay: calc(var(--i, 0) * var(--stagger)); }
 .entry > time { font-size: 12px; line-height: 20px; }
 .entry-media { display: flex; gap: 14px; min-width: 0; }
 .entry-media .thumb { flex: 0 0 auto; }
@@ -362,7 +446,16 @@
 
 /* ---------- 设置文档 ---------- */
 
-.settings-doc { display: flex; flex-direction: column; gap: 40px; max-width: 700px; padding: 18px 36px 40px 32px; }
+/* 宽窗口两栏：左边按键与存放，右边行为与本机；外观横跨在最下面 */
+.settings-doc {
+  display: grid; grid-template-columns: minmax(0, 1fr) minmax(0, 1fr); column-gap: 56px; row-gap: 48px;
+  max-width: 1560px; padding: 18px 36px 40px 32px;
+}
+.settings-col { display: flex; flex-direction: column; gap: 48px; min-width: 0; }
+.settings-wide { grid-column: 1 / -1; min-width: 0; }
+@media (max-width: 880px) {
+  .settings-doc { grid-template-columns: minmax(0, 760px); }
+}
 .settings-doc .panel-title { font-size: var(--text-lead); line-height: 22px; margin-bottom: 10px; }
 .settings-doc .panel-head .panel-title { margin-bottom: 0; }
 .settings-doc .panel-shortcuts { min-height: 0; }

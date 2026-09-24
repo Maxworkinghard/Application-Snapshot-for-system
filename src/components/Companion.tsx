@@ -4,7 +4,7 @@ import { clearClipboardNow, keepClipboard, toggleRecording } from "../lib/backen
 import { petThumbUrl, petUrl } from "../lib/media";
 import { formatDuration } from "../lib/format";
 import { narrate } from "../lib/activity";
-import { motionReduced } from "../lib/motion";
+import { motionReduced, usePresence } from "../lib/motion";
 import { errorText, useApp } from "../app/context";
 import { useNow, useWindowActive } from "../hooks/useLive";
 
@@ -107,16 +107,19 @@ export function Companion({ away = false, compact = false }: { away?: boolean; c
     return null;
   })();
 
+  // 说完的话往下沉一点淡掉，不是啪一下没了
+  const { item: shown, leaving } = usePresence(say);
+
   const animate = windowActive && !motionReduced();
   const catSrc = asset ? (animate ? petUrl(asset.id, asset.entry || null) : petThumbUrl(asset.id)) : null;
 
   return (
     <div className={`companion ${away ? "is-away" : ""} ${compact ? "is-compact" : ""}`}>
-      {say && (
-        <div key={say.key} className={`companion-say tone-${say.tone}`} role="status" aria-live="polite">
-          <span>{say.body}</span>
-          {say.action}
-          {notice && say.key === `n${notice.id}` && notice.kind === "error" && (
+      {shown && (
+        <div key={shown.key} className={`companion-say tone-${shown.tone} ${leaving ? "is-leaving" : ""}`} role="status" aria-live="polite">
+          <span>{shown.body}</span>
+          {shown.action}
+          {notice && shown.key === `n${notice.id}` && notice.kind === "error" && (
             <button type="button" className="companion-dismiss" aria-label="知道了" onClick={dismissNotice}>
               <svg width="8" height="8" viewBox="0 0 8 8" aria-hidden="true"><path d="M.5.5l7 7M7.5.5l-7 7" stroke="currentColor" strokeWidth="1.2" /></svg>
             </button>

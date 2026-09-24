@@ -6,10 +6,13 @@ import { addPetAssets, deletePetAsset, renamePetAsset, selectPetAppearance } fro
 import { petThumbUrl, petUrl } from "../lib/media";
 import { fileNameOf, formatBytes } from "../lib/format";
 import { commonPrefix, entryLabel } from "../lib/petNames";
+import { flyImage, stagger, useFlip, useSlidingMark } from "../lib/motion";
 import { errorText, useApp } from "../app/context";
 import type { PetAsset } from "../types";
 
 const ACCEPTED = /\.(zip|gif)$/i;
+/** 舞台上的伴侣最高多少像素（和 .pet-stage-image 的 max-height 一致） */
+const STAGE_MAX_HEIGHT = 232;
 
 /** 形象架上的一格：静态第一帧站在一条线上，名字在线下 */
 function ShelfItem({
@@ -17,17 +20,23 @@ function ShelfItem({
   selected,
   onChoose,
   onRemove,
+  index,
 }: {
   asset: PetAsset | null;
   selected: boolean;
   onChoose: () => void;
   onRemove?: () => void;
+  index: number;
 }) {
   const [failed, setFailed] = useState(false);
   const broken = Boolean(asset?.missing);
   const name = asset ? asset.name : "前台应用图标";
   return (
-    <div className={`shelf-item ${selected ? "is-selected" : ""} ${broken ? "is-broken" : ""}`}>
+    <div
+      className={`shelf-item ${selected ? "is-selected" : ""} ${broken ? "is-broken" : ""}`}
+      data-flip-key={asset?.id ?? "app-icon"}
+      style={stagger(index)}
+    >
       <button
         type="button"
         role="radio"
@@ -68,10 +77,16 @@ export function PetPage() {
   const [renaming, setRenaming] = useState<string | null>(null);
   const [armedRemove, setArmedRemove] = useState(false);
   const importRef = useRef<(paths: string[]) => Promise<void>>(async () => {});
+  const shelfRef = useRef<HTMLDivElement>(null);
+  const stageRef = useRef<HTMLDivElement>(null);
+  const flip = useFlip(shelfRef);
+  // 换伴侣时替身在飞：flying 真图藏着，landed 真图直接露出来（不再自己淡入，免得和替身一起半透明）
+  const [landing, setLanding] = useState<"idle" | "flying" | "landed">("idle");
 
   const selectedId = settings.selectedAppearanceId;
   const selected = settings.petAssets.find((item) => item.id === selectedId) ?? null;
   const prefix = useMemo(() => commonPrefix(selected?.animations ?? []), [selected?.animations]);
+  const actionsRef = useSlidingMark<HTMLDivElement>(`${selectedId}-${activeEntry}`);
 
   useEffect(() => {
     setActiveEntry(selected?.entry || selected?.animations[0] || null);
@@ -88,6 +103,21 @@ export function PetPage() {
   }, [settings.petAssets, filter]);
 
   async function choose(id: string) {
+    if (id === selectedId) return;
+    // 换上的那只从架子上飞到舞台；架子按最近使用重排，其余的滑到新位置
+    const figure = shelfRef.current?.querySelector<HTMLImageElement>(`[data-flip-key="${id}"] img`);
+    const stage = stageRef.current;
+    if (figure && stage && figure.complete && figure.naturalHeight) {
+      // 落点按舞台上真图会有的大小算（高不超过 232、不放大、底边贴地、水平居中），落地时两张正好重合
+      const box = stage.getBoundingClientRect();
+      const height = Math.min(figure.naturalHeight, STAGE_MAX_HEIGHT);
+      const width = Math.min((figure.naturalWidth * height) / figure.naturalHeight, box.width);
+      const finalHeight = (width * figure.naturalHeight) / figure.naturalWidth;
+      const to = new DOMRect(box.left + (box.width - width) / 2, box.bottom - finalHeight, width, finalHeight);
+      setLanding("flying");
+      void flyImage(figure.src, figure.getBoundingClientRect(), to, { onLand: () => setLanding("landed") });
+    }
+    flip.capture();
     try {
       onSaved(await selectPetAppearance(id));
     } catch (error) {
@@ -176,9 +206,9 @@ export function PetPage() {
   return (
     <div className={`pet-page ${dropping ? "is-dropping" : ""}`}>
       <section className="pet-current" aria-label="当前伴侣">
-        <div className="pet-stage">
+        <div className="pet-stage" ref={stageRef}>
           {stageSrc ? (
-            <img key={stageSrc} className="pet-stage-image" src={stageSrc} alt={selected?.name ?? ""} draggable={false} />
+            <img key={stageSrc} className={`pet-stage-image ${landing === "flying" ? "is-landing" : landing === "landed" ? "is-landed" : ""}`} src={stageSrc} alt={selected?.name ?? ""} draggable={false} />
           ) : selected ? (
             <CatShape height={150} outline />
           ) : (
@@ -214,7 +244,7 @@ export function PetPage() {
               {selected.animations.length} 个动作{selected.sizeBytes ? ` · ${formatBytes(selected.sizeBytes)}` : ""}
             </span>
             {selected.animations.length > 1 && (
-              <div className="choices choices-wrap pet-actions" role="radiogroup" aria-label="预览动作">
+              <div className="choices choices-wrap pet-actions has-mark" role="radiogroup" aria-label="预览动作" ref={actionsRef}>
                 {selected.animations.map((entry) => (
                   <button
                     key={entry}
@@ -223,7 +253,10 @@ export function PetPage() {
                     aria-checked={activeEntry === entry}
                     className={`choice ${activeEntry === entry ? "is-on" : ""}`}
                     title={entry}
-                    onClick={() => setActiveEntry(entry)}
+                    onClick={() => {
+                      setLanding("idle");
+                      setActiveEntry(entry);
+                    }}
                   >
                     {entryLabel(entry, prefix)}
                   </button>
@@ -283,11 +316,12 @@ export function PetPage() {
           </div>
         )}
 
-        <div className="shelf" role="radiogroup" aria-label="选择伴侣">
-          {!filter && <ShelfItem asset={null} selected={selectedId === "app-icon"} onChoose={() => void choose("app-icon")} />}
-          {shelf.map((asset) => (
+        <div className="shelf" role="radiogroup" aria-label="选择伴侣" ref={shelfRef}>
+          {!filter && <ShelfItem asset={null} index={0} selected={selectedId === "app-icon"} onChoose={() => void choose("app-icon")} />}
+          {shelf.map((asset, index) => (
             <ShelfItem
               key={asset.id}
+              index={index + 1}
               asset={asset}
               selected={asset.id === selectedId}
               onChoose={() => void choose(asset.id)}
