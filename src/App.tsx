@@ -11,7 +11,6 @@ import {
   Minus,
   Maximize2,
   Layers,
-  Cpu,
   Info,
   Palette,
 } from "lucide-react";
@@ -23,7 +22,6 @@ import {
 } from "./lib/backend";
 import { previewHintSound } from "./lib/sound";
 import { ThemePage } from "./pages/ThemePage";
-import { OcrPage } from "./pages/OcrPage";
 import { HistoryPage } from "./pages/HistoryPage";
 import { LoadingState } from "./components/LoadingState";
 import { PromptPage } from "./pages/PromptPage";
@@ -62,16 +60,12 @@ const navGroups: Array<{ title: string; items: NavEntry[] }> = [
     items: [
       { id: "prefs", label: "偏好设置", icon: SlidersHorizontal },
       { id: "theme", label: "界面主题", icon: Palette },
-      { id: "ocr", label: "文字识别", icon: Cpu },
     ],
   },
 ];
 
-/**
- * 自带内部滚动区的页面：高度要锁在窗口内，底部的面板才会一直可见。
- * 快照历史原先漏在外面，卡片一多，「提取文字」的结果面板就被挤到屏幕下方看不见。
- */
-const FULL_HEIGHT_PAGES = new Set<NavPage>(["prompt", "ocr", "history"]);
+/** 自带内部滚动区的页面：高度锁在窗口内，页头常驻，只让内容区自己滚 */
+const FULL_HEIGHT_PAGES = new Set<NavPage>(["prompt", "history"]);
 
 /** 旧页面淡出的时长，必须和 styles 里 page-leave 的 animation-duration 对齐 */
 const PAGE_EXIT_MS = 120;
@@ -181,9 +175,6 @@ export function App() {
     }
     if (shownPage === "history") {
       return <HistoryPage notify={notify} />;
-    }
-    if (shownPage === "ocr") {
-      return <OcrPage notify={notify} />;
     }
     if (shownPage === "prefs") {
       return <PreferencesPage settings={settings} onSaved={setSettings} notify={notify} />;

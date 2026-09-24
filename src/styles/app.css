@@ -2068,16 +2068,6 @@ button.clear-keycap-ghost-btn:active {
   max-height: 220px;
 }
 
-/* 主并排工作台 */
-.prompt-main-split-workbench {
-  display: grid;
-  grid-template-columns: 1fr 1fr;
-  flex: 1;
-  min-height: 0;
-  overflow: hidden;
-  background: var(--bg-surface);
-}
-
 /* 草稿与结果合并成一个编辑框后只剩单栏，窄窗口下也不会被挤成两条窄缝。
    名字不用 prompt-main-workbench——那个类名已经被别处占着（200px + 1fr 的老规则）。 */
 .prompt-single-workbench {
@@ -2258,26 +2248,6 @@ button.clear-keycap-ghost-btn:active {
   background: #ef4444;
   color: #ffffff;
   border: 1px solid transparent;
-}
-
-/* 结果区右上操作条系统：单行清晰分组与按钮统一 */
-.pane-result-actions {
-  display: inline-flex;
-  align-items: center;
-  flex-shrink: 0;
-  white-space: nowrap;
-}
-
-.result-action-button-group {
-  display: inline-flex;
-  align-items: center;
-  gap: 4px;
-  background: var(--bg-surface-subtle);
-  padding: 2px 4px;
-  border-radius: var(--radius-xs);
-  border: 1px solid var(--border-subtle);
-  flex-shrink: 0;
-  white-space: nowrap;
 }
 
 .result-tool-btn {
@@ -2824,7 +2794,6 @@ button.clear-keycap-ghost-btn:active {
    ========================================================================== */
 
 /* 原型在 body 上全局禁选；真实应用里结果文本必须能选中复制 */
-.polish-output,
 .lightbox-meta,
 textarea,
 input {
@@ -2966,17 +2935,6 @@ input {
    ========================================================================== */
 .page-transition-layer.is-fullheight-page {
   height: 100%;
-}
-
-/* 结果正文：styles.css 里有 max-height: 300px 的历史限制，工作台内解除 */
-.pane-textarea-wrap > .polish-output {
-  flex: 1;
-  height: 100%;
-  max-height: none;
-  margin: 0;
-  padding: 14px;
-  overflow-y: auto;
-  box-sizing: border-box;
 }
 
 /* 空结果 / 生成中的提示也撑满面板并居中，不然全屏下提示文字吊在左上角 */

@@ -4,7 +4,7 @@ These scripts target the **repository-root Tauri app**, not `linux/windowsnap`.
 
 | Script | Purpose |
 |---|---|
-| `install-deps.sh` | Debian/Ubuntu packages for compiling + optional runtime (`ffmpeg`, `tesseract`, `xdotool`); also used by `.github/workflows/check.yml` / `release.yml` on ubuntu-24.04 |
+| `install-deps.sh` | Debian/Ubuntu packages for compiling + optional runtime (`ffmpeg`, `xdotool`); also used by `.github/workflows/check.yml` / `release.yml` on ubuntu-24.04 |
 | `check-env.sh` | Non-destructive environment report |
 | `build.sh` | `npm install` + `npm run tauri build` |
 | `com.appsnapshot.prompt-pet-shortcut.service.example` | **Optional** systemd `--user` unit (advanced; not enabled by default) |
@@ -59,7 +59,6 @@ If Settings XDG autostart is already on, leave the unit disabled so the app does
 | Recording | ffmpeg `x11grab` (window rect; honors `includeCursor`) | **portal ScreenCast** (xdg-desktop-portal) → PipeWire frames → ffmpeg `rawvideo`; user picks source in the portal UI |
 | Global shortcuts (Tauri plugin) | yes | compositor-dependent |
 | System tray | StatusNotifierHost | same; GNOME needs AppIndicator extension |
-| OCR (`tesseract`) | yes | yes |
 
 Portal recording needs a working session bus, `xdg-desktop-portal` + a desktop backend (gtk/gnome/kde/wlr), and PipeWire. Without a real graphical Wayland session the portal path feature-detects and returns a clear bilingual error. `saveDir` is honored on both paths. Portal `includeCursor` follows the compositor/portal default (xcap’s ScreenCast helper does not expose `cursor_mode` yet).
 

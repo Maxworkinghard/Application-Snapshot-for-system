@@ -210,15 +210,6 @@ button {
   .sidebar { padding-top: 10px; padding-bottom: 10px; }
   .page { padding-top: 14px; padding-bottom: 18px; }
 }
-.polish-output {
-  max-height: 300px; margin: 0; overflow: auto;
-  color: var(--text-primary);
-  font-family: inherit;
-  font-size: var(--text-body);
-  line-height: 1.65;
-  white-space: pre-wrap;
-  word-break: break-word;
-}
 .polish-placeholder {
   display: flex; align-items: center; gap: 8px;
   padding: var(--space-4) 0;

@@ -1,11 +1,10 @@
-export type NavPage = "shortcuts" | "prompt" | "history" | "pet" | "prefs" | "theme" | "ocr";
+export type NavPage = "shortcuts" | "prompt" | "history" | "pet" | "prefs" | "theme";
 export type ShortcutAction =
   | "snapshot"
   | "fullscreen"
   | "scrolling"
   | "record"
-  | "polish"
-  | "ocr";
+  | "polish";
 
 export interface PromptTemplate {
   id: string;
@@ -86,12 +85,6 @@ export interface SnapshotRecord {
   createdAt: number;
 }
 
-export interface OcrCapability {
-  available: boolean;
-  language: string | null;
-  detail: string;
-}
-
 export interface CapabilityStatus {
   available: boolean;
   detail: string;
@@ -103,7 +96,6 @@ export interface PlatformCapabilities {
   recording: CapabilityStatus;
   recordingSystemAudio: CapabilityStatus;
   recordingMicrophone: CapabilityStatus;
-  ocr: CapabilityStatus;
   autostart: CapabilityStatus;
   /** 仅 Linux 下发：其余平台没有滚动长截图 */
   scrolling?: CapabilityStatus;

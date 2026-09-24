@@ -2,11 +2,10 @@
 //!
 //! 与 Windows / macOS 平台层对外提供同名的一组函数（见 lib.rs 里 `mod os` 的说明），
 //! 共享代码只经 `os::` 调用。成熟的系统能力直接用（ffmpeg / xdotool / XDG / Freedesktop /
-//! portal / tesseract），不为了语言统一重写。不可用时返回可读错误，不静默假装成功。
+//! portal），不为了语言统一重写。不可用时返回可读错误，不静默假装成功。
 
 mod autostart;
 mod icon;
-mod ocr;
 mod recording;
 mod scrolling;
 mod still;
@@ -19,19 +18,12 @@ use image::RgbaImage;
 use std::{path::Path, process::Command};
 
 pub(crate) use autostart::apply_launch_on_boot as apply_autostart;
-pub(crate) use ocr::{ocr_language, ocr_recognize, OCR_BACKEND};
 pub(crate) use scrolling::capture_scrolling_window;
 pub(crate) use window::restore_minimized;
 
 /// 本平台支持的全局快捷键动作，顺序即设置页的显示顺序（滚动长截图只有 Linux/X11 有）
-pub(crate) const SHORTCUT_ACTIONS: &[&str] = &[
-    "snapshot",
-    "fullscreen",
-    "scrolling",
-    "record",
-    "polish",
-    "ocr",
-];
+pub(crate) const SHORTCUT_ACTIONS: &[&str] =
+    &["snapshot", "fullscreen", "scrolling", "record", "polish"];
 
 /// 一次进行中的录制（ffmpeg 子进程 + 可选 portal）
 pub(crate) struct Recording(recording::ActiveRecording);
@@ -111,7 +103,6 @@ pub(crate) fn capabilities() -> PlatformCapabilities {
         recording,
         recording_system_audio: recording::system_audio_capability(),
         recording_microphone: recording::microphone_capability(),
-        ocr: crate::ocr::capability(),
         autostart: CapabilityStatus::probe(
             autostart::autostart_capability(),
             "写入 XDG autostart（~/.config/autostart，opt-in）",

@@ -72,7 +72,7 @@ jobs:
           toolchain: 1.98.1
           targets: aarch64-apple-darwin,x86_64-apple-darwin
       - run: npm ci
-      # beforeBuildCommand 会顺带把 OCR 与 ScreenCaptureKit 录制桥编成 universal sidecar
+      # beforeBuildCommand 会顺带把 ScreenCaptureKit 录制桥编成 universal sidecar
       - name: Build universal app bundle
         run: npm run tauri build -- --target universal-apple-darwin --bundles app
       - name: Verify slices and pack zip
@@ -80,8 +80,8 @@ jobs:
           set -euo pipefail
           APP="src-tauri/target/universal-apple-darwin/release/bundle/macos/snapshot.app"
           test -d "$APP" || { echo "error: missing $APP" >&2; exit 1; }
-          # 主程序和两个 sidecar 都必须是双切片，少一个就不是 universal 包
-          for bin in "$APP/Contents/MacOS/snapshot" "$APP/Contents/MacOS/snapshot-ocr" "$APP/Contents/MacOS/snapshot-recorder"; do
+          # 主程序和录制 sidecar 都必须是双切片，少一个就不是 universal 包
+          for bin in "$APP/Contents/MacOS/snapshot" "$APP/Contents/MacOS/snapshot-recorder"; do
             ARCHS="$(lipo -archs "$bin")"
             echo "$bin: $ARCHS"
             case "$ARCHS" in *arm64*) ;; *) echo "error: $bin 缺 arm64 切片" >&2; exit 1 ;; esac

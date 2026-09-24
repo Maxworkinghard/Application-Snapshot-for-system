@@ -30,7 +30,6 @@
 | 功能 | 需要 |
 |---|---|
 | 窗口录制 | `ffmpeg`（三端通用；Linux 上 X11 走 x11grab，纯 Wayland 走 portal ScreenCast） |
-| 文字识别 | Linux 需要 `tesseract` 加至少一个语言包（`tesseract-ocr-chi-sim` 等）；macOS 用系统 Vision，Windows 用系统 OCR，都不必另装 |
 | 截图前还原最小化窗口 | Linux 需要 `xdotool` |
 | 系统托盘 | Linux 需要 StatusNotifierHost（KDE 原生支持；GNOME 需装 AppIndicator 扩展） |
 
