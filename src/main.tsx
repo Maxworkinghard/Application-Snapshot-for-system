@@ -16,21 +16,30 @@ applyTheme(readTheme());
 // 设置页改了主题后，其余窗口靠这条广播当场跟上，不必重开
 listenThemeChanges(applyTheme);
 
-const label = "__TAURI_INTERNALS__" in window ? getCurrentWindow().label : "main";
-const usesTransparentSurface = label === "pet" || label === "quick-menu";
+function mount() {
+  const label = getCurrentWindow().label;
+  const usesTransparentSurface = label === "pet" || label === "quick-menu";
+  document.documentElement.classList.toggle("transparent-window", usesTransparentSurface);
+  document.body.classList.toggle("transparent-window", usesTransparentSurface);
 
-document.documentElement.classList.toggle("transparent-window", usesTransparentSurface);
-document.body.classList.toggle("transparent-window", usesTransparentSurface);
-
-function CurrentWindow() {
-  if (label === "pet") return <PetWindow />;
-  if (label === "quick-menu") return <QuickMenuWindow />;
-  if (label === "annotate") return <AnnotateWindow />;
-  return <App />;
+  const CurrentWindow =
+    label === "pet" ? PetWindow
+    : label === "quick-menu" ? QuickMenuWindow
+    : label === "annotate" ? AnnotateWindow
+    : App;
+  createRoot(document.getElementById("root")!).render(
+    <StrictMode>
+      <CurrentWindow />
+    </StrictMode>,
+  );
 }
 
-createRoot(document.getElementById("root")!).render(
-  <StrictMode>
-    <CurrentWindow />
-  </StrictMode>,
-);
+// 直接在浏览器里打开页面（npm run dev）时没有 Tauri 后端：先装一层假后端再挂载
+if ("__TAURI_INTERNALS__" in window) {
+  mount();
+} else {
+  void import("./lib/preview").then(({ installPreviewBackend }) => {
+    installPreviewBackend();
+    mount();
+  });
+}

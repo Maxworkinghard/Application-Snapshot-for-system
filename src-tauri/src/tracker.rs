@@ -175,7 +175,7 @@ pub(crate) fn start_tracker(app: AppHandle, tracker: Arc<Mutex<TrackerState>>) {
 #[cfg(any(target_os = "windows", target_os = "linux"))]
 fn rgba_to_data_url(image: RgbaImage) -> Option<String> {
     let mut bytes = Vec::new();
-    DynamicImage::ImageRgba8(image)
+    image
         .write_to(&mut Cursor::new(&mut bytes), ImageFormat::Png)
         .ok()?;
     Some(format!("data:image/png;base64,{}", BASE64.encode(bytes)))
