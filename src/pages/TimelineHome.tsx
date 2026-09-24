@@ -41,7 +41,6 @@ export function TimelineHome() {
     [activity, filter],
   );
   const groups = useMemo(() => groupByDay(visible, (entry) => entry.at), [visible]);
-  const rule = settings.templates.find((item) => item.id === settings.activeTemplateId)?.name;
 
   function submit() {
     if (!draft.trim()) return;
@@ -144,7 +143,6 @@ export function TimelineHome() {
             aria-label="要润色的 Prompt"
             spellCheck={false}
           />
-          {rule && <span className="small ink-2 nowrap">{rule}</span>}
           <button type="button" className="composer-go" onClick={submit} disabled={!draft.trim()} aria-label="润色">
             <Keys value="CommandOrControl+Enter" />
           </button>

@@ -26,6 +26,9 @@ export const savePromptSettings = (input: {
   templates: Settings["templates"];
 }) => invoke<Settings>("save_prompt_settings", { input });
 
+/** 内置规则的原文（「恢复原文」用） */
+export const defaultPrompt = () => invoke<string>("default_prompt");
+
 export const fetchModels = (baseUrl: string, apiKey: string | null) =>
   invoke<string[]>("fetch_models", { baseUrl, apiKey });
 

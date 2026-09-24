@@ -48,8 +48,10 @@ async fn run_polish(
                 .iter()
                 .find(|item| item.id == settings.active_template_id)
         });
+    // 刚新建、还没写正文的规则按内置规则润色，别把空的系统提示发出去
     let prompt = template
         .map(|item| item.content.as_str())
+        .filter(|content| !content.trim().is_empty())
         .unwrap_or(DEFAULT_PROMPT);
     let rule_name = template
         .map(|item| item.name.clone())

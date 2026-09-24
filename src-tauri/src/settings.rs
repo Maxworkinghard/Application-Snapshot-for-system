@@ -338,6 +338,12 @@ pub(crate) fn save_prompt_settings(
     Ok(result)
 }
 
+/// 内置规则的原文：用户改过内置规则后，前端用它「恢复原文」
+#[tauri::command]
+pub(crate) fn default_prompt() -> &'static str {
+    DEFAULT_PROMPT
+}
+
 #[tauri::command]
 pub(crate) async fn fetch_models(
     state: State<'_, AppState>,

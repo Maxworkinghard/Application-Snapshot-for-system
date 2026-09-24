@@ -8,6 +8,7 @@ import { Choices } from "../components/ui/Choices";
 import { usePresence } from "../lib/motion";
 import { ModelSettingsDialog } from "../components/ModelSettingsDialog";
 import { errorText, useApp } from "../app/context";
+import { RulesPanel } from "./RulesPanel";
 import type { Settings } from "../types";
 
 function usePrefs() {
@@ -180,7 +181,10 @@ export function PreferencesPage() {
   return (
     <div className="page-grid page-grid-2">
       <BehaviorPanel />
-      <MachinePanel />
+      <div className="page-col">
+        <MachinePanel />
+        <RulesPanel />
+      </div>
     </div>
   );
 }

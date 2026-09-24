@@ -18,6 +18,8 @@ const windowLabel = params.get("window") ?? "main";
 
 const minutesAgo = (minutes: number) => Date.now() - minutes * 60_000;
 
+const BUILTIN_PROMPT = "你是提示词改写专家。保持原意不变，将用户草稿整理为清晰、完整、可执行的指令。只输出改写后的提示词。";
+
 let settings: Settings = {
   baseUrl: demo ? "https://api.deepseek.com/v1" : "",
   model: demo ? "deepseek-chat" : "",
@@ -27,7 +29,7 @@ let settings: Settings = {
       id: "builtin-default",
       name: "清晰、可执行",
       builtin: true,
-      content: "你是提示词改写专家。保持原意不变，将用户草稿整理为清晰、完整、可执行的指令。只输出改写后的提示词。",
+      content: BUILTIN_PROMPT,
     },
     ...(demo
       ? [
@@ -196,6 +198,8 @@ async function handle(command: string, payload?: InvokeArgs): Promise<unknown> {
         selectedAppearanceId: settings.selectedAppearanceId === args.id ? "app-icon" : settings.selectedAppearanceId,
         petAssets: settings.petAssets.filter((asset) => asset.id !== args.id),
       });
+    case "default_prompt":
+      return BUILTIN_PROMPT;
     case "fetch_models":
       return ["gpt-4.1", "gpt-4.1-mini", "gpt-4o-mini"];
     case "get_previous_app":

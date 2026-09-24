@@ -283,6 +283,7 @@ pub fn run() {
             settings::load_settings,
             settings::save_prompt_settings,
             settings::fetch_models,
+            settings::default_prompt,
             pet::select_pet_appearance,
             pet::add_pet_assets,
             pet::rename_pet_asset,

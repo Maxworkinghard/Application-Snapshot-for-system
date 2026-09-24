@@ -84,3 +84,14 @@ export function listenMotionChanges(onChange: (mode: MotionMode) => void): () =>
     void pending.then((unlisten) => unlisten());
   };
 }
+
+const AUTO_COPY_KEY = "snapshot-auto-copy";
+
+/** Prompt 页生成完是否直接放进剪贴板（在偏好设置的「润色规则」里切换） */
+export function readAutoCopy(): boolean {
+  return read(AUTO_COPY_KEY) === "1";
+}
+
+export function persistAutoCopy(value: boolean) {
+  write(AUTO_COPY_KEY, value ? "1" : "0");
+}
