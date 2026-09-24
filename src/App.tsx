@@ -29,7 +29,7 @@ import {
   type LayoutTheme,
   type MotionPreference,
 } from "./lib/prefs";
-import { viewTransition, type TransitionDirection } from "./lib/motion";
+import { canViewTransition, viewTransition, type TransitionDirection } from "./lib/motion";
 import { AppContext, errorText, useApp, type AppContextValue, type Notice, type NoticeKind } from "./app/context";
 import { LedgerList, NavMark, NoticeLine, SideNav, TitleBar, TopNav } from "./app/Shell";
 import { Companion } from "./components/Companion";
@@ -208,6 +208,8 @@ export function App() {
     });
   }, [motionPreference]);
 
+  // 新页挂载时要不要自己淡入：走 View Transitions 的换页/换布局不要（过渡已经管了），其余情况要
+  const pageEnters = useRef(true);
   const pageRef = useRef(page);
   const layoutRef = useRef(layout);
   pageRef.current = page;
@@ -216,6 +218,7 @@ export function App() {
   // 换布局：结构变了就当翻一页，新布局整体淡入、轻轻落定，不让零件各自飞
   const setLayout = useCallback((next: LayoutTheme) => {
     if (next === layoutRef.current) return;
+    pageEnters.current = !canViewTransition();
     viewTransition("layout", () => {
       setLayoutState(next);
       setPage((current) => mapPage(current, next));
@@ -229,6 +232,7 @@ export function App() {
     if (options?.draft) setPendingDraft(options.draft);
     const from = pageRef.current;
     if (next === from) return;
+    pageEnters.current = !canViewTransition();
     viewTransition(
       "page",
       () => {
@@ -285,7 +289,7 @@ export function App() {
 
   const content = (
     <main className="main" ref={mainRef}>
-      <div key={`${layout}-${page}`} className={`page-view page-${page}`}>
+      <div key={`${layout}-${page}`} className={`page-view page-${page} ${pageEnters.current ? "is-entering" : ""}`}>
         <PageView page={page} />
       </div>
     </main>

@@ -53,9 +53,14 @@ let transitionToken = 0;
  * 用 View Transitions 做整块的过渡：浏览器先拍下旧画面，再换成新画面，两张图之间按 kind 播动画。
  * 不支持时（旧 WebView、测试环境）直接切换。
  */
+/** 这次换画面会不会走 View Transitions（不会的话，新页要自己淡入） */
+export function canViewTransition(): boolean {
+  return Boolean((document as ViewTransitionDocument).startViewTransition) && document.visibilityState !== "hidden";
+}
+
 export function viewTransition(kind: TransitionKind, update: () => void, options: { direction?: TransitionDirection } = {}) {
   const doc = document as ViewTransitionDocument;
-  if (!doc.startViewTransition || document.visibilityState === "hidden") {
+  if (!doc.startViewTransition || !canViewTransition()) {
     update();
     return;
   }

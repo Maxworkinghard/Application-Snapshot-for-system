@@ -98,9 +98,13 @@
 .main { flex: 1 1 auto; min-width: 0; min-height: 0; overflow-y: auto; overflow-x: hidden; }
 .shell-full .main { overflow-y: auto; }
 
-/* 没有 View Transitions 时（第一次打开、旧 WebView），新页自己淡入；有的话交给上面的换页过渡 */
-.page-view { min-height: 100%; animation: rise-in var(--t-open) var(--ease-enter) backwards; }
-:root[data-vt] .page-view { animation: none; }
+/*
+ * 新页自己淡入只在没有 View Transitions 时用（第一次打开、旧 WebView）。
+ * 不能写成「过渡进行中关掉动画」：过渡一结束规则失效，动画会重新从透明播一遍，页面就闪一下。
+ * 所以挂载那一刻就定好：走过渡的页面压根不带这个类。
+ */
+.page-view { min-height: 100%; }
+.page-view.is-entering { animation: rise-in var(--t-open) var(--ease-enter) backwards; }
 
 /* ---------- 侧栏导航：只有字 ---------- */
 
