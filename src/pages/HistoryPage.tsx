@@ -217,7 +217,10 @@ export function HistoryPage() {
           </button>
         )}
       </label>
-      <span className="mono small quiet">{query ? `${filtered.length} / ${total}` : `${total} / ${LIMIT}`}</span>
+      {/* 快到上限时数字变红：再截就会挤掉最旧的，不用另写一句解释 */}
+      <span className={`mono small ${!query && total >= NEAR_LIMIT ? "signal" : "quiet"}`}>
+        {query ? `${filtered.length} / ${total}` : `${total} / ${LIMIT}`}
+      </span>
       <span className="spacer" />
       <button type="button" className="text-btn small ink-2" onClick={() => void revealFolder()}>打开文件夹</button>
       <button type="button" className="btn btn-small" onClick={() => setSelecting(true)} disabled={total === 0}>选择</button>
@@ -323,11 +326,6 @@ export function HistoryPage() {
   return (
     <div className="history-page">
       {header}
-      {selecting ? (
-        <p className="page-note">点缩略图勾选，按住 Shift 连选，Esc 退出选择。</p>
-      ) : total >= NEAR_LIMIT ? (
-        <p className="page-note">快满了：超过 {LIMIT} 张以后，最旧的会被自动删掉。</p>
-      ) : null}
       <div className="history-scroll">{body}</div>
 
       {previewId && (

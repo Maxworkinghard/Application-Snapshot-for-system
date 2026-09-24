@@ -8,13 +8,13 @@ import { Switch } from "../components/ui/Switch";
 import { errorText, useApp } from "../app/context";
 import type { Settings, ShortcutAction, ShortcutBinding } from "../types";
 
-export const ACTION_LABELS: Record<ShortcutAction, { name: string; tag: string }> = {
-  snapshot: { name: "窗口快照", tag: "前台窗口" },
-  fullscreen: { name: "全屏快照", tag: "主显示器" },
-  scrolling: { name: "滚动长截图", tag: "窗口连拍" },
-  record: { name: "窗口录制", tag: "MP4" },
-  polish: { name: "润色 Prompt", tag: "剪贴板" },
-  palette: { name: "呼出输入框", tag: "任意位置" },
+export const ACTION_LABELS: Record<ShortcutAction, { name: string }> = {
+  snapshot: { name: "窗口快照" },
+  fullscreen: { name: "全屏快照" },
+  scrolling: { name: "滚动长截图" },
+  record: { name: "窗口录制" },
+  polish: { name: "润色 Prompt" },
+  palette: { name: "呼出输入框" },
 };
 
 const MODIFIERS = ["Control", "Shift", "Alt", "Meta"];
@@ -128,10 +128,10 @@ export function ShortcutsPanel() {
           <span className="key-row-text">
             <span className="key-row-name">
               <span className={isRecording ? "strong" : ""}>{label.name}</span>
-              <span className="quiet small">{isRecording ? "正在录新组合键" : label.tag}</span>
+              {isRecording && <span className="quiet small">正在录新组合键</span>}
             </span>
             {conflicted && <span className="signal small">没注册上，这组键已被其他程序占用</span>}
-            {unavailable && !conflicted && <span className="quiet small">{caps?.recording.detail || "此系统录不了窗口"}</span>}
+            {unavailable && !conflicted && <span className="quiet small">不可用</span>}
             {rejection && (
               <span className="signal small">只按了 {rejection}。至少要带上 Ctrl、Alt、Shift 中的一个</span>
             )}
@@ -178,7 +178,6 @@ export function ShortcutsPanel() {
           全部清除
         </button>
       </div>
-      <p className="panel-hint">点一行，再按下新组合键。窗口最小化时也生效。</p>
       <div className="rows">{shortcuts.map(renderRow)}</div>
       <div className="save-bar">
         <span className="small ink-2">{changed > 0 ? `改了 ${changed} 处，还没保存` : ""}</span>
@@ -289,10 +288,7 @@ export function StoragePanel() {
           </span>
         </div>
         <div className="row">
-          <span className="row-label-stack">
-            <label htmlFor="switch-system-audio" className="row-label">同时录系统声音</label>
-            {caps && !caps.recordingSystemAudio.available && <span className="quiet small">{caps.recordingSystemAudio.detail}</span>}
-          </span>
+          <label htmlFor="switch-system-audio" className="row-label">同时录系统声音</label>
           <Switch
             id="switch-system-audio"
             label="同时录系统声音"
@@ -302,10 +298,7 @@ export function StoragePanel() {
           />
         </div>
         <div className="row">
-          <span className="row-label-stack">
-            <label htmlFor="switch-microphone" className="row-label">同时录麦克风</label>
-            {caps && !caps.recordingMicrophone.available && <span className="quiet small">{caps.recordingMicrophone.detail}</span>}
-          </span>
+          <label htmlFor="switch-microphone" className="row-label">同时录麦克风</label>
           <Switch
             id="switch-microphone"
             label="同时录麦克风"

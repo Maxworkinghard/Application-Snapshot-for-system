@@ -209,8 +209,10 @@
 .panel-head-left { align-items: baseline; }
 .panel-title { margin: 0 0 8px; font-size: var(--text); line-height: 20px; font-weight: 600; }
 .panel-head .panel-title { margin: 0; }
+/* 标题行下面直接接列表时，留出和单独标题一样的间距 */
+.panel-head + .rows { margin-top: 8px; }
+.settings-doc .panel-head + .rows { margin-top: 10px; }
 .panel-title-gap { margin-top: 24px; }
-.panel-hint { margin: 2px 0 12px; font-size: var(--text-small); line-height: 18px; color: var(--ink-3); }
 
 .rows { display: flex; flex-direction: column; border-top: 1px solid var(--rule); }
 .rows-gap { margin-top: 34px; }
@@ -218,7 +220,6 @@
 .row-stack { flex-direction: column; align-items: stretch; gap: 3px; padding: 11px 0 10px; }
 .row-line { display: flex; align-items: center; justify-content: space-between; gap: 16px; }
 .row-label { color: var(--ink-2); }
-.row-label-stack { display: flex; flex-direction: column; min-width: 0; }
 .row-links { display: flex; align-items: baseline; gap: 12px; }
 
 /* ---------- 快捷键行 ---------- */
@@ -275,7 +276,6 @@
 .history-page { display: flex; flex-direction: column; height: calc(100vh - var(--titlebar-h)); padding: 10px 32px 0 20px; }
 .layout-topbar .history-page, .layout-timeline .history-page { padding-left: 32px; }
 .history-bar { display: flex; align-items: center; gap: 16px; min-height: 32px; flex: 0 0 auto; }
-.page-note { margin: 10px 0 0; font-size: var(--text-small); color: var(--ink-2); flex: 0 0 auto; }
 .history-scroll { flex: 1 1 auto; min-height: 0; margin-top: 14px; overflow-y: auto; padding-bottom: 24px; }
 .history-groups { display: flex; flex-direction: column; }
 .day { display: grid; grid-template-columns: 76px minmax(0, 1fr); padding: 14px 0 16px; border-top: 1px solid var(--rule); }
@@ -348,7 +348,6 @@
 .pet-rename { font-size: var(--text-lead); font-weight: 600; padding: 2px 6px; }
 .pet-actions { margin-top: 14px; }
 .pet-remove { align-self: flex-start; }
-.pet-desc { margin: 6px 0 0; }
 .pet-current > .pet-name { margin-top: 14px; }
 
 .pet-shelf-area { display: flex; flex-direction: column; min-width: 0; }
@@ -379,7 +378,6 @@
   border: 1.5px dashed var(--ink); border-radius: 4px; background: color-mix(in srgb, var(--paper) 85%, transparent);
   animation: fade-in var(--t-fade) var(--ease-out);
 }
-.pet-shelf-area .footnote { margin-top: auto; padding-top: 16px; }
 
 /* ---------- 主题库 ---------- */
 
@@ -389,7 +387,6 @@
 .layout-option:hover .mini { outline-color: var(--rule-strong); }
 .layout-option.is-on .mini { outline-color: var(--ink); }
 .layout-name { display: flex; align-items: baseline; gap: 8px; flex-wrap: wrap; }
-.layout-desc { margin-top: -8px; line-height: 18px; }
 .mini {
   display: flex; height: 96px; overflow: hidden;
   border: 1px solid var(--rule-strong); border-radius: 2px; background: var(--paper);

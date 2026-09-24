@@ -86,7 +86,6 @@ export function ModelSettingsDialog({
         onClick={(event) => event.stopPropagation()}
       >
         <h2 className="dialog-title" id="model-settings-title">润色用的模型</h2>
-        <p className="dialog-body">任何 OpenAI 兼容的接口都行。API Key 存进系统钥匙串，不写进配置文件。</p>
 
         <div className="form">
           <label className="form-field">
@@ -117,7 +116,6 @@ export function ModelSettingsDialog({
                 value={model}
                 list="available-models"
                 onChange={(event) => setModel(event.target.value)}
-                placeholder="手动填，或从接口拉取"
                 spellCheck={false}
               />
               <button type="button" className="btn" onClick={() => void loadModels()} disabled={fetchingModels}>

@@ -281,7 +281,6 @@ export function PetPage() {
         ) : (
           <>
             <h2 className="pet-name">前台应用图标</h2>
-            <p className="small quiet pet-desc">桌宠显示你正在用的那个应用的图标，不带动画。导入一只 GIF 伴侣，它就会住进来。</p>
           </>
         )}
       </section>
@@ -304,7 +303,6 @@ export function PetPage() {
             </button>
           </span>
         </div>
-        <p className="panel-hint">最近用过的在前。点一下就换上；可以一次选多个 ZIP，或直接拖进窗口。</p>
 
         {failures.length > 0 && (
           <div className="import-failures" role="alert">
@@ -337,7 +335,6 @@ export function PetPage() {
           </p>
         )}
 
-        <p className="footnote">只认 GIF，ZIP 里其它格式会跳过；文件名含 idle 的当默认动作。整包不超过 100 MB，单个 GIF 不超过 50 MB。导入时会复制一份，原文件可以删。</p>
       </section>
     </div>
   );

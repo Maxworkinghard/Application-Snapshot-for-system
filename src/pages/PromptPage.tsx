@@ -172,7 +172,6 @@ export function PromptPage() {
         <span className="spacer" />
         {rulesDirty ? (
           <span className="prompt-bar-links small">
-            <span className="quiet">生成仍按上次保存的版本</span>
             <button type="button" className="text-btn ink-2" onClick={() => setTemplates(settings.templates)}>放弃改动</button>
             <button type="button" className="btn btn-small" onClick={() => void persistRules().then((ok) => ok && notify("规则已保存"))} disabled={savingRules}>
               {savingRules ? "保存中…" : "保存规则"}
@@ -242,36 +241,27 @@ export function PromptPage() {
               void run();
             }
           }}
-          placeholder="把想让编程助手做的事写在这里，不用讲究措辞。"
+          placeholder="写下要润色的 Prompt"
           spellCheck={false}
         />
         {polishing && (
           <div className="prompt-busy" role="status">
             <span className="busy-line" aria-hidden="true" />
-            正在按「{active?.name}」润色 · <span className="mono">{Math.floor((Date.now() - startedAt) / 1000)}</span> 秒，最长等 180 秒
+            正在按「{active?.name}」润色 · <span className="mono">{Math.floor((Date.now() - startedAt) / 1000)}</span> 秒
           </div>
         )}
       </div>
 
       {failure && (
         <p className="prompt-failure" role="alert">
-          <span className="strong">请求失败</span>　{failure}　草稿没动。
+          <span className="strong">请求失败</span>　{failure}　
           <button type="button" className="link" onClick={() => void run()}>重试</button>
         </p>
       )}
 
       <div className="prompt-foot">
         <span className="small quiet prompt-hint">
-          {peeking ? (
-            "正在看原文，只读；切回「结果」才能改"
-          ) : serviceReady ? (
-            <>
-              <Keys value="CommandOrControl+Enter" />
-              {original !== null ? "拿原文重新生成，不会在结果上再润色" : "生成"}
-            </>
-          ) : (
-            "还没填模型接口，生成用不了"
-          )}
+          {peeking ? "原文只读" : serviceReady ? <Keys value="CommandOrControl+Enter" /> : "还没填模型接口"}
         </span>
         <span className="prompt-foot-actions">
           {original !== null && (

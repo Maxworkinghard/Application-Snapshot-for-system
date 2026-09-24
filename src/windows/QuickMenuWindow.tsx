@@ -333,7 +333,6 @@ export function QuickMenuWindow() {
     list.push({
       id: "main",
       label: "打开主窗口",
-      hint: <span className="small quiet">历史、形象、设置</span>,
       keywords: "主窗口 设置 历史 形象 伴侣 settings",
       muted: true,
       run: () => {
@@ -468,7 +467,7 @@ export function QuickMenuWindow() {
               <div className="palette-foot small">
                 <button type="button" className="text-btn palette-rule" onClick={() => cycleRule(1)} disabled={templates.length < 2}>
                   <span className="strong">{templateName}</span>
-                  {templates.length > 1 && <span className="mono quiet">Tab 换规则</span>}
+                  {templates.length > 1 && <span className="mono quiet">Tab</span>}
                 </button>
                 <span className="spacer" />
                 <button type="button" className="text-btn ink-2" onClick={() => setPeek((value) => !value)} disabled={!result}>
@@ -506,9 +505,7 @@ export function QuickMenuWindow() {
                     }
                   }}
                   placeholder={
-                    view === "windows"
-                      ? pickerMode === "capture" ? "选一个要截的窗口，打字筛选" : "选一个要录的窗口，打字筛选"
-                      : "要做什么？也可以直接粘贴文字来润色"
+                    view === "windows" ? (pickerMode === "capture" ? "截哪个窗口" : "录哪个窗口") : "要做什么？"
                   }
                   aria-label={view === "windows" ? "筛选窗口" : "命令，或要润色的文字"}
                   spellCheck={false}

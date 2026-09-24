@@ -38,22 +38,12 @@ export function BehaviorPanel() {
     }
   }
 
-  const toggles: Array<{ key: keyof Settings; label: string; hint?: string; disabled?: boolean }> = [
+  const toggles: Array<{ key: keyof Settings; label: string; disabled?: boolean }> = [
     { key: "flashOnCapture", label: "截屏时闪一下" },
-    { key: "autoSaveLocal", label: "截图同时存进历史", hint: "关掉后截图只进剪贴板，快照历史不会有记录" },
+    { key: "autoSaveLocal", label: "截图同时存进历史" },
     { key: "hideAfterCopy", label: "复制后隐藏主窗口" },
-    {
-      key: "includeCursor",
-      label: "截图带上鼠标指针",
-      hint: caps && !caps.includeCursor.available ? caps.includeCursor.detail : undefined,
-      disabled: caps ? !caps.includeCursor.available : false,
-    },
-    {
-      key: "launchOnBoot",
-      label: "开机时静默启动",
-      hint: caps && !caps.autostart.available ? caps.autostart.detail : undefined,
-      disabled: caps ? !caps.autostart.available : false,
-    },
+    { key: "includeCursor", label: "截图带上鼠标指针", disabled: caps ? !caps.includeCursor.available : false },
+    { key: "launchOnBoot", label: "开机时静默启动", disabled: caps ? !caps.autostart.available : false },
   ];
 
   return (
@@ -118,10 +108,7 @@ export function BehaviorPanel() {
         </div>
         {toggles.map((toggle) => (
           <div className="row" key={toggle.key}>
-            <span className="row-label-stack">
-              <label className="row-label" htmlFor={`pref-${toggle.key}`}>{toggle.label}</label>
-              {toggle.hint && <span className="quiet small">{toggle.hint}</span>}
-            </span>
+            <label className="row-label" htmlFor={`pref-${toggle.key}`}>{toggle.label}</label>
             <Switch
               id={`pref-${toggle.key}`}
               label={toggle.label}
@@ -170,12 +157,9 @@ export function MachinePanel() {
           </div>
         )}
         {capabilities.map((capability) => (
-          <div className="row row-stack" key={capability.label}>
-            <div className="row-line">
-              <span className="row-label">{capability.label}</span>
-              <span className={`small ${capability.available ? "ink-2" : "signal"}`}>{capability.available ? "可用" : "不可用"}</span>
-            </div>
-            {capability.detail && <span className="quiet small">{capability.detail}</span>}
+          <div className="row" key={capability.label}>
+            <span className="row-label">{capability.label}</span>
+            <span className={`small ${capability.available ? "ink-2" : "signal"}`}>{capability.available ? "可用" : "不可用"}</span>
           </div>
         ))}
       </div>

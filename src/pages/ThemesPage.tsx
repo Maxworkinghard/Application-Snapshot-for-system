@@ -3,11 +3,11 @@ import { Choices } from "../components/ui/Choices";
 import { useApp } from "../app/context";
 import type { LayoutTheme } from "../lib/prefs";
 
-export const LAYOUT_INFO: Record<LayoutTheme, { name: string; description: string }> = {
-  companion: { name: "伴侣侧栏", description: "猫住在侧栏底，替你播报刚发生的事" },
-  timeline: { name: "时间线", description: "首页就是今天做过的事，设置收进一页" },
-  ledger: { name: "今日流水", description: "侧栏下半截列出今天的每一步" },
-  topbar: { name: "不要侧栏", description: "入口放进标题栏，内容区最宽" },
+export const LAYOUT_INFO: Record<LayoutTheme, { name: string }> = {
+  companion: { name: "伴侣侧栏" },
+  timeline: { name: "时间线" },
+  ledger: { name: "今日流水" },
+  topbar: { name: "不要侧栏" },
 };
 
 const bar = (width: string, tone = "var(--rule)") => <span className="mini-bar" style={{ width, background: tone }} />;
@@ -99,10 +99,7 @@ export function ThemesPanel() {
   const { layout, setLayout, themePreference, setThemePreference, motionPreference, setMotionPreference } = useApp();
   return (
     <section className="panel panel-themes">
-      <div className="panel-head">
-        <h2 className="panel-title">布局</h2>
-        <span className="small quiet">点一下立即生效，随时换回来</span>
-      </div>
+      <h2 className="panel-title">布局</h2>
       <div className="layouts" role="radiogroup" aria-label="布局主题">
         {(Object.keys(LAYOUT_INFO) as LayoutTheme[]).map((key) => (
           <button
@@ -119,7 +116,6 @@ export function ThemesPanel() {
               {layout === key && <span className="small quiet">使用中{key === "companion" ? " · 默认" : ""}</span>}
               {layout !== key && key === "companion" && <span className="small quiet">默认</span>}
             </span>
-            <span className="small quiet layout-desc">{LAYOUT_INFO[key].description}</span>
           </button>
         ))}
       </div>
@@ -139,10 +135,7 @@ export function ThemesPanel() {
           />
         </div>
         <div className="row">
-          <span className="row-label-stack">
-            <span className="row-label">动效</span>
-            <span className="small quiet">减弱：只留淡入淡出，猫停在静态帧</span>
-          </span>
+          <span className="row-label">动效</span>
           <Choices
             ariaLabel="动效"
             value={motionPreference}
@@ -155,7 +148,6 @@ export function ThemesPanel() {
           />
         </div>
       </div>
-      <p className="footnote">布局、颜色、动效对主窗口、桌宠和输入框同时生效，存在这台电脑上。</p>
     </section>
   );
 }
