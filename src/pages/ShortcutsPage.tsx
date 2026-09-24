@@ -12,7 +12,6 @@ import {
 } from "lucide-react";
 import { open } from "@tauri-apps/plugin-dialog";
 import { openRecordingsDir, platformCapabilities, savePreferences, saveShortcuts } from "../lib/backend";
-import { applyGlobalShortcuts, platformSupports } from "../lib/shortcuts";
 import { normalizeKey } from "../lib/format";
 import { KbdBadge } from "../components/ui/KbdBadge";
 import { SegGroup } from "../components/ui/SegGroup";
@@ -57,16 +56,10 @@ export function ShortcutsPage({
   }
 
   async function save() {
-    const active = shortcuts.map((item) => item.accelerator).filter(Boolean);
-    if (new Set(active).size !== active.length) {
-      notify("快捷键不能重复");
-      return;
-    }
     setSaving(true);
     try {
-      await applyGlobalShortcuts(shortcuts);
-      const next = await saveShortcuts(shortcuts);
-      onSaved(next);
+      // 校验（含重复）、注册、落盘都在后端一步完成；有键注册不上时整组不生效也不保存
+      onSaved(await saveShortcuts(shortcuts));
       notify("快捷键已保存并立即生效");
     } catch (error) {
       notify(error instanceof Error ? error.message : String(error));
@@ -189,9 +182,6 @@ export function ShortcutsPage({
     );
   };
 
-  // 老配置里可能残留本平台不支持的动作（后端迁移只补不删），别渲染成点了没反应的死行
-  const visibleShortcuts = shortcuts.filter((item) => platformSupports(item.action));
-
   // 录制态下点击页面空白处（非快捷键行）也算取消选中
   function onPageClick(event: React.MouseEvent<HTMLDivElement>) {
     if (!recording) return;
@@ -222,10 +212,10 @@ export function ShortcutsPage({
           <section className="hub-section-block">
             <div className="section-label-bar">
               <span className="section-name">全局快捷键</span>
-              <span className="section-count tabular-nums">{visibleShortcuts.length} 项</span>
+              <span className="section-count tabular-nums">{shortcuts.length} 项</span>
             </div>
             <div className="shortcuts-list-table">
-              {visibleShortcuts.map(renderRow)}
+              {shortcuts.map(renderRow)}
             </div>
           </section>
         </div>

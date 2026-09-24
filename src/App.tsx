@@ -16,11 +16,11 @@ import {
   Palette,
 } from "lucide-react";
 import {
+  getShortcutConflicts,
   loadSettings,
   onSettingsChanged,
   onCaptureFeedback,
 } from "./lib/backend";
-import { applyGlobalShortcuts } from "./lib/shortcuts";
 import { previewHintSound } from "./lib/sound";
 import { ThemePage } from "./pages/ThemePage";
 import { OcrPage } from "./pages/OcrPage";
@@ -132,24 +132,15 @@ export function App() {
     };
   }, []);
 
-  // 按值比较而不是数组引用：改任意一项偏好都会换来一份新的 settings，
-  // 里面的 shortcuts 数组是新对象但内容没变，按引用依赖会白白重注册一轮
-  const shortcutFingerprint = settings?.shortcuts
-    .map((item) => `${item.action}:${item.accelerator ?? ""}`)
-    .join("|");
+  // 快捷键由后端在启动时注册；那一刻网页还没加载，注册不上的键等到这里再提示
   useEffect(() => {
-    if (!settings) return;
-    void applyGlobalShortcuts(settings.shortcuts).catch((error) => {
-      const conflicted = error instanceof Error ? error.message : "";
-      notify(
-        conflicted
-          ? `这些快捷键没能注册，可能已被其他程序占用：${conflicted}`
-          : "快捷键注册失败，请换一组试试",
-      );
-    });
-    // settings.shortcuts 的内容由 shortcutFingerprint 代表
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [shortcutFingerprint]);
+    getShortcutConflicts()
+      .then((failed) => {
+        if (failed.length > 0) notify(`这些快捷键没能注册，可能已被其他程序占用：${failed.join("、")}`);
+      })
+      // 只是一条提示，取不到不影响使用
+      .catch(() => {});
+  }, []);
 
   useEffect(() => {
     if (page === shownPage) {

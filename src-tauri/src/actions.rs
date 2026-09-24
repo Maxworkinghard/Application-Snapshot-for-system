@@ -133,17 +133,14 @@ pub(crate) fn show_main_window(app: AppHandle) {
     }
 }
 
-/// 快捷键版 OCR：识别剪贴板里的图片，再把文字写回剪贴板。
-/// 界面上的 ocr_clipboard 只负责返回文字（页面自己展示），
-/// 走快捷键时用户看不到界面，必须把结果送回剪贴板才有意义。
-#[tauri::command]
-pub(crate) async fn perform_action(
-    action: String,
-    app: AppHandle,
-    state: State<'_, AppState>,
-) -> Result<String, String> {
-    match action.as_str() {
-        "snapshot" => capture::capture_window(app, state, None),
+/// 执行一个全局快捷键动作（由 shortcuts.rs 的按键回调调用）。
+///
+/// 快捷键版 OCR 会把识别出的文字写回剪贴板：界面上的 ocr_clipboard 只负责返回文字
+/// （页面自己展示），走快捷键时用户看不到界面，必须把结果送回剪贴板才有意义。
+pub(crate) async fn perform(app: &AppHandle, action: &str) -> Result<String, String> {
+    let state = app.state::<AppState>();
+    match action {
+        "snapshot" => capture::capture_window(app.clone(), state, None),
         "record" => recording::toggle_recording(state, None).map(|status| {
             if status.active {
                 status.message.unwrap_or_else(|| "录制已开始".into())
@@ -154,18 +151,16 @@ pub(crate) async fn perform_action(
         "polish" => polish::polish_clipboard(state).await,
         "ocr" => capture::ocr_clipboard_into_clipboard().await,
         "fullscreen" => {
-            let app2 = app.clone();
             let include_cursor = state.settings.lock().include_cursor;
             let (image, name, cursor_degraded) = tauri::async_runtime::spawn_blocking(move || {
                 capture::capture_fullscreen_image(include_cursor)
             })
             .await
             .map_err(|error| error.to_string())??;
-            capture::finalize_capture(&app2, &state, image, &name, cursor_degraded)
+            capture::finalize_capture(app, &state, image, &name, cursor_degraded)
         }
         #[cfg(target_os = "linux")]
         "scrolling" => {
-            let app2 = app.clone();
             let target_id = state
                 .tracker
                 .lock()
@@ -178,7 +173,7 @@ pub(crate) async fn perform_action(
             })
             .await
             .map_err(|error| error.to_string())??;
-            capture::finalize_capture(&app2, &state, image, &name, None)
+            capture::finalize_capture(app, &state, image, &name, None)
         }
         _ => Err("未知快捷键动作".into()),
     }
