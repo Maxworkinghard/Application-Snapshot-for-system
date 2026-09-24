@@ -20,23 +20,26 @@
 
 ## 安装
 
-- **macOS**：解压后把 `snapshot.app` 拖到「应用程序」。当前构建是 ad-hoc 签名、未公证；若系统提示无法验证开发者，按住 Control 点击 → 打开。第一次截图会要屏幕录制权限。
+- **macOS**：解压后把 `snapshot.app` 拖到「应用程序」。当前构建是 ad-hoc 签名、未公证；若系统提示无法验证开发者，按住 Control 点击 → 打开。截图和录制需要「屏幕录制」权限，截最小化的窗口需要「辅助功能」权限，录麦克风需要麦克风权限。
 - **Windows**：运行对应架构的安装程序。需要 Microsoft Edge WebView2 运行时，Windows 11 自带，Windows 10 上安装程序会按需下载。未用 Trusted Root 代码签名证书签过名时，Smart App Control / SmartScreen 可能拦截。
 - **Linux（deb）**：`sudo apt install ./Application-Snapshot-{{VERSION}}-linux-<架构>.deb`，依赖由 apt 一并装上。
 - **Linux（AppImage）**：`chmod +x` 之后直接运行。部分发行版需要先装 `libfuse2`。
 
 ## 可选依赖
 
+Windows 和 macOS 不用另装东西。Linux 上按需安装：
+
 | 功能 | 需要 |
 |---|---|
-| 窗口录制 | `ffmpeg`（三端通用；Linux 上 X11 走 x11grab，纯 Wayland 走 portal ScreenCast） |
-| 截图前还原最小化窗口 | Linux 需要 `xdotool` |
-| 系统托盘 | Linux 需要 StatusNotifierHost（KDE 原生支持；GNOME 需装 AppIndicator 扩展） |
+| 窗口录制、带鼠标指针的截图 | `ffmpeg` |
+| 录系统声音和麦克风 | `pactl`（PulseAudio 或 PipeWire-Pulse），且 ffmpeg 带 PulseAudio 支持 |
+| 截图前还原最小化窗口、滚动长截图 | `xdotool` |
+| 系统托盘 | StatusNotifierHost（KDE 自带；GNOME 需装 AppIndicator 扩展） |
 
-桌宠素材不包含在发行包里，放好后再到设置里切换桌面形式。
+伴侣的 GIF 形象不随安装包提供，装好后在主窗口「桌面伴侣」页导入。
 
 ## 系统要求
 
-- macOS 14+
+- macOS 14+（录麦克风需要 macOS 15+）
 - Windows 10 或 Windows 11
 - Linux：X11 或 Wayland 桌面会话；deb 需要 Debian 12 / Ubuntu 24.04 及以上（webkit2gtk-4.1）

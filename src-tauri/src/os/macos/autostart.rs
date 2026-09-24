@@ -7,7 +7,7 @@
 use std::fs;
 use std::path::PathBuf;
 
-const LABEL: &str = "com.appsnapshot.prompt-pet-shortcut";
+const LABEL: &str = "com.appsnapshot.snapshot";
 
 fn agents_dir() -> PathBuf {
     dirs::home_dir()
@@ -93,7 +93,7 @@ mod tests {
     #[test]
     fn plist_declares_label_and_run_at_load() {
         let body = plist_body("/Applications/snapshot.app/Contents/MacOS/snapshot");
-        assert!(body.contains("<string>com.appsnapshot.prompt-pet-shortcut</string>"));
+        assert!(body.contains("<string>com.appsnapshot.snapshot</string>"));
         assert!(body.contains("<key>RunAtLoad</key>"));
         assert!(
             body.contains("<string>/Applications/snapshot.app/Contents/MacOS/snapshot</string>")
@@ -111,6 +111,6 @@ mod tests {
     #[test]
     fn plist_path_sits_in_launch_agents() {
         let path = plist_path();
-        assert!(path.ends_with("Library/LaunchAgents/com.appsnapshot.prompt-pet-shortcut.plist"));
+        assert!(path.ends_with("Library/LaunchAgents/com.appsnapshot.snapshot.plist"));
     }
 }

@@ -6,7 +6,7 @@ authors = ["App Snapshot"]
 edition = "2021"
 
 [lib]
-name = "prompt_pet_shortcut_lib"
+name = "snapshot_lib"
 crate-type = ["staticlib", "cdylib", "rlib"]
 
 [build-dependencies]
