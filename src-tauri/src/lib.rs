@@ -1,9 +1,9 @@
 mod actions;
+mod capabilities;
 mod capture;
 mod media;
 mod ocr;
 mod pet;
-mod platform;
 mod polish;
 mod recording;
 mod settings;
@@ -11,27 +11,34 @@ mod shortcuts;
 mod snapshots;
 mod tracker;
 
-#[cfg(target_os = "linux")]
-mod linux;
+// 三端各一套原生实现（os/windows、os/macos、os/linux），对外提供同名的一组函数：
+// 录制、带光标截图、还原最小化、开机自启、取图标、打开文件夹、本机能力、OCR、
+// 支持的快捷键动作。共享代码只写 `os::xxx`，不再到处 #[cfg]；
+// 某一端少实现了哪个，那一端的编译直接报错，而不是运行时才发现。
 #[cfg(target_os = "windows")]
-mod windows_recorder;
+#[path = "os/windows/mod.rs"]
+mod os;
+#[cfg(target_os = "macos")]
+#[path = "os/macos/mod.rs"]
+mod os;
+#[cfg(target_os = "linux")]
+#[path = "os/linux/mod.rs"]
+mod os;
+#[cfg(not(any(target_os = "windows", target_os = "macos", target_os = "linux")))]
+compile_error!("应用快照只支持 Windows、macOS 和 Linux");
 
 use arboard::{Clipboard, ImageData};
 use base64::{engine::general_purpose::STANDARD as BASE64, Engine as _};
 use chrono::Local;
 use image::{ImageFormat, RgbaImage};
 use parking_lot::Mutex;
-// 只有 macOS 的 recorder sidecar 要按行读子进程输出
 use serde::Serialize;
 use serde_json::{json, Value};
-#[cfg(target_os = "macos")]
-use std::io::{BufRead, BufReader};
 use std::{
     borrow::Cow,
     fs,
-    io::{Cursor, Read, Write},
+    io::{Cursor, Read},
     path::{Path, PathBuf},
-    process::{Child, Command},
     sync::{
         atomic::{AtomicU64, Ordering},
         Arc,
@@ -39,9 +46,6 @@ use std::{
     thread,
     time::{Duration, SystemTime, UNIX_EPOCH},
 };
-// macOS 的录制 sidecar 走 stdin/stdout 管道通信，只有它需要 Stdio
-#[cfg(not(any(target_os = "linux", target_os = "windows")))]
-use std::process::Stdio;
 use tauri::{
     menu::{Menu, MenuItem},
     tray::{MouseButton, MouseButtonState, TrayIconBuilder, TrayIconEvent},
@@ -173,31 +177,9 @@ pub fn run() {
 
             // 配置里若已勾选自启，启动时把系统启动项与设置对齐（不会默认打开）。
             // 应用被移动过路径时，这一步顺带把启动项里的旧路径刷新掉。
-            #[cfg(target_os = "linux")]
-            {
-                if settings.launch_on_boot {
-                    if let Err(error) = linux::apply_launch_on_boot(true) {
-                        eprintln!("snapshot: could not sync XDG autostart: {error}");
-                    }
-                }
-            }
-            #[cfg(target_os = "windows")]
-            {
-                if settings.launch_on_boot {
-                    if let Err(error) = platform::windows_autostart::apply(true) {
-                        eprintln!("snapshot: could not sync Run key: {error}");
-                    }
-                }
-            }
-
-            #[cfg(target_os = "macos")]
-            {
-                // 同上：把 LaunchAgent 与设置对齐。应用被移动过位置时，这里会把
-                // plist 里的路径刷成当前的。
-                if settings.launch_on_boot {
-                    if let Err(error) = platform::mac_autostart::apply_launch_on_boot(true) {
-                        eprintln!("snapshot: could not sync LaunchAgent: {error}");
-                    }
+            if settings.launch_on_boot {
+                if let Err(error) = os::apply_autostart(true) {
+                    eprintln!("snapshot: could not sync autostart entry: {error}");
                 }
             }
 
@@ -211,7 +193,7 @@ pub fn run() {
                     "open-settings" => actions::show_main_window(app.clone()),
                     "quit" => {
                         if let Some(state) = app.try_state::<AppState>() {
-                            recording::stop_active_recording(&mut state.recorder.lock());
+                            state.recorder.lock().stop();
                         }
                         app.exit(0);
                     }
@@ -303,7 +285,7 @@ pub fn run() {
             capture::ocr_capability,
             capture::ocr_snapshot,
             capture::ocr_clipboard,
-            platform::platform_capabilities,
+            capabilities::platform_capabilities,
             actions::show_quick_menu,
             actions::set_quick_menu_expanded,
             actions::hide_quick_menu,
@@ -316,50 +298,6 @@ pub fn run() {
         ])
         .run(context)
         .expect("运行 snapshot 失败");
-}
-
-#[cfg(all(test, target_os = "macos"))]
-mod mac_icon_tests {
-    #[test]
-    fn finder_icon_encodes_as_64px_png() {
-        let Ok(output) = std::process::Command::new("pgrep")
-            .args(["-x", "Finder"])
-            .output()
-        else {
-            return;
-        };
-        let text = String::from_utf8_lossy(&output.stdout);
-        let Some(pid) = text
-            .lines()
-            .next()
-            .and_then(|line| line.trim().parse::<u32>().ok())
-        else {
-            return;
-        };
-        let png = crate::platform::mac_icon::png_for_pid(pid, 64).expect("Finder 应当能取到图标");
-        // 图标 TIFF 里有 1024×1024 原图；不真压尺寸的话这里会得到六百 KB 的大图
-        let decoded = image::load_from_memory(&png).expect("导出的应为合法 PNG");
-        assert_eq!(
-            (decoded.width(), decoded.height()),
-            (64, 64),
-            "图标应压到 64×64"
-        );
-        assert!(
-            png.len() < 20 * 1024,
-            "64×64 图标 PNG 应远小于 20KB，实际 {} 字节",
-            png.len()
-        );
-        // drawInRect 必须真的把图标画进去，而不是导出一张空白图
-        let opaque = decoded
-            .to_rgba8()
-            .pixels()
-            .filter(|pixel| pixel[3] > 0)
-            .count();
-        assert!(
-            opaque > 64,
-            "64×64 图标应有可见内容，实际只有 {opaque} 个非透明像素"
-        );
-    }
 }
 
 #[cfg(test)]

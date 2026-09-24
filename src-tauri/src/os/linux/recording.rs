@@ -198,26 +198,26 @@ fn microphone_source() -> Result<String, String> {
     }
 }
 
-pub fn system_audio_capability() -> crate::platform::CapabilityStatus {
+pub fn system_audio_capability() -> crate::capabilities::CapabilityStatus {
     match system_audio_source() {
-        Ok(_) => crate::platform::CapabilityStatus {
+        Ok(_) => crate::capabilities::CapabilityStatus {
             available: true,
             detail: "PulseAudio/PipeWire：录制默认播放设备的系统混音".into(),
         },
-        Err(detail) => crate::platform::CapabilityStatus {
+        Err(detail) => crate::capabilities::CapabilityStatus {
             available: false,
             detail,
         },
     }
 }
 
-pub fn microphone_capability() -> crate::platform::CapabilityStatus {
+pub fn microphone_capability() -> crate::capabilities::CapabilityStatus {
     match microphone_source() {
-        Ok(_) => crate::platform::CapabilityStatus {
+        Ok(_) => crate::capabilities::CapabilityStatus {
             available: true,
             detail: "PulseAudio/PipeWire：录制默认麦克风输入".into(),
         },
-        Err(detail) => crate::platform::CapabilityStatus {
+        Err(detail) => crate::capabilities::CapabilityStatus {
             available: false,
             detail,
         },

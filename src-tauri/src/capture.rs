@@ -10,7 +10,7 @@ pub(crate) struct OcrCapability {
 
 /// 把 RGBA 位图编码成 PNG 字节，喂给 WinRT 的 BitmapDecoder。
 /// 走 PNG 而不是直接构造 SoftwareBitmap，是为了绕开 IBufferByteAccess 那套 COM 互操作。
-fn encode_png(image: &RgbaImage) -> Result<Vec<u8>, String> {
+pub(crate) fn encode_png(image: &RgbaImage) -> Result<Vec<u8>, String> {
     let mut bytes = Vec::new();
     image
         .write_to(&mut Cursor::new(&mut bytes), ImageFormat::Png)
@@ -33,7 +33,7 @@ pub(crate) fn ocr_capability() -> OcrCapability {
 pub(crate) async fn ocr_snapshot(state: State<'_, AppState>, id: String) -> Result<String, String> {
     let (_, bytes) = snapshots::read_snapshot(&state, &id)?;
     // WinRT 这套调用是阻塞的，挪到阻塞线程池，别卡住界面
-    tauri::async_runtime::spawn_blocking(move || ocr::adapter().recognize_png(&bytes))
+    tauri::async_runtime::spawn_blocking(move || ocr::recognize_png(&bytes))
         .await
         .map_err(|error| error.to_string())?
 }
@@ -49,7 +49,7 @@ pub(crate) async fn ocr_clipboard() -> Result<String, String> {
     let buffer = RgbaImage::from_raw(width, height, image.bytes.into_owned())
         .ok_or_else(|| "剪贴板图像数据不完整".to_string())?;
     let png = encode_png(&buffer)?;
-    tauri::async_runtime::spawn_blocking(move || ocr::adapter().recognize_png(&png))
+    tauri::async_runtime::spawn_blocking(move || ocr::recognize_png(&png))
         .await
         .map_err(|error| error.to_string())?
 }
@@ -76,74 +76,59 @@ pub(crate) fn capture_window(
         .find(|window| window.id().ok() == Some(target_id))
         .ok_or_else(|| "目标窗口已经关闭".to_string())?;
     if window.is_minimized().unwrap_or(false) {
-        restore_minimized_window(target_id)?;
+        os::restore_minimized(target_id)?;
     }
     let app_name = window.app_name().unwrap_or_else(|_| "应用".into());
     let include_cursor = state.settings.lock().include_cursor;
-    let (image, cursor_degraded) = capture_window_image(&window, include_cursor)?;
+    let area = match (window.x(), window.y(), window.width(), window.height()) {
+        (Ok(x), Ok(y), Ok(width), Ok(height)) => Some(Area {
+            x,
+            y,
+            width,
+            height,
+        }),
+        _ => None,
+    };
+    let (image, cursor_degraded) = capture_area(include_cursor, area, "窗口", || {
+        window
+            .capture_image()
+            .map_err(|error| format!("截取失败：{error}"))
+    })?;
     finalize_capture(&app, &state, image, &app_name, cursor_degraded)
 }
 
-fn capture_window_image(
-    window: &Window,
+/// 一块屏幕区域（窗口或显示器）在屏幕上的位置与逻辑尺寸
+pub(crate) struct Area {
+    pub(crate) x: i32,
+    pub(crate) y: i32,
+    pub(crate) width: u32,
+    /// 只有 Linux 让 ffmpeg 按矩形抓时要用；Windows/macOS 合成光标只需宽度换算缩放
+    #[cfg_attr(not(target_os = "linux"), allow(dead_code))]
+    pub(crate) height: u32,
+}
+
+/// 截一块区域；开了「包含光标」就交给平台把光标带上。
+///
+/// 各平台带光标的办法不同（Windows/macOS 截完再按热点合成，Linux 让 ffmpeg 直接带光标抓），
+/// 但失败了都退回不带光标的截图，并把原因拼进成功提示，不让用户以为开关生效了。
+fn capture_area(
     include_cursor: bool,
+    area: Option<Area>,
+    what: &str,
+    capture: impl FnOnce() -> Result<RgbaImage, String>,
 ) -> Result<(RgbaImage, Option<String>), String> {
-    #[cfg(target_os = "linux")]
-    if include_cursor {
-        match (window.x(), window.y(), window.width(), window.height()) {
-            (Ok(x), Ok(y), Ok(width), Ok(height)) => {
-                match linux::capture_region_with_cursor(x, y, width, height) {
-                    Ok(image) => return Ok((image, None)),
-                    Err(error) => {
-                        let note = cursor_degrade_note(&error);
-                        let image = window
-                            .capture_image()
-                            .map_err(|error| format!("截取失败：{error}"))?;
-                        return Ok((image, Some(note)));
-                    }
-                }
-            }
-            _ => {
-                let note = cursor_degrade_note("无法读取窗口几何，已回退无光标截图");
-                let image = window
-                    .capture_image()
-                    .map_err(|error| format!("截取失败：{error}"))?;
-                return Ok((image, Some(note)));
-            }
-        }
+    if !include_cursor {
+        return Ok((capture()?, None));
     }
-    let _ = include_cursor;
-    #[allow(unused_mut, unused_assignments)]
-    let mut image = window
-        .capture_image()
-        .map_err(|error| format!("截取失败：{error}"))?;
-    #[allow(unused_mut)]
-    let mut note = None;
-    #[cfg(target_os = "macos")]
-    if include_cursor {
-        // xcap 截不到光标，截完按窗口原点与 DPI 比例把当前系统光标合成上去
-        note = match (window.x(), window.y(), window.width()) {
-            (Ok(x), Ok(y), Ok(width)) => mac_cursor::overlay_into(&mut image, (x, y), width)
-                .err()
-                .map(|error| cursor_degrade_note(&error)),
-            _ => Some(cursor_degrade_note("无法读取窗口几何，已回退无光标截图")),
-        };
-    }
-    #[cfg(target_os = "windows")]
-    if include_cursor {
-        // 同 macOS：xcap 只给窗口像素，光标要自己画
-        note = match (window.x(), window.y(), window.width()) {
-            (Ok(x), Ok(y), Ok(width)) => windows_cursor::overlay_into(&mut image, (x, y), width)
-                .err()
-                .map(|error| cursor_degrade_note(&error)),
-            _ => Some(cursor_degrade_note("无法读取窗口几何，已回退无光标截图")),
-        };
-    }
-    Ok((image, note))
+    let Some(area) = area else {
+        let note = cursor_degrade_note(&format!("无法读取{what}几何，已回退无光标截图"));
+        return Ok((capture()?, Some(note)));
+    };
+    let (image, failure) = os::capture_with_cursor(&area, capture)?;
+    Ok((image, failure.map(|error| cursor_degrade_note(&error))))
 }
 
 /// 把光标合成失败的原因压成短中文，附在截图成功 toast 后。
-#[cfg(any(target_os = "linux", target_os = "macos", target_os = "windows"))]
 fn cursor_degrade_note(error: &str) -> String {
     let head = error.split(" / ").next().unwrap_or(error).trim();
     let short: String = head.chars().take(48).collect();
@@ -249,446 +234,6 @@ fn save_image_as_dialog(
         })
         .unwrap_or(format);
     snapshots::write_image(image, &path, format).map_err(|error| format!("另存为失败：{error}"))
-}
-
-#[cfg(target_os = "windows")]
-pub(crate) fn restore_minimized_window(id: u32) -> Result<(), String> {
-    use windows_sys::Win32::{
-        Foundation::HWND,
-        UI::WindowsAndMessaging::{IsIconic, ShowWindow, SW_RESTORE},
-    };
-    let handle: HWND = id as usize as *mut _;
-    unsafe {
-        // ShowWindow 的返回值是「调用前窗口是否可见」，不是成败，据此判断会误报成功。
-        let _ = ShowWindow(handle, SW_RESTORE);
-    }
-    thread::sleep(Duration::from_millis(220));
-    // 真正的成败只能事后问：仍是最小化就说明系统或目标应用没有接受这次还原。
-    if unsafe { IsIconic(handle) } != 0 {
-        return Err("目标窗口仍处于最小化，未能还原".into());
-    }
-    Ok(())
-}
-
-/// macOS：用 Accessibility API 还原最小化窗口。
-/// AX 没有 Windows hwnd 那样的窗口句柄，只能按进程 + 标题对齐，
-/// 详见 mac_ax::unminimize_window。
-#[cfg(target_os = "macos")]
-pub(crate) fn restore_minimized_window(id: u32) -> Result<(), String> {
-    mac_ax::unminimize_window(id)?;
-    // Dock 还原动画比 Windows 的 SW_RESTORE 慢，多等一会再截
-    thread::sleep(Duration::from_millis(400));
-    Ok(())
-}
-
-#[cfg(target_os = "macos")]
-mod mac_cursor {
-    //! 静帧截图合成鼠标光标。
-    //!
-    //! xcap 的窗口位图不含光标，录制那条路有 ScreenCaptureKit 的 `showsCursor`，静帧
-    //! 没有对应开关，只能截完再自己画上去——与 Windows 侧同样的做法。
-
-    use image::RgbaImage;
-    use objc2::AnyThread;
-    use objc2_app_kit::{
-        NSBitmapImageFileType, NSBitmapImageRep, NSCursor, NSDeviceRGBColorSpace, NSGraphicsContext,
-    };
-    use objc2_foundation::{NSDictionary, NSPoint, NSRect, NSSize};
-    use std::ffi::c_void;
-
-    #[repr(C)]
-    #[derive(Clone, Copy)]
-    struct CGPoint {
-        x: f64,
-        y: f64,
-    }
-
-    extern "C" {
-        fn CGEventCreate(source: *const c_void) -> *mut c_void;
-        fn CGEventGetLocation(event: *mut c_void) -> CGPoint;
-        fn CFRelease(cf: *const c_void);
-    }
-
-    /// 光标位置：全局坐标、左上原点、点为单位——正好是 xcap 报窗口位置用的坐标系。
-    ///
-    /// 不用 `NSEvent::mouseLocation`：那个是左下原点，翻 y 要主屏高度，而 `NSScreen`
-    /// 在 objc2 里需要 `MainThreadMarker`，截图不一定跑在主线程上。
-    fn cursor_position() -> Option<(f64, f64)> {
-        unsafe {
-            let event = CGEventCreate(std::ptr::null());
-            if event.is_null() {
-                return None;
-            }
-            let point = CGEventGetLocation(event);
-            CFRelease(event);
-            Some((point.x, point.y))
-        }
-    }
-
-    /// 当前系统光标：按 `scale` 渲染成像素位图，附带热点（点单位，左上原点）。
-    ///
-    /// 走 PNG 中转而不是直接读 `bitmapData`：省掉一段裸指针算术，光标只有几十像素，
-    /// 这点编解码开销可以忽略。
-    // currentSystemCursor 已被苹果标记弃用，推荐改用 ScreenCaptureKit 的
-    // SCStreamConfiguration.showsCursor。这里仍然用它，因为替代品 NSCursor::currentCursor
-    // 只知道**本应用**的光标：截别人的窗口时它返回我们自己的箭头，而不是对方正在显示的
-    // I 形/手形光标，语义是错的。录制已使用 ScreenCaptureKit；静帧仍需单独迁移。
-    #[allow(deprecated)]
-    fn cursor_bitmap(scale: f64) -> Option<(RgbaImage, f64, f64)> {
-        unsafe {
-            let cursor = NSCursor::currentSystemCursor()?;
-            let hot_spot = cursor.hotSpot();
-            let nsimage = cursor.image();
-            let size = nsimage.size();
-            if size.width < 1.0 || size.height < 1.0 {
-                return None;
-            }
-            let pixel_width = (size.width * scale).round().max(1.0);
-            let pixel_height = (size.height * scale).round().max(1.0);
-            let rep = NSBitmapImageRep::initWithBitmapDataPlanes_pixelsWide_pixelsHigh_bitsPerSample_samplesPerPixel_hasAlpha_isPlanar_colorSpaceName_bytesPerRow_bitsPerPixel(
-                NSBitmapImageRep::alloc(),
-                std::ptr::null_mut(),
-                pixel_width as isize,
-                pixel_height as isize,
-                8,
-                4,
-                true,
-                false,
-                NSDeviceRGBColorSpace,
-                0,
-                0,
-            )?;
-            let context = NSGraphicsContext::graphicsContextWithBitmapImageRep(&rep)?;
-            NSGraphicsContext::saveGraphicsState_class();
-            NSGraphicsContext::setCurrentContext(Some(&context));
-            nsimage.drawInRect(NSRect::new(
-                NSPoint::new(0.0, 0.0),
-                NSSize::new(pixel_width, pixel_height),
-            ));
-            NSGraphicsContext::restoreGraphicsState_class();
-            let png = rep.representationUsingType_properties(
-                NSBitmapImageFileType::PNG,
-                &NSDictionary::new(),
-            )?;
-            let decoded = image::load_from_memory(&png.to_vec()).ok()?.to_rgba8();
-            Some((decoded, hot_spot.x, hot_spot.y))
-        }
-    }
-
-    /// 光标左上角落在截图里的像素坐标：先减热点，再把「点」按 DPI 比例换成像素。
-    fn overlay_origin_px(
-        cursor: (f64, f64),
-        hot_spot: (f64, f64),
-        window_origin: (i32, i32),
-        scale: f64,
-    ) -> (i64, i64) {
-        let left = (cursor.0 - hot_spot.0 - window_origin.0 as f64) * scale;
-        let top = (cursor.1 - hot_spot.1 - window_origin.1 as f64) * scale;
-        (left.round() as i64, top.round() as i64)
-    }
-
-    /// source-over 合成，超出边界的部分裁掉。
-    fn blend(canvas: &mut RgbaImage, overlay: &RgbaImage, left: i64, top: i64) {
-        for (ox, oy, pixel) in overlay.enumerate_pixels() {
-            let x = left + ox as i64;
-            let y = top + oy as i64;
-            if x < 0 || y < 0 || x >= canvas.width() as i64 || y >= canvas.height() as i64 {
-                continue;
-            }
-            let alpha = pixel.0[3] as f32 / 255.0;
-            if alpha <= 0.0 {
-                continue;
-            }
-            let base = canvas.get_pixel_mut(x as u32, y as u32);
-            for channel in 0..3 {
-                base.0[channel] = (pixel.0[channel] as f32 * alpha
-                    + base.0[channel] as f32 * (1.0 - alpha))
-                    .round()
-                    .clamp(0.0, 255.0) as u8;
-            }
-            base.0[3] = base.0[3].max(pixel.0[3]);
-        }
-    }
-
-    /// 把当前光标合成进刚截下来的位图。
-    ///
-    /// `window_origin` / `logical_width` 是 xcap 报的窗口左上角与逻辑宽度（点），
-    /// 用来换算截图像素与点的比例（Retina 上是 2）。光标不在这张图范围内时什么都不做。
-    pub fn overlay_into(
-        image: &mut RgbaImage,
-        window_origin: (i32, i32),
-        logical_width: u32,
-    ) -> Result<(), String> {
-        if logical_width == 0 {
-            return Err("窗口逻辑宽度为 0，无法换算缩放".into());
-        }
-        let scale = image.width() as f64 / logical_width as f64;
-        if !(0.5..=4.0).contains(&scale) {
-            return Err(format!("截图与窗口的缩放比例异常（{scale:.2}）"));
-        }
-        let position = cursor_position().ok_or("取不到光标位置")?;
-        let (bitmap, hot_x, hot_y) = cursor_bitmap(scale).ok_or("取不到当前系统光标位图")?;
-        let (left, top) = overlay_origin_px(position, (hot_x, hot_y), window_origin, scale);
-        blend(image, &bitmap, left, top);
-        Ok(())
-    }
-
-    #[cfg(test)]
-    mod tests {
-        use super::*;
-        use image::Rgba;
-
-        #[test]
-        fn origin_subtracts_hot_spot_and_window_offset() {
-            // 光标在 (120,140)，窗口左上角 (100,100)，热点 (4,4)，1x 屏
-            assert_eq!(
-                overlay_origin_px((120.0, 140.0), (4.0, 4.0), (100, 100), 1.0),
-                (16, 36)
-            );
-        }
-
-        #[test]
-        fn retina_scale_doubles_the_offset() {
-            // 同样的点位，2x 屏上像素偏移要翻倍
-            assert_eq!(
-                overlay_origin_px((120.0, 140.0), (4.0, 4.0), (100, 100), 2.0),
-                (32, 72)
-            );
-        }
-
-        #[test]
-        fn blend_respects_alpha_and_clips_out_of_bounds() {
-            let mut canvas = RgbaImage::from_pixel(4, 4, Rgba([0, 0, 0, 255]));
-            let overlay = RgbaImage::from_pixel(2, 2, Rgba([255, 255, 255, 255]));
-            blend(&mut canvas, &overlay, 3, 3); // 只有左上角那个像素落在画布内
-            assert_eq!(canvas.get_pixel(3, 3).0, [255, 255, 255, 255]);
-            assert_eq!(canvas.get_pixel(0, 0).0, [0, 0, 0, 255]);
-        }
-
-        #[test]
-        fn fully_transparent_overlay_changes_nothing() {
-            let mut canvas = RgbaImage::from_pixel(2, 2, Rgba([10, 20, 30, 255]));
-            let overlay = RgbaImage::from_pixel(2, 2, Rgba([255, 255, 255, 0]));
-            blend(&mut canvas, &overlay, 0, 0);
-            assert_eq!(canvas.get_pixel(0, 0).0, [10, 20, 30, 255]);
-        }
-
-        #[test]
-        fn half_alpha_blends_halfway() {
-            let mut canvas = RgbaImage::from_pixel(1, 1, Rgba([0, 0, 0, 255]));
-            let overlay = RgbaImage::from_pixel(1, 1, Rgba([255, 255, 255, 128]));
-            blend(&mut canvas, &overlay, 0, 0);
-            let value = canvas.get_pixel(0, 0).0[0];
-            assert!((127..=129).contains(&value), "got {value}");
-        }
-    }
-}
-
-#[cfg(target_os = "macos")]
-mod mac_ax {
-    use core_foundation::{
-        array::CFArray,
-        base::{CFType, TCFType},
-        boolean::CFBoolean,
-        string::CFString,
-    };
-    use std::{ffi::c_void, os::raw::c_int, ptr};
-
-    type AXUIElementRef = *const c_void;
-
-    extern "C" {
-        fn AXIsProcessTrusted() -> bool;
-        fn AXUIElementCreateApplication(pid: c_int) -> AXUIElementRef;
-        fn AXUIElementCopyAttributeValue(
-            element: AXUIElementRef,
-            attribute: *const c_void,
-            value: *mut *const c_void,
-        ) -> c_int;
-        fn AXUIElementSetAttributeValue(
-            element: AXUIElementRef,
-            attribute: *const c_void,
-            value: *const c_void,
-        ) -> c_int;
-        fn CFRelease(cf: *const c_void);
-    }
-
-    pub fn unminimize_window(window_id: u32) -> Result<(), String> {
-        let target = xcap::Window::all()
-            .map_err(|error| error.to_string())?
-            .into_iter()
-            .find(|window| window.id().ok() == Some(window_id))
-            .ok_or_else(|| "目标窗口已关闭".to_string())?;
-        let pid = target.pid().map_err(|error| error.to_string())?;
-        let title = target.title().unwrap_or_default();
-        unsafe {
-            if !AXIsProcessTrusted() {
-                return Err(
-                    "还原最小化窗口需要「辅助功能」权限，请在系统设置 → 隐私与安全性中授权后重试"
-                        .into(),
-                );
-            }
-            let app = AXUIElementCreateApplication(pid as c_int);
-            if app.is_null() {
-                return Err("无法访问目标应用".to_string());
-            }
-            let result = unminimize_app_windows(app, &title);
-            CFRelease(app);
-            result
-        }
-    }
-
-    /// Windows 的 SW_RESTORE 只还原被指向的那一个窗口；AX 这边没有窗口句柄，
-    /// 用 xcap 侧的标题去对 AXTitle，尽量只还原被截的那个。
-    /// 标题为空或对不上时（个别应用不暴露 AXTitle），退回还原该进程全部最小化窗口。
-    /// 标题对不上时的去向。
-    ///
-    /// 原先是「一律还原该进程全部最小化窗口」——只有一个最小化窗口时这和还原那一个
-    /// 是同一件事，但有好几个时会把用户收起来的窗口一并掀开，而且多半还猜错。
-    /// 所以只在唯一确定时代劳，含糊时交回给用户，向 Windows 的 SW_RESTORE
-    /// 「只动被指向的那一个」靠拢。
-    #[derive(Debug, PartialEq, Eq)]
-    enum Fallback {
-        /// 只有一个最小化窗口，不会猜错
-        RestoreOnly(isize),
-        /// 没有最小化的窗口，无事可做
-        NothingToDo,
-        /// 多个最小化窗口且标题对不上，不替用户决定
-        Ambiguous(usize),
-    }
-
-    fn decide_fallback(minimized: &[isize]) -> Fallback {
-        match minimized {
-            [] => Fallback::NothingToDo,
-            [only] => Fallback::RestoreOnly(*only),
-            many => Fallback::Ambiguous(many.len()),
-        }
-    }
-
-    unsafe fn unminimize_app_windows(app: AXUIElementRef, title: &str) -> Result<(), String> {
-        let attr_windows = CFString::new("AXWindows");
-        let mut raw: *const c_void = ptr::null();
-        let err = AXUIElementCopyAttributeValue(
-            app,
-            attr_windows.as_concrete_TypeRef() as *const c_void,
-            &mut raw,
-        );
-        if err != 0 || raw.is_null() {
-            return Err("无法读取目标应用的窗口列表".into());
-        }
-        let windows: CFArray<CFType> = CFArray::wrap_under_create_rule(raw as _);
-        let attr_minimized = CFString::new("AXMinimized");
-
-        // 先扫一遍：标题命中哪些、哪些确实处于最小化
-        let mut title_hits: Vec<isize> = Vec::new();
-        let mut minimized: Vec<isize> = Vec::new();
-        for index in 0..windows.len() {
-            let Some(item) = windows.get(index) else {
-                continue;
-            };
-            let element = item.as_concrete_TypeRef() as AXUIElementRef;
-            if !title.is_empty() && ax_string(element, "AXTitle").as_deref() == Some(title) {
-                title_hits.push(index);
-            }
-            if is_minimized(element, &attr_minimized) {
-                minimized.push(index);
-            }
-        }
-
-        let targets: Vec<isize> = if title_hits.is_empty() {
-            match decide_fallback(&minimized) {
-                Fallback::NothingToDo => return Ok(()),
-                Fallback::RestoreOnly(index) => vec![index],
-                Fallback::Ambiguous(count) => {
-                    return Err(format!(
-                        "目标窗口已最小化，但该应用有 {count} 个最小化窗口、且系统没有报告可用的窗口标题，\
-                         无法确定是哪一个。请先手动还原目标窗口再截图。"
-                    ))
-                }
-            }
-        } else {
-            // 标题命中的里面只还原确实最小化的那些
-            title_hits
-                .into_iter()
-                .filter(|index| minimized.contains(index))
-                .collect()
-        };
-
-        for index in targets {
-            let Some(item) = windows.get(index) else {
-                continue;
-            };
-            let element = item.as_concrete_TypeRef() as AXUIElementRef;
-            let _ = AXUIElementSetAttributeValue(
-                element,
-                attr_minimized.as_concrete_TypeRef() as *const c_void,
-                CFBoolean::false_value().as_concrete_TypeRef() as *const c_void,
-            );
-        }
-        Ok(())
-    }
-
-    unsafe fn is_minimized(element: AXUIElementRef, attr_minimized: &CFString) -> bool {
-        let mut value: *const c_void = ptr::null();
-        if AXUIElementCopyAttributeValue(
-            element,
-            attr_minimized.as_concrete_TypeRef() as *const c_void,
-            &mut value,
-        ) != 0
-            || value.is_null()
-        {
-            return false;
-        }
-        CFBoolean::wrap_under_create_rule(value as _) == CFBoolean::true_value()
-    }
-
-    unsafe fn ax_string(element: AXUIElementRef, attribute: &str) -> Option<String> {
-        let name = CFString::new(attribute);
-        let mut raw: *const c_void = ptr::null();
-        if AXUIElementCopyAttributeValue(
-            element,
-            name.as_concrete_TypeRef() as *const c_void,
-            &mut raw,
-        ) != 0
-            || raw.is_null()
-        {
-            return None;
-        }
-        Some(CFString::wrap_under_create_rule(raw as _).to_string())
-    }
-
-    #[cfg(test)]
-    mod tests {
-        use super::{decide_fallback, Fallback};
-
-        #[test]
-        fn single_minimized_window_is_unambiguous() {
-            assert_eq!(decide_fallback(&[2]), Fallback::RestoreOnly(2));
-        }
-
-        #[test]
-        fn nothing_minimized_is_a_no_op() {
-            assert_eq!(decide_fallback(&[]), Fallback::NothingToDo);
-        }
-
-        #[test]
-        fn several_minimized_windows_are_left_to_the_user() {
-            // 原先这种情况会把三个窗口全掀开
-            assert_eq!(decide_fallback(&[0, 1, 4]), Fallback::Ambiguous(3));
-        }
-    }
-}
-#[cfg(target_os = "linux")]
-pub(crate) fn restore_minimized_window(id: u32) -> Result<(), String> {
-    linux::restore_minimized(id)
-}
-
-#[cfg(all(
-    not(target_os = "windows"),
-    not(target_os = "macos"),
-    not(target_os = "linux")
-))]
-pub(crate) fn restore_minimized_window(_id: u32) -> Result<(), String> {
-    Err("目标窗口已最小化，请先还原".into())
 }
 
 fn copy_image_to_clipboard(image: RgbaImage, clear_after: Option<Duration>) -> Result<(), String> {
@@ -831,12 +376,6 @@ fn hide_annotate_window(app: &AppHandle, state: &AppState) {
     }
 }
 
-#[cfg(target_os = "linux")]
-pub(crate) fn capture_scrolling_image(target_id: u32) -> Result<(RgbaImage, String), String> {
-    let image = linux::capture_scrolling_window(target_id)?;
-    Ok((image, "滚动长截图".into()))
-}
-
 pub(crate) async fn ocr_clipboard_into_clipboard() -> Result<String, String> {
     let text = ocr_clipboard().await?;
     let count = text.chars().count();
@@ -864,286 +403,88 @@ pub(crate) fn capture_fullscreen_image(
 ) -> Result<(RgbaImage, String, Option<String>), String> {
     let monitor = primary_monitor()?;
     let name = monitor.name().unwrap_or_else(|_| "全屏".into());
-    #[cfg(target_os = "linux")]
-    if include_cursor {
-        match linux::capture_primary_with_cursor() {
-            Ok(image) => return Ok((image, name, None)),
-            Err(error) => {
-                let note = cursor_degrade_note(&error);
-                let image = monitor.capture_image().map_err(|error| {
-                    format!("全屏截取失败：{error} / fullscreen capture failed: {error}")
-                })?;
-                return Ok((image, name, Some(note)));
-            }
-        }
-    }
-    let _ = include_cursor;
-    #[allow(unused_mut)]
-    let mut image = monitor
-        .capture_image()
-        .map_err(|error| format!("全屏截取失败：{error} / fullscreen capture failed: {error}"))?;
-    #[allow(unused_mut)]
-    let mut note = None;
-    #[cfg(target_os = "macos")]
-    if include_cursor {
-        note = match (monitor.x(), monitor.y(), monitor.width()) {
-            (Ok(mx), Ok(my), Ok(mw)) => mac_cursor::overlay_into(&mut image, (mx, my), mw)
-                .err()
-                .map(|error| cursor_degrade_note(&error)),
-            _ => Some(cursor_degrade_note("无法读取显示器几何，已回退无光标截图")),
-        };
-    }
-    #[cfg(target_os = "windows")]
-    if include_cursor {
-        note = match (monitor.x(), monitor.y(), monitor.width()) {
-            (Ok(mx), Ok(my), Ok(mw)) => windows_cursor::overlay_into(&mut image, (mx, my), mw)
-                .err()
-                .map(|error| cursor_degrade_note(&error)),
-            _ => Some(cursor_degrade_note("无法读取显示器几何，已回退无光标截图")),
-        };
-    }
+    let area = match (monitor.x(), monitor.y(), monitor.width(), monitor.height()) {
+        (Ok(x), Ok(y), Ok(width), Ok(height)) => Some(Area {
+            x,
+            y,
+            width,
+            height,
+        }),
+        _ => None,
+    };
+    let (image, note) = capture_area(include_cursor, area, "显示器", || {
+        monitor
+            .capture_image()
+            .map_err(|error| format!("全屏截取失败：{error} / fullscreen capture failed: {error}"))
+    })?;
     Ok((image, name, note))
 }
 
-#[cfg(target_os = "windows")]
-mod windows_cursor {
+/// 按 alpha 把光标叠到截图上，落在画布外的像素直接丢弃。
+///
+/// Windows 与 macOS 都是「截完再合成光标」，合成这一步与平台无关，放在这里共用；
+/// Linux 由 ffmpeg 直接带光标抓，用不上。
+#[cfg(any(target_os = "windows", target_os = "macos"))]
+pub(crate) fn blend_cursor(canvas: &mut RgbaImage, cursor: &RgbaImage, left: i64, top: i64) {
+    for (x, y, pixel) in cursor.enumerate_pixels() {
+        let alpha = u32::from(pixel[3]);
+        if alpha == 0 {
+            continue;
+        }
+        let target_x = left + i64::from(x);
+        let target_y = top + i64::from(y);
+        if target_x < 0
+            || target_y < 0
+            || target_x >= i64::from(canvas.width())
+            || target_y >= i64::from(canvas.height())
+        {
+            continue;
+        }
+        let base = *canvas.get_pixel(target_x as u32, target_y as u32);
+        let mix = |over: u8, under: u8| -> u8 {
+            ((u32::from(over) * alpha + u32::from(under) * (255 - alpha)) / 255) as u8
+        };
+        canvas.put_pixel(
+            target_x as u32,
+            target_y as u32,
+            image::Rgba([
+                mix(pixel[0], base[0]),
+                mix(pixel[1], base[1]),
+                mix(pixel[2], base[2]),
+                base[3].max(pixel[3]),
+            ]),
+        );
+    }
+}
+
+#[cfg(all(test, any(target_os = "windows", target_os = "macos")))]
+mod blend_tests {
+    use super::blend_cursor;
     use image::{Rgba, RgbaImage};
-    use std::{
-        ffi::c_void,
-        mem::{size_of, zeroed},
-        ptr::null_mut,
-    };
-    use windows_sys::Win32::{
-        Graphics::Gdi::{
-            CreateCompatibleDC, CreateDIBSection, DeleteDC, DeleteObject, GetObjectW, SelectObject,
-            BITMAP, BITMAPINFO, BITMAPINFOHEADER, BI_RGB, DIB_RGB_COLORS,
-        },
-        UI::WindowsAndMessaging::{
-            DrawIconEx, GetCursorInfo, GetIconInfo, CURSORINFO, CURSOR_SHOWING, DI_NORMAL, ICONINFO,
-        },
-    };
 
-    /// 取当前光标的像素、屏幕位置与热点。热点是光标图内对应「尖端」的那个点，
-    /// 贴图时要减掉它，否则光标会整体偏右下。
-    fn cursor_bitmap() -> Option<(RgbaImage, i32, i32, i32, i32)> {
-        unsafe {
-            let mut info: CURSORINFO = zeroed();
-            info.cbSize = size_of::<CURSORINFO>() as u32;
-            if GetCursorInfo(&mut info) == 0
-                || info.flags != CURSOR_SHOWING
-                || info.hCursor.is_null()
-            {
-                return None;
-            }
-            let mut icon: ICONINFO = zeroed();
-            if GetIconInfo(info.hCursor, &mut icon) == 0 {
-                return None;
-            }
-            // 单色光标的掩码位图是上下两段（AND + XOR），高度要折半才是真实尺寸。
-            let mut bitmap: BITMAP = zeroed();
-            let (source, halve) = if icon.hbmColor.is_null() {
-                (icon.hbmMask, true)
-            } else {
-                (icon.hbmColor, false)
-            };
-            let measured = GetObjectW(
-                source,
-                size_of::<BITMAP>() as i32,
-                (&mut bitmap as *mut BITMAP).cast(),
-            );
-            if !icon.hbmMask.is_null() {
-                DeleteObject(icon.hbmMask);
-            }
-            if !icon.hbmColor.is_null() {
-                DeleteObject(icon.hbmColor);
-            }
-            if measured == 0 || bitmap.bmWidth <= 0 || bitmap.bmHeight <= 0 {
-                return None;
-            }
-            let width = bitmap.bmWidth;
-            let height = if halve {
-                bitmap.bmHeight / 2
-            } else {
-                bitmap.bmHeight
-            };
-            if height <= 0 {
-                return None;
-            }
-
-            let dc = CreateCompatibleDC(null_mut());
-            if dc.is_null() {
-                return None;
-            }
-            let mut bitmap_info: BITMAPINFO = zeroed();
-            bitmap_info.bmiHeader.biSize = size_of::<BITMAPINFOHEADER>() as u32;
-            bitmap_info.bmiHeader.biWidth = width;
-            bitmap_info.bmiHeader.biHeight = -height;
-            bitmap_info.bmiHeader.biPlanes = 1;
-            bitmap_info.bmiHeader.biBitCount = 32;
-            bitmap_info.bmiHeader.biCompression = BI_RGB;
-            let mut bits: *mut c_void = null_mut();
-            let dib = CreateDIBSection(dc, &bitmap_info, DIB_RGB_COLORS, &mut bits, null_mut(), 0);
-            if dib.is_null() || bits.is_null() {
-                DeleteDC(dc);
-                return None;
-            }
-            let old = SelectObject(dc, dib);
-            let drawn = DrawIconEx(
-                dc,
-                0,
-                0,
-                info.hCursor,
-                width,
-                height,
-                0,
-                null_mut(),
-                DI_NORMAL,
-            );
-            let raw = std::slice::from_raw_parts(bits as *const u8, (width * height * 4) as usize);
-            // 现代 Windows 光标是 32 位带 alpha 的。老式单色光标画出来 alpha 全 0，
-            // 这时宁可不贴，也好过糊一个黑块在截图上。
-            let pixels = raw.as_chunks::<4>().0;
-            let usable = drawn != 0 && pixels.iter().any(|pixel| pixel[3] != 0);
-            let mut image = RgbaImage::new(width as u32, height as u32);
-            if usable {
-                for (index, pixel) in pixels.iter().enumerate() {
-                    let x = (index as i32) % width;
-                    let y = (index as i32) / width;
-                    image.put_pixel(
-                        x as u32,
-                        y as u32,
-                        Rgba([pixel[2], pixel[1], pixel[0], pixel[3]]),
-                    );
-                }
-            }
-            SelectObject(dc, old);
-            DeleteObject(dib);
-            DeleteDC(dc);
-            if !usable {
-                return None;
-            }
-            Some((
-                image,
-                info.ptScreenPos.x,
-                info.ptScreenPos.y,
-                icon.xHotspot as i32,
-                icon.yHotspot as i32,
-            ))
-        }
+    #[test]
+    fn respects_alpha_and_clips_out_of_bounds() {
+        let mut canvas = RgbaImage::from_pixel(4, 4, Rgba([0, 0, 0, 255]));
+        let overlay = RgbaImage::from_pixel(2, 2, Rgba([255, 255, 255, 255]));
+        blend_cursor(&mut canvas, &overlay, 3, 3); // 只有左上角那个像素落在画布内
+        assert_eq!(canvas.get_pixel(3, 3).0, [255, 255, 255, 255]);
+        assert_eq!(canvas.get_pixel(0, 0).0, [0, 0, 0, 255]);
     }
 
-    /// 截图像素与逻辑点的比例，以及光标贴图的左上角像素坐标。
-    /// 与 mac_cursor 同一套算法：先按缩放把「光标相对窗口的位移」换算成像素，
-    /// 再减掉热点——热点是光标图内对应尖端的那个点，不减会整体偏右下。
-    fn overlay_origin_px(
-        cursor_screen: (i32, i32),
-        hot_spot: (i32, i32),
-        window_origin: (i32, i32),
-        scale: f64,
-    ) -> (i32, i32) {
-        let left =
-            (f64::from(cursor_screen.0 - window_origin.0) * scale).round() as i32 - hot_spot.0;
-        let top =
-            (f64::from(cursor_screen.1 - window_origin.1) * scale).round() as i32 - hot_spot.1;
-        (left, top)
+    #[test]
+    fn fully_transparent_cursor_changes_nothing() {
+        let mut canvas = RgbaImage::from_pixel(2, 2, Rgba([10, 20, 30, 255]));
+        let overlay = RgbaImage::from_pixel(2, 2, Rgba([255, 255, 255, 0]));
+        blend_cursor(&mut canvas, &overlay, 0, 0);
+        assert_eq!(canvas.get_pixel(0, 0).0, [10, 20, 30, 255]);
     }
 
-    /// 把当前光标合成进刚截下来的位图。
-    ///
-    /// `window_origin` / `logical_width` 是 xcap 报的窗口左上角与逻辑宽度，
-    /// 用来换算截图像素与点的比例。失败一律返回 Err，由调用方拼成降级说明，
-    /// 避免用户开了「包含光标」却拿到一张没光标的图而毫不知情。
-    pub fn overlay_into(
-        image: &mut RgbaImage,
-        window_origin: (i32, i32),
-        logical_width: u32,
-    ) -> Result<(), String> {
-        if logical_width == 0 {
-            return Err("窗口逻辑宽度为 0，无法换算缩放".into());
-        }
-        let scale = f64::from(image.width()) / f64::from(logical_width);
-        if !(0.5..=4.0).contains(&scale) {
-            return Err(format!("截图与窗口的缩放比例异常（{scale:.2}）"));
-        }
-        let (cursor, screen_x, screen_y, hot_x, hot_y) =
-            cursor_bitmap().ok_or("取不到当前系统光标位图")?;
-        let (left, top) =
-            overlay_origin_px((screen_x, screen_y), (hot_x, hot_y), window_origin, scale);
-        blend(image, &cursor, left, top);
-        Ok(())
-    }
-
-    /// 按 alpha 把光标叠上去，落在画布外的像素直接丢弃。
-    fn blend(image: &mut RgbaImage, cursor: &RgbaImage, left: i32, top: i32) {
-        for (x, y, pixel) in cursor.enumerate_pixels() {
-            let alpha = pixel[3] as u32;
-            if alpha == 0 {
-                continue;
-            }
-            let target_x = left + x as i32;
-            let target_y = top + y as i32;
-            if target_x < 0
-                || target_y < 0
-                || target_x >= image.width() as i32
-                || target_y >= image.height() as i32
-            {
-                continue;
-            }
-            let base = *image.get_pixel(target_x as u32, target_y as u32);
-            let mix = |over: u8, under: u8| -> u8 {
-                ((over as u32 * alpha + under as u32 * (255 - alpha)) / 255) as u8
-            };
-            image.put_pixel(
-                target_x as u32,
-                target_y as u32,
-                Rgba([
-                    mix(pixel[0], base[0]),
-                    mix(pixel[1], base[1]),
-                    mix(pixel[2], base[2]),
-                    base[3].max(pixel[3]),
-                ]),
-            );
-        }
-    }
-
-    #[cfg(test)]
-    mod tests {
-        use super::*;
-        use image::Rgba;
-
-        #[test]
-        fn origin_subtracts_hot_spot_and_window_offset() {
-            // 光标在 (120,140)，窗口左上角 (100,100)，热点 (4,4)，1x 屏
-            assert_eq!(
-                overlay_origin_px((120, 140), (4, 4), (100, 100), 1.0),
-                (16, 36)
-            );
-        }
-
-        #[test]
-        fn high_dpi_scale_doubles_the_offset() {
-            // 同样的点位，200% 缩放下像素偏移要翻倍；热点是图内坐标，不参与缩放
-            assert_eq!(
-                overlay_origin_px((120, 140), (4, 4), (100, 100), 2.0),
-                (36, 76)
-            );
-        }
-
-        #[test]
-        fn blend_respects_alpha_and_clips_out_of_bounds() {
-            let mut canvas = RgbaImage::from_pixel(4, 4, Rgba([0, 0, 0, 255]));
-            let overlay = RgbaImage::from_pixel(2, 2, Rgba([255, 255, 255, 255]));
-            blend(&mut canvas, &overlay, 3, 3); // 只有左上角那个像素落在画布内
-            assert_eq!(canvas.get_pixel(3, 3).0, [255, 255, 255, 255]);
-            assert_eq!(canvas.get_pixel(0, 0).0, [0, 0, 0, 255]);
-        }
-
-        #[test]
-        fn fully_transparent_cursor_changes_nothing() {
-            let mut canvas = RgbaImage::from_pixel(2, 2, Rgba([10, 20, 30, 255]));
-            let overlay = RgbaImage::from_pixel(2, 2, Rgba([255, 255, 255, 0]));
-            blend(&mut canvas, &overlay, 0, 0);
-            assert_eq!(canvas.get_pixel(0, 0).0, [10, 20, 30, 255]);
-        }
+    #[test]
+    fn half_alpha_blends_halfway() {
+        let mut canvas = RgbaImage::from_pixel(1, 1, Rgba([0, 0, 0, 255]));
+        let overlay = RgbaImage::from_pixel(1, 1, Rgba([255, 255, 255, 128]));
+        blend_cursor(&mut canvas, &overlay, 0, 0);
+        let value = canvas.get_pixel(0, 0).0[0];
+        assert!((127..=129).contains(&value), "got {value}");
     }
 }

@@ -1,16 +1,9 @@
-use super::AppState;
+use super::{os, AppState};
 use regex::Regex;
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
 use std::{fs, path::PathBuf, time::Duration};
 use tauri::{AppHandle, Emitter, Runtime, State};
-
-#[cfg(target_os = "linux")]
-use super::linux;
-#[cfg(target_os = "macos")]
-use super::platform::mac_autostart;
-#[cfg(target_os = "windows")]
-use super::platform::windows_autostart;
 
 const KEYRING_SERVICE: &str = "com.appsnapshot.prompt-pet-shortcut";
 const KEYRING_USER: &str = "polish-api-key";
@@ -173,48 +166,19 @@ impl Default for Settings {
     }
 }
 
-/// 平台支持的全局快捷键动作。滚动长截图仅 Linux/X11 实现，
-/// Windows / macOS 不展示、不注册、不迁移。
+/// 本平台支持的全局快捷键动作（由各平台自己声明，如滚动长截图只有 Linux 有），全部未绑定。
 fn default_shortcut_bindings() -> Vec<ShortcutBinding> {
-    // 非 Linux 上滚动长截图的那条 insert 被 cfg 掉了，mut 就用不上
-    #[cfg_attr(not(target_os = "linux"), allow(unused_mut))]
-    let mut bindings = vec![
-        ShortcutBinding {
-            action: "snapshot".into(),
+    os::SHORTCUT_ACTIONS
+        .iter()
+        .map(|action| ShortcutBinding {
+            action: action.to_string(),
             accelerator: None,
-        },
-        ShortcutBinding {
-            action: "fullscreen".into(),
-            accelerator: None,
-        },
-        ShortcutBinding {
-            action: "record".into(),
-            accelerator: None,
-        },
-        ShortcutBinding {
-            action: "polish".into(),
-            accelerator: None,
-        },
-        ShortcutBinding {
-            action: "ocr".into(),
-            accelerator: None,
-        },
-    ];
-    #[cfg(target_os = "linux")]
-    bindings.insert(
-        2,
-        ShortcutBinding {
-            action: "scrolling".into(),
-            accelerator: None,
-        },
-    );
-    bindings
+        })
+        .collect()
 }
 
 fn is_supported_action(action: &str) -> bool {
-    default_shortcut_bindings()
-        .iter()
-        .any(|binding| binding.action == action)
+    os::SHORTCUT_ACTIONS.contains(&action)
 }
 
 /// 偏好设置的增量补丁：None 表示未发送，可空字段用 Value 区分"没传"和"显式置空"
@@ -507,20 +471,8 @@ pub(crate) fn save_preferences(
     }
     if let Some(value) = prefs.launch_on_boot {
         settings.launch_on_boot = value;
-        // 只在显式改动时写系统启动项，默认不装。
-        #[cfg(target_os = "linux")]
-        {
-            linux::apply_launch_on_boot(value)?;
-        }
-        #[cfg(target_os = "macos")]
-        {
-            // 同上：勾选才写 LaunchAgent，取消即删除。
-            mac_autostart::apply_launch_on_boot(value)?;
-        }
-        #[cfg(target_os = "windows")]
-        {
-            windows_autostart::apply(value)?;
-        }
+        // 只在显式改动时写系统启动项，默认不装；取消即删除。
+        os::apply_autostart(value)?;
     }
     if let Some(value) = prefs.include_cursor {
         settings.include_cursor = value;
