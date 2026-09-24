@@ -157,35 +157,8 @@ pub(crate) fn open_snapshots_dir(state: State<'_, AppState>) -> Result<String, S
     let path = history_dir(&state);
     fs::create_dir_all(&path).map_err(|error| format!("无法创建快照目录：{error}"))?;
 
-    open_in_file_manager(&path)?;
+    os::open_folder(&path)?;
     Ok(path.to_string_lossy().to_string())
-}
-
-/// 在系统文件管理器里打开一个目录。快照目录与录制目录共用。
-pub(crate) fn open_in_file_manager(path: &Path) -> Result<(), String> {
-    #[cfg(target_os = "windows")]
-    {
-        // explorer.exe 即使成功也常返回非 0，所以只看能不能启动，不看退出码
-        Command::new("explorer")
-            .arg(path)
-            .spawn()
-            .map_err(|error| format!("无法打开文件管理器：{error}"))?;
-    }
-    #[cfg(target_os = "macos")]
-    {
-        Command::new("open")
-            .arg(path)
-            .spawn()
-            .map_err(|error| format!("无法打开访达：{error}"))?;
-    }
-    #[cfg(all(unix, not(target_os = "macos")))]
-    {
-        Command::new("xdg-open")
-            .arg(path)
-            .spawn()
-            .map_err(|error| format!("无法打开文件管理器：{error}"))?;
-    }
-    Ok(())
 }
 
 #[tauri::command]

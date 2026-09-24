@@ -244,6 +244,7 @@ fn is_pet_gif(path: &str) -> bool {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use std::io::Write;
 
     fn make_zip(name: &str, entries: &[&str]) -> PathBuf {
         let path = std::env::temp_dir().join(format!("snapshot-pet-test-{name}.zip"));

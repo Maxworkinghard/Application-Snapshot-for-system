@@ -90,7 +90,7 @@ fn serve(app: &AppHandle, path: &str) -> Result<Media, String> {
                 .parse::<u32>()
                 .map_err(|_| "图标尺寸无效".to_string())?
                 .clamp(16, 256);
-            let bytes = tracker::app_icon_png(pid, size).ok_or("这个进程没有可用的图标")?;
+            let bytes = os::app_icon_png(pid, size).ok_or("这个进程没有可用的图标")?;
             Ok(Media {
                 mime: "image/png",
                 immutable: false,

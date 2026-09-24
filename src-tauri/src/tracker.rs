@@ -172,40 +172,6 @@ pub(crate) fn start_tracker(app: AppHandle, tracker: Arc<Mutex<TrackerState>>) {
     });
 }
 
-#[cfg(any(target_os = "windows", target_os = "linux"))]
-fn rgba_to_png(image: RgbaImage) -> Option<Vec<u8>> {
-    let mut bytes = Vec::new();
-    image
-        .write_to(&mut Cursor::new(&mut bytes), ImageFormat::Png)
-        .ok()?;
-    Some(bytes)
-}
-
-/// 进程图标，按页面实际显示的像素边长取（媒体协议用）。
-#[cfg(target_os = "windows")]
-pub(crate) fn app_icon_png(pid: u32, size: u32) -> Option<Vec<u8>> {
-    platform::windows_icon::icon_for_process(pid, size).and_then(rgba_to_png)
-}
-
-#[cfg(target_os = "macos")]
-pub(crate) fn app_icon_png(pid: u32, size: u32) -> Option<Vec<u8>> {
-    platform::mac_icon::png_for_pid(pid, size)
-}
-
-#[cfg(target_os = "linux")]
-pub(crate) fn app_icon_png(pid: u32, size: u32) -> Option<Vec<u8>> {
-    linux::icon_for_process(pid, size).and_then(rgba_to_png)
-}
-
-#[cfg(all(
-    not(target_os = "windows"),
-    not(target_os = "macos"),
-    not(target_os = "linux")
-))]
-pub(crate) fn app_icon_png(_pid: u32, _size: u32) -> Option<Vec<u8>> {
-    None
-}
-
 #[cfg(test)]
 mod tests {
     use super::*;
