@@ -2,7 +2,6 @@ mod actions;
 mod capabilities;
 mod capture;
 mod media;
-mod ocr;
 mod pet;
 mod polish;
 mod recording;
@@ -12,7 +11,7 @@ mod snapshots;
 mod tracker;
 
 // 三端各一套原生实现（os/windows、os/macos、os/linux），对外提供同名的一组函数：
-// 录制、带光标截图、还原最小化、开机自启、取图标、打开文件夹、本机能力、OCR、
+// 录制、带光标截图、还原最小化、开机自启、取图标、打开文件夹、本机能力、
 // 支持的快捷键动作。共享代码只写 `os::xxx`，不再到处 #[cfg]；
 // 某一端少实现了哪个，那一端的编译直接报错，而不是运行时才发现。
 #[cfg(target_os = "windows")]
@@ -282,9 +281,6 @@ pub fn run() {
             recording::open_recordings_dir,
             snapshots::delete_snapshot,
             snapshots::clear_snapshots,
-            capture::ocr_capability,
-            capture::ocr_snapshot,
-            capture::ocr_clipboard,
             capabilities::platform_capabilities,
             actions::show_quick_menu,
             actions::set_quick_menu_expanded,
@@ -337,20 +333,10 @@ mod pet_asset_tests {
         #[cfg(target_os = "linux")]
         assert_eq!(
             actions,
-            vec![
-                "snapshot",
-                "record",
-                "polish",
-                "scrolling",
-                "fullscreen",
-                "ocr"
-            ]
+            vec!["snapshot", "record", "polish", "scrolling", "fullscreen"]
         );
         #[cfg(not(target_os = "linux"))]
-        assert_eq!(
-            actions,
-            vec!["snapshot", "record", "polish", "fullscreen", "ocr"]
-        );
+        assert_eq!(actions, vec!["snapshot", "record", "polish", "fullscreen"]);
 
         // 已绑定的键不能在迁移中丢失
         let snapshot = settings
@@ -360,12 +346,12 @@ mod pet_asset_tests {
             .unwrap();
         assert_eq!(snapshot.accelerator.as_deref(), Some("Alt+Shift+2"));
         // 新补的那条应当是未绑定状态
-        let ocr = settings
+        let fullscreen = settings
             .shortcuts
             .iter()
-            .find(|item| item.action == "ocr")
+            .find(|item| item.action == "fullscreen")
             .unwrap();
-        assert!(ocr.accelerator.is_none());
+        assert!(fullscreen.accelerator.is_none());
         // 老版录制与快照共用 saveDir，新版应将它迁移到独立录制目录。
         assert_eq!(settings.recording_dir, "~/LegacyCaptures");
 

@@ -1,13 +1,11 @@
 import { useEffect, useMemo, useState } from "react";
 import {
   Camera,
-  ClipboardCopy,
   Clock,
   FolderOpen,
   HardDrive,
   Maximize2,
   RefreshCw,
-  ScanText,
   Search,
   Trash2,
   X,
@@ -16,7 +14,6 @@ import {
   clearSnapshots,
   deleteSnapshot,
   listSnapshots,
-  ocrSnapshot,
   openSnapshotsDir,
 } from "../lib/backend";
 import { formatBytes, formatWhen } from "../lib/format";
@@ -29,8 +26,6 @@ export function HistoryPage({ notify }: { notify: (message: string) => void }) {
   const [loading, setLoading] = useState(true);
   const [query, setQuery] = useState("");
   const [preview, setPreview] = useState<SnapshotRecord | null>(null);
-  const [ocrText, setOcrText] = useState("");
-  const [ocrBusy, setOcrBusy] = useState<string | null>(null);
   const [confirmClear, setConfirmClear] = useState(false);
   const [clearing, setClearing] = useState(false);
 
@@ -96,18 +91,6 @@ export function HistoryPage({ notify }: { notify: (message: string) => void }) {
     }
   }
 
-  async function extractText(id: string) {
-    setOcrBusy(id);
-    setOcrText("");
-    try {
-      setOcrText(await ocrSnapshot(id));
-    } catch (error) {
-      notify(error instanceof Error ? error.message : String(error));
-    } finally {
-      setOcrBusy(null);
-    }
-  }
-
   return (
     <div className="snapshot-history-container">
       <div className="history-header-bar">
@@ -169,7 +152,7 @@ export function HistoryPage({ notify }: { notify: (message: string) => void }) {
               <button
                 type="button"
                 className="card-preview-stage"
-                onClick={() => { setPreview(item); setOcrText(""); }}
+                onClick={() => setPreview(item)}
                 title="放大预览"
               >
                 {/* 滚到附近才加载、解码不占主线程：200 张历史也只读眼前那几张 */}
@@ -201,20 +184,11 @@ export function HistoryPage({ notify }: { notify: (message: string) => void }) {
                   {/* 同理，缩略图隐藏后需要另一个放大入口 */}
                   <button
                     className="card-action-btn preview compact-only"
-                    onClick={() => { setPreview(item); setOcrText(""); }}
+                    onClick={() => setPreview(item)}
                     title="放大预览"
                   >
                     <Maximize2 size={12} />
                     <span>预览</span>
-                  </button>
-                  <button
-                    className="card-action-btn copy"
-                    onClick={() => void extractText(item.id)}
-                    disabled={ocrBusy !== null}
-                    title="用系统 OCR 提取这张图里的文字"
-                  >
-                    <ScanText size={12} />
-                    <span>{ocrBusy === item.id ? "识别中…" : "提取文字"}</span>
                   </button>
                   <button className="card-action-btn delete" onClick={() => void removeOne(item.id)} title="删除此快照">
                     <Trash2 size={12} />
@@ -232,28 +206,6 @@ export function HistoryPage({ notify }: { notify: (message: string) => void }) {
             {query ? "没有符合当前关键词的记录，试试换个应用名。" : "用快捷键或便携坞截一张窗口快照，这里就会出现记录。"}
           </p>
           {query && <button className="empty-reset-btn" onClick={() => setQuery("")}>清空搜索</button>}
-        </div>
-      )}
-
-      {ocrText && (
-        <div className="prompt-rule-editor-drawer">
-          <div className="pane-header-strip">
-            <div className="pane-title-group">
-              <span className="pane-main-title">识别结果</span>
-              <span className="pane-char-count tabular-nums">{ocrText.length} 字符</span>
-            </div>
-            <div className="pane-result-actions">
-              <button className="result-tool-btn" onClick={() => void navigator.clipboard.writeText(ocrText)}>
-                <ClipboardCopy size={12} />
-                <span>复制</span>
-              </button>
-              <button className="result-tool-btn" onClick={() => setOcrText("")}>
-                <X size={12} />
-                <span>关闭</span>
-              </button>
-            </div>
-          </div>
-          <pre className="polish-output">{ocrText}</pre>
         </div>
       )}
 

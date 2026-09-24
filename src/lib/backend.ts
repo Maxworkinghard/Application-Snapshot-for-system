@@ -2,7 +2,6 @@ import { invoke } from "@tauri-apps/api/core";
 import { listen } from "@tauri-apps/api/event";
 import type {
   CapturableWindow,
-  OcrCapability,
   PlatformCapabilities,
   PreviousApp,
   RecordingStatus,
@@ -90,11 +89,5 @@ export const openRecordingsDir = () => invoke<string>("open_recordings_dir");
 export const deleteSnapshot = (id: string) => invoke<SnapshotRecord[]>("delete_snapshot", { id });
 
 export const clearSnapshots = () => invoke<SnapshotRecord[]>("clear_snapshots");
-
-export const ocrCapability = () => invoke<OcrCapability>("ocr_capability");
-
-export const ocrSnapshot = (id: string) => invoke<string>("ocr_snapshot", { id });
-
-export const ocrClipboard = () => invoke<string>("ocr_clipboard");
 
 export const platformCapabilities = () => invoke<PlatformCapabilities>("platform_capabilities");

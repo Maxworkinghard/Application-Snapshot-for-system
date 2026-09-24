@@ -6,7 +6,6 @@ import {
   MonitorSmartphone,
   RotateCcw,
   Save,
-  ScanText,
   TextCursorInput,
   X,
 } from "lucide-react";
@@ -24,7 +23,6 @@ const actionLabels: Record<ShortcutAction, { name: string; tag?: string }> = {
   scrolling: { name: "滚动长截图", tag: "窗口连拍" },
   record: { name: "窗口录制", tag: "MP4" },
   polish: { name: "润色 Prompt", tag: "剪贴板" },
-  ocr: { name: "提取文字 (OCR)", tag: "离线识别" },
 };
 
 export function ShortcutsPage({
@@ -142,7 +140,6 @@ export function ShortcutsPage({
               : binding.action === "fullscreen" ? <Camera size={15} />
               : binding.action === "scrolling" ? <Layers size={15} />
               : binding.action === "record" ? <span className="record-symbol" />
-              : binding.action === "ocr" ? <ScanText size={15} />
               : <TextCursorInput size={15} />}
           </span>
           <span className="action-name">{actionLabels[binding.action].name}</span>

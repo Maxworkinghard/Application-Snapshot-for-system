@@ -4,7 +4,7 @@
 
 [简体中文](README.zh-CN.md) · **English**
 
-Captures the current application window to the clipboard, keeps a local snapshot history, polishes prompts through an OpenAI-compatible endpoint, extracts text with the system OCR engine, and puts an animated companion on the desktop.
+Captures the current application window to the clipboard, keeps a local snapshot history, polishes prompts through an OpenAI-compatible endpoint, and puts an animated companion on the desktop.
 
 ## Repository layout
 
@@ -24,26 +24,24 @@ The cost is not only the code. Three implementations mean three places a bug can
 
 Each platform has its own native implementation behind a shared set of commands. **Capabilities and behaviour differ per platform** — the same button may go through entirely different system APIs, with different edge cases. See the table below, and the "local capabilities" panel in Settings, which each adapter reports at runtime rather than being hard-coded copy.
 
-Only the parts that do not depend on system capabilities are shared: settings, snapshot history, prompt polishing, the UI. Anything the OS itself provides where the platforms genuinely differ — recording, OCR, window control — is written separately for each. Picking a lowest-common-denominator implementation for the sake of uniformity produced something that was not good enough anywhere.
+Only the parts that do not depend on system capabilities are shared: settings, snapshot history, prompt polishing, the UI. Anything the OS itself provides where the platforms genuinely differ — recording, window control — is written separately for each. Picking a lowest-common-denominator implementation for the sake of uniformity produced something that was not good enough anywhere.
 
 | | Windows | macOS | Linux |
 |---|---|---|---|
 | Window capture | xcap | xcap | xcap |
 | Window recording | Windows.Graphics.Capture + Media Foundation | Native ScreenCaptureKit window stream + AVAssetWriter | portal ScreenCast + PipeWire → ffmpeg (Wayland); ffmpeg `x11grab` (X11) |
-| Text recognition | `Windows.Media.Ocr` | Vision via a `snapshot-ocr` helper | `tesseract` |
 | Snapshot history, companion, prompt polishing | yes | yes | yes |
 
-**Device verification**: Windows is the primary verified platform (adapters, tray, shortcuts, capture/recording on real hardware). macOS and Linux capabilities are mainly validated via code paths, compile checks, and adapters; the macOS `snapshot-ocr` helper and some window adapters (capture, icons, Accessibility unminimize) have seen device testing. macOS recording now uses a native ScreenCaptureKit window stream and writes H.264 MP4 through AVAssetWriter. Linux `cargo check` is restored after fixing compile blockers; X11 paths (xcap / x11grab / tesseract / xdotool / XDG autostart) follow the adapter implementation. Wayland portal ScreenCast, tray click behaviour, and packaged installers may still need local verification.
+**Device verification**: Windows is the primary verified platform (adapters, tray, shortcuts, capture/recording on real hardware). macOS and Linux capabilities are mainly validated via code paths, compile checks, and adapters; some macOS window adapters (capture, icons, Accessibility unminimize) have seen device testing. macOS recording now uses a native ScreenCaptureKit window stream and writes H.264 MP4 through AVAssetWriter. Linux `cargo check` is restored after fixing compile blockers; X11 paths (xcap / x11grab / xdotool / XDG autostart) follow the adapter implementation. Wayland portal ScreenCast, tray click behaviour, and packaged installers may still need local verification.
 
 Items that cannot be verified on the development machine (macOS) are tracked in [docs/pending-device-verification.md](docs/pending-device-verification.md), each with the platform that must check it.
 
 ## Requirements
 
-- **Recording**: Windows uses the built-in Windows.Graphics.Capture + Media Foundation and does not need ffmpeg; macOS uses a bundled ScreenCaptureKit sidecar and does not need external ffmpeg; Linux needs `ffmpeg` on `PATH`. On Linux, still captures that include the cursor also prefer ffmpeg `x11grab` (falling back without the cursor). OCR and polishing do not need ffmpeg.
+- **Recording**: Windows uses the built-in Windows.Graphics.Capture + Media Foundation and does not need ffmpeg; macOS uses a bundled ScreenCaptureKit sidecar and does not need external ffmpeg; Linux needs `ffmpeg` on `PATH`. On Linux, still captures that include the cursor also prefer ffmpeg `x11grab` (falling back without the cursor). Polishing does not need ffmpeg.
 - **Recording a minimized window**: once minimized, the system stops compositing the window and there is nothing to capture. On Windows it is restored first (same as capture); if it cannot be restored the call fails with a clear message instead of leaving an unplayable empty file.
 - **macOS permissions**: window capture and recording need Screen Recording permission; restoring a minimized window before capturing it needs Accessibility permission.
-- **Linux OCR** needs `tesseract` plus at least one language pack (`apt install tesseract-ocr tesseract-ocr-chi-sim`).
-- **macOS sidecars**: Vision OCR is provided by [src-tauri/snapshot-ocr/](src-tauri/snapshot-ocr/); ScreenCaptureKit recording is provided by [src-tauri/snapshot-recorder/](src-tauri/snapshot-recorder/). Both `npm run tauri dev` and `npm run tauri build` prepare them automatically, and packaged builds place them next to the main executable in `Contents/MacOS/`.
+- **macOS sidecar**: ScreenCaptureKit recording is provided by [src-tauri/snapshot-recorder/](src-tauri/snapshot-recorder/). Both `npm run tauri dev` and `npm run tauri build` prepare it automatically, and packaged builds place it next to the main executable in `Contents/MacOS/`.
 - **Prompt polishing** needs an OpenAI-compatible endpoint, configured under Settings. The API key goes to the OS keychain, never to a config file.
 
 ## About the names
@@ -93,7 +91,6 @@ bash scripts/linux/build.sh  # release binary + deb/AppImage when bundlers succe
 | Optional tool | Feature |
 |---|---|
 | `ffmpeg` | Window recording (X11: `x11grab`; Wayland portal: `rawvideo` encode); cursor stills (falls back without cursor) |
-| `tesseract` + language packs | OCR |
 | `xdotool` | Restore a minimized target window before capture; scrolling capture paging |
 | StatusNotifierHost | System tray (KDE native; GNOME needs an AppIndicator extension) |
 
@@ -107,9 +104,9 @@ Every push and pull request runs [`.github/workflows/check.yml`](.github/workflo
 
 ## Shortcuts
 
-Nothing is bound by default. Snapshot, fullscreen capture, scrolling capture (Linux/X11 only for now), recording, prompt polishing and text extraction can each be given a global shortcut on the Shortcuts page; they fire while the window is minimised.
+Nothing is bound by default. Snapshot, fullscreen capture, scrolling capture (Linux/X11 only for now), recording and prompt polishing can each be given a global shortcut on the Shortcuts page; they fire while the window is minimised.
 
-Post-capture behaviour depends on “after capture” and “auto-save local”: copy to clipboard by default, or open the annotate window / save-as dialog. Local history is written only when auto-save is on. Clipboard auto-clear delay is configurable (about 60 seconds by default; skipped if something else was copied meanwhile). Recordings are written as MP4 to the downloads folder by default; their independent destination can be opened or changed from Shortcuts → Clipboard & saving. Extracted text replaces the clipboard contents.
+Post-capture behaviour depends on “after capture” and “auto-save local”: copy to clipboard by default, or open the annotate window / save-as dialog. Local history is written only when auto-save is on. Clipboard auto-clear delay is configurable (about 60 seconds by default; skipped if something else was copied meanwhile). Recordings are written as MP4 to the downloads folder by default; their independent destination can be opened or changed from Shortcuts → Clipboard & saving.
 
 ## Companion assets
 

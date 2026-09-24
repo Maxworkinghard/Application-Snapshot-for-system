@@ -40,7 +40,6 @@ const capabilities: PlatformCapabilities = {
   recording: { available: true, detail: "" },
   recordingSystemAudio: { available: true, detail: "" },
   recordingMicrophone: { available: true, detail: "" },
-  ocr: { available: true, detail: "" },
   autostart: { available: true, detail: "" },
   includeCursor: { available: true, detail: "" },
   trayNote: "",

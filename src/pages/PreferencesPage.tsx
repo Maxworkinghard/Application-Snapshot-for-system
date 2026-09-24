@@ -49,7 +49,6 @@ export function PreferencesPage({
   const localCapabilities = caps
     ? [
         { label: "录制", ...caps.recording },
-        { label: "OCR", ...caps.ocr },
         ...(caps.scrolling ? [{ label: "滚动长截图", ...caps.scrolling }] : []),
       ]
     : [];

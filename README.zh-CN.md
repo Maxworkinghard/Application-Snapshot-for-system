@@ -6,7 +6,7 @@
 
 界面里显示的名字是「应用快照」；打包产物按 Tauri 的 `productName` 命名，macOS 上是 `snapshot.app`。
 
-截取当前应用窗口到剪贴板并留存本地历史，通过 OpenAI 兼容接口润色 Prompt，调用系统 OCR 提取文字，并在桌面上放一只会动的伴侣。
+截取当前应用窗口到剪贴板并留存本地历史，通过 OpenAI 兼容接口润色 Prompt，并在桌面上放一只会动的伴侣。
 
 ## 仓库结构
 
@@ -26,26 +26,24 @@
 
 每个平台一套原生实现，共用同一组命令入口。**能力与行为按平台不同**——同一个按钮在三端可能走完全不同的系统 API，边界条件也不一样。差异见下表，以及设置页的「本机能力」（它由各端 adapter 实时报告，而不是写死的文案）。
 
-共享的只是不依赖系统能力的部分：设置、快照历史、Prompt 润色、界面。凡是系统自己提供且各端做法有实质差异的（录制、OCR、窗口控制），一律各写各的——曾经为了三端统一而选公约数方案，结果是哪端都不够好。
+共享的只是不依赖系统能力的部分：设置、快照历史、Prompt 润色、界面。凡是系统自己提供且各端做法有实质差异的（录制、窗口控制），一律各写各的——曾经为了三端统一而选公约数方案，结果是哪端都不够好。
 
 | | Windows | macOS | Linux |
 |---|---|---|---|
 | 窗口截图 | xcap | xcap | xcap |
 | 窗口录制 | Windows.Graphics.Capture + Media Foundation | ScreenCaptureKit 原生窗口流 + AVAssetWriter | Wayland 走 portal ScreenCast + PipeWire → ffmpeg；X11 走 ffmpeg `x11grab` |
-| 文字识别 | `Windows.Media.Ocr` | Vision（经 `snapshot-ocr` 桥） | `tesseract` |
 | 快照历史、桌面伴侣、Prompt 润色 | 有 | 有 | 有 |
 
-**真机验证**：目前以 Windows 为主（adapter、托盘、快捷键、截图/录制等已在真机跑过）。macOS / Linux 能力主要来自代码路径、编译检查与适配层实现；macOS 的 `snapshot-ocr` 桥与部分窗口能力（截图、图标、Accessibility 还原最小化）有过真机验证，录制已切到 ScreenCaptureKit 原生窗口流并由 AVAssetWriter 输出 H.264 MP4。Linux 在修复编译阻断后已恢复 `cargo check`；X11 路径（xcap / x11grab / tesseract / xdotool / XDG 自启）按适配层实现，Wayland portal ScreenCast、托盘点击、打包安装包等仍可能需本机再验。
+**真机验证**：目前以 Windows 为主（adapter、托盘、快捷键、截图/录制等已在真机跑过）。macOS / Linux 能力主要来自代码路径、编译检查与适配层实现；macOS 的部分窗口能力（截图、图标、Accessibility 还原最小化）有过真机验证，录制已切到 ScreenCaptureKit 原生窗口流并由 AVAssetWriter 输出 H.264 MP4。Linux 在修复编译阻断后已恢复 `cargo check`；X11 路径（xcap / x11grab / xdotool / XDG 自启）按适配层实现，Wayland portal ScreenCast、托盘点击、打包安装包等仍可能需本机再验。
 
 开发机（macOS）上无法验证的项目统一登记在 [docs/pending-device-verification.md](docs/pending-device-verification.md)，每条都注明应在哪一端补验。
 
 ## 依赖
 
-- **录制**：Windows 走系统自带的 Windows.Graphics.Capture 与 Media Foundation，不需要 ffmpeg；macOS 使用随应用打包的 ScreenCaptureKit sidecar，不依赖外部 ffmpeg；Linux 需要 `ffmpeg` 在 `PATH` 中。Linux 上「截屏包含鼠标光标」的静帧也会优先走 ffmpeg `x11grab`（失败则回退为无光标截图）；OCR、润色不需要 ffmpeg。
+- **录制**：Windows 走系统自带的 Windows.Graphics.Capture 与 Media Foundation，不需要 ffmpeg；macOS 使用随应用打包的 ScreenCaptureKit sidecar，不依赖外部 ffmpeg；Linux 需要 `ffmpeg` 在 `PATH` 中。Linux 上「截屏包含鼠标光标」的静帧也会优先走 ffmpeg `x11grab`（失败则回退为无光标截图）；润色不需要 ffmpeg。
 - **录制最小化的窗口**：最小化后系统不再为窗口合成画面，录不到任何内容。Windows 上会先把它还原再开录（与截图一致）；还原不了则明确报错，不会留下一个打不开的空文件。
 - **macOS 权限**：窗口截图与录制需要「屏幕录制」权限；还原已最小化的窗口再截图需要「辅助功能」权限。
-- **Linux 的 OCR** 需要 `tesseract` 及至少一个语言包（`apt install tesseract-ocr tesseract-ocr-chi-sim`）。
-- **macOS sidecar**：Vision OCR 由 [src-tauri/snapshot-ocr/](src-tauri/snapshot-ocr/) 提供；ScreenCaptureKit 录制由 [src-tauri/snapshot-recorder/](src-tauri/snapshot-recorder/) 提供。`npm run tauri dev` 和 `npm run tauri build` 都会自动准备二者，正式包内位于 `Contents/MacOS/` 主程序旁边。
+- **macOS sidecar**：ScreenCaptureKit 录制由 [src-tauri/snapshot-recorder/](src-tauri/snapshot-recorder/) 提供。`npm run tauri dev` 和 `npm run tauri build` 都会自动准备它，正式包内位于 `Contents/MacOS/` 主程序旁边。
 - **Prompt 润色**需要一个 OpenAI 兼容端点，在「模型设置」里填写。API Key 存入系统钥匙串，不写进配置文件。
 
 ## 名字的来历
@@ -93,7 +91,6 @@ bash scripts/linux/build.sh  # 正式二进制；bundler 成功时还有 deb / A
 | 可选工具 | 能力 |
 |---|---|
 | `ffmpeg` | 窗口录制（X11：`x11grab`；Wayland portal：`rawvideo` 编码）；带光标静帧（失败回退无光标） |
-| `tesseract` + 语言包 | OCR |
 | `xdotool` | 截图前还原已最小化的目标窗口；滚动长截图翻页 |
 | StatusNotifierHost | 系统托盘（KDE 原生；GNOME 需 AppIndicator 扩展） |
 
@@ -107,9 +104,9 @@ bash scripts/linux/build.sh  # 正式二进制；bundler 成功时还有 deb / A
 
 ## 快捷键
 
-默认不绑定任何键。应用快照、全屏截图、滚动长截图（目前仅 Linux/X11）、录制、润色 Prompt、提取文字都可以在「快捷操作」页各绑一个全局快捷键，窗口最小化时同样触发。
+默认不绑定任何键。应用快照、全屏截图、滚动长截图（目前仅 Linux/X11）、录制、润色 Prompt 都可以在「快捷操作」页各绑一个全局快捷键，窗口最小化时同样触发。
 
-截图完成后的行为由「截图完成后动作」与「自动写入本地文件」决定：默认复制到剪贴板；可选打开标注窗或另存为。仅在开启自动保存时写入本地历史。剪贴板自动清空时限可在设置中配置（默认约 60 秒；期间若又复制了别的内容则跳过这次清空）。录制默认保存为 MP4 到系统「下载」目录；可在「快捷操作 → 剪贴板与保存」中直接打开或更改独立的录制目录。提取出的文字直接替换剪贴板内容。
+截图完成后的行为由「截图完成后动作」与「自动写入本地文件」决定：默认复制到剪贴板；可选打开标注窗或另存为。仅在开启自动保存时写入本地历史。剪贴板自动清空时限可在设置中配置（默认约 60 秒；期间若又复制了别的内容则跳过这次清空）。录制默认保存为 MP4 到系统「下载」目录；可在「快捷操作 → 剪贴板与保存」中直接打开或更改独立的录制目录。
 
 ## 伴侣素材
 

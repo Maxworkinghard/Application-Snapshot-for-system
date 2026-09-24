@@ -30,7 +30,6 @@ let settings: Settings = {
     { action: "fullscreen", accelerator: null },
     { action: "record", accelerator: null },
     { action: "polish", accelerator: null },
-    { action: "ocr", accelerator: null },
   ],
   clipboardAutoClear: "60s",
   snapshotFormat: "png",
@@ -56,7 +55,6 @@ const capabilities: PlatformCapabilities = {
   recording: unavailable,
   recordingSystemAudio: unavailable,
   recordingMicrophone: unavailable,
-  ocr: unavailable,
   autostart: unavailable,
   scrolling: unavailable,
   includeCursor: unavailable,
@@ -124,11 +122,6 @@ async function handle(command: string, payload?: InvokeArgs): Promise<unknown> {
     case "delete_snapshot":
     case "clear_snapshots":
       return [];
-    case "ocr_snapshot":
-    case "ocr_clipboard":
-      return "";
-    case "ocr_capability":
-      return { available: false, language: null, detail: "预览模式下不调用系统 OCR" };
     case "platform_capabilities":
       return capabilities;
     default:
