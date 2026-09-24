@@ -34,7 +34,7 @@ function LayoutSketch({ layout }: { layout: LayoutTheme }) {
   if (layout === "companion") {
     return (
       <span className="mini mini-row">
-        {side(<><span className="mini-grow" />{cat}<span className="mini-floor" /></>)}
+        {side(<><span className="mini-grow" />{cat}</>)}
         {rows}
       </span>
     );
