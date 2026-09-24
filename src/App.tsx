@@ -10,7 +10,6 @@ import {
   SlidersHorizontal,
   Minus,
   Maximize2,
-  Layers,
   Info,
   Palette,
 } from "lucide-react";
@@ -240,16 +239,6 @@ export function App() {
 
       <div className="window-content-grid">
         <aside className="window-sidebar">
-          <div className="sidebar-workspace-header">
-            <div className="workspace-avatar-box"><Layers size={15} /></div>
-            <div className="workspace-text-group">
-              <div className="workspace-title-row">
-                <span className="workspace-name-text">个人工作区</span>
-              </div>
-              <span className="workspace-meta-text">捕捉与整理</span>
-            </div>
-          </div>
-
           {navGroups.map((group) => (
             <div className="sidebar-group-block" key={group.title}>
               <div className="sidebar-group-title">{group.title}</div>
