@@ -134,9 +134,6 @@ pub(crate) fn show_main_window(app: AppHandle) {
 }
 
 /// 执行一个全局快捷键动作（由 shortcuts.rs 的按键回调调用）。
-///
-/// 快捷键版 OCR 会把识别出的文字写回剪贴板：界面上的 ocr_clipboard 只负责返回文字
-/// （页面自己展示），走快捷键时用户看不到界面，必须把结果送回剪贴板才有意义。
 pub(crate) async fn perform(app: &AppHandle, action: &str) -> Result<String, String> {
     let state = app.state::<AppState>();
     match action {
@@ -149,7 +146,6 @@ pub(crate) async fn perform(app: &AppHandle, action: &str) -> Result<String, Str
             }
         }),
         "polish" => polish::polish_clipboard(state).await,
-        "ocr" => capture::ocr_clipboard_into_clipboard().await,
         "fullscreen" => {
             let include_cursor = state.settings.lock().include_cursor;
             let (image, name, cursor_degraded) = tauri::async_runtime::spawn_blocking(move || {

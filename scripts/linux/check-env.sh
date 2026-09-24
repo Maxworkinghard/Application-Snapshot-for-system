@@ -32,7 +32,6 @@ fi
 
 echo "Optional runtime"
 command -v ffmpeg >/dev/null && ok "ffmpeg (recording)" || miss "ffmpeg (recording disabled until installed)"
-command -v tesseract >/dev/null && ok "tesseract (OCR)" || miss "tesseract (OCR disabled until installed)"
 command -v xdotool >/dev/null && ok "xdotool (restore minimized windows)" || miss "xdotool (optional)"
 command -v rsvg-convert >/dev/null && ok "rsvg-convert (SVG app icons)" || info "rsvg-convert optional"
 

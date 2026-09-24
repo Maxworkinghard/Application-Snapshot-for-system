@@ -16,13 +16,6 @@
    内容区 ≤ 720px：双栏一律改单栏
    -------------------------------------------------------------------------- */
 @container canvas (max-width: 720px) {
-  /* Prompt 工作台：左右改上下，并让整体可滚动 */
-  .prompt-main-split-workbench {
-    grid-template-columns: 1fr;
-    grid-template-rows: auto auto;
-    overflow-y: auto;
-    overflow-x: hidden;
-  }
 
   .workbench-pane {
     height: auto;

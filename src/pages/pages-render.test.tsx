@@ -44,7 +44,6 @@ const capabilities: PlatformCapabilities = {
   recording: { available: true, detail: "录制可用" },
   recordingSystemAudio: { available: true, detail: "系统音频可用" },
   recordingMicrophone: { available: true, detail: "麦克风可用" },
-  ocr: { available: true, detail: "OCR 可用" },
   autostart: { available: true, detail: "自启可用" },
   includeCursor: { available: true, detail: "光标可用" },
   trayNote: "",
@@ -59,8 +58,6 @@ function handler(command: string) {
       return capabilities;
     case "list_snapshots":
       return [];
-    case "ocr_capability":
-      return { available: true, detail: "OCR 可用" };
     case "get_recording_status":
       return { active: false, target: null, startedAt: null };
     default:
@@ -91,7 +88,6 @@ describe("B2 拆页后逐页渲染", () => {
     ["桌面伴侣", "伴侣悬浮演示"],
     ["偏好设置", "截屏与行为"],
     ["界面主题", "主题对主窗口、桌面伴侣与快捷菜单同时生效。"],
-    ["文字识别", "引擎状态"],
   ])("导航到「%s」能渲染出该页独有内容", async (navLabel, marker) => {
     await renderApp();
     const user = userEvent.setup();

@@ -99,7 +99,7 @@ mod tests {
 
     #[test]
     fn unbound_actions_pass_validation() {
-        assert!(validate(&[binding("snapshot", None), binding("ocr", None)]).is_ok());
+        assert!(validate(&[binding("snapshot", None), binding("record", None)]).is_ok());
     }
 
     #[test]

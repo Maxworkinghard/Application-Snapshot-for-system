@@ -11,7 +11,6 @@ pub(crate) struct PlatformCapabilities {
     pub(crate) recording: CapabilityStatus,
     pub(crate) recording_system_audio: CapabilityStatus,
     pub(crate) recording_microphone: CapabilityStatus,
-    pub(crate) ocr: CapabilityStatus,
     pub(crate) autostart: CapabilityStatus,
     /// 滚动长截图只有 Linux/X11 实现，其余平台不下发这一项
     #[serde(skip_serializing_if = "Option::is_none")]

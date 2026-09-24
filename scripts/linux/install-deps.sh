@@ -42,9 +42,6 @@ sudo apt-get install -y -o Dpkg::Options::=--force-confdef -o Dpkg::Options::=--
   libwayland-dev \
   xdotool \
   ffmpeg \
-  tesseract-ocr \
-  tesseract-ocr-eng \
-  tesseract-ocr-chi-sim \
   librsvg2-bin
 
 echo ""

@@ -44,14 +44,10 @@ objc2-app-kit = { version = "0.3", features = ["NSBitmapImageRep", "NSCursor", "
 objc2-foundation = { version = "0.3", features = ["NSData", "NSDictionary"] }
 
 [target.'cfg(windows)'.dependencies]
-# Windows.Media.Ocr 走 WinRT，需要 windows 而非 windows-sys
+# 窗口录制：Windows.Graphics.Capture 取帧 + Media Foundation 编码。
+# WGC 是 WinRT，需要 windows 而非 windows-sys
 windows = { version = "0.62", features = [
   "Foundation",
-  "Globalization",
-  "Graphics_Imaging",
-  "Media_Ocr",
-  "Storage_Streams",
-  # 窗口录制：Windows.Graphics.Capture 取帧 + Media Foundation 编码
   "Foundation_Collections",
   "Graphics_Capture",
   "Graphics_DirectX",

@@ -1,57 +1,12 @@
 use super::*;
 
-#[derive(Clone, Debug, Serialize)]
-#[serde(rename_all = "camelCase")]
-pub(crate) struct OcrCapability {
-    available: bool,
-    language: Option<String>,
-    detail: String,
-}
-
-/// 把 RGBA 位图编码成 PNG 字节，喂给 WinRT 的 BitmapDecoder。
-/// 走 PNG 而不是直接构造 SoftwareBitmap，是为了绕开 IBufferByteAccess 那套 COM 互操作。
+/// 把 RGBA 位图编码成 PNG 字节（标注窗口、应用图标用）。
 pub(crate) fn encode_png(image: &RgbaImage) -> Result<Vec<u8>, String> {
     let mut bytes = Vec::new();
     image
         .write_to(&mut Cursor::new(&mut bytes), ImageFormat::Png)
         .map_err(|error| format!("编码图像失败：{error}"))?;
     Ok(bytes)
-}
-
-#[tauri::command]
-pub(crate) fn ocr_capability() -> OcrCapability {
-    let report = ocr::report();
-    OcrCapability {
-        available: report.available,
-        language: report.language,
-        detail: report.detail,
-    }
-}
-
-/// 识别历史库里的某张快照
-#[tauri::command]
-pub(crate) async fn ocr_snapshot(state: State<'_, AppState>, id: String) -> Result<String, String> {
-    let (_, bytes) = snapshots::read_snapshot(&state, &id)?;
-    // WinRT 这套调用是阻塞的，挪到阻塞线程池，别卡住界面
-    tauri::async_runtime::spawn_blocking(move || ocr::recognize_png(&bytes))
-        .await
-        .map_err(|error| error.to_string())?
-}
-
-/// 识别当前剪贴板里的图片
-#[tauri::command]
-pub(crate) async fn ocr_clipboard() -> Result<String, String> {
-    let image = Clipboard::new()
-        .and_then(|mut clipboard| clipboard.get_image())
-        .map_err(|_| "剪贴板里没有图片，请先截一张".to_string())?;
-    let width = image.width as u32;
-    let height = image.height as u32;
-    let buffer = RgbaImage::from_raw(width, height, image.bytes.into_owned())
-        .ok_or_else(|| "剪贴板图像数据不完整".to_string())?;
-    let png = encode_png(&buffer)?;
-    tauri::async_runtime::spawn_blocking(move || ocr::recognize_png(&png))
-        .await
-        .map_err(|error| error.to_string())?
 }
 
 #[tauri::command]
@@ -374,15 +329,6 @@ fn hide_annotate_window(app: &AppHandle, state: &AppState) {
     if let Some(window) = app.get_webview_window("annotate") {
         let _ = window.hide();
     }
-}
-
-pub(crate) async fn ocr_clipboard_into_clipboard() -> Result<String, String> {
-    let text = ocr_clipboard().await?;
-    let count = text.chars().count();
-    Clipboard::new()
-        .and_then(|mut clipboard| clipboard.set_text(text))
-        .map_err(|error| format!("写入剪贴板失败：{error}"))?;
-    Ok(format!("已提取 {count} 个字符到剪贴板"))
 }
 
 fn primary_monitor() -> Result<Monitor, String> {

@@ -175,7 +175,7 @@ pub(crate) fn list_snapshots(state: State<'_, AppState>) -> Vec<SnapshotRecord> 
     alive
 }
 
-/// 按 id 读出一张快照的文件字节与类型（媒体协议与 OCR 共用）。
+/// 按 id 读出一张快照的文件字节与类型（媒体协议用）。
 pub(crate) fn read_snapshot(state: &AppState, id: &str) -> Result<(&'static str, Vec<u8>), String> {
     let record = read_snapshot_index(&snapshot_index_path(state))
         .into_iter()

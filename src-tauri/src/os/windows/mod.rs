@@ -2,12 +2,11 @@
 //!
 //! 与 macOS / Linux 平台层对外提供同名的一组函数（见 lib.rs 里 `mod os` 的说明），
 //! 共享代码只经 `os::` 调用，不再到处写 `#[cfg(target_os = …)]`。
-//! 实现都用系统原生能力：WGC + Media Foundation 录制、WinRT OCR、注册表自启。
+//! 实现都用系统原生能力：WGC + Media Foundation 录制、注册表自启。
 
 mod autostart;
 mod cursor;
 mod icon;
-mod ocr;
 mod recorder;
 mod window;
 
@@ -19,11 +18,10 @@ use std::{fs, path::Path, process::Command};
 
 pub(crate) use autostart::apply as apply_autostart;
 pub(crate) use icon::app_icon_png;
-pub(crate) use ocr::{ocr_language, ocr_recognize, OCR_BACKEND};
 pub(crate) use window::restore_minimized;
 
 /// 本平台支持的全局快捷键动作，顺序即设置页的显示顺序
-pub(crate) const SHORTCUT_ACTIONS: &[&str] = &["snapshot", "fullscreen", "record", "polish", "ocr"];
+pub(crate) const SHORTCUT_ACTIONS: &[&str] = &["snapshot", "fullscreen", "record", "polish"];
 
 /// 一次进行中的录制
 pub(crate) struct Recording(recorder::ActiveRecording);
@@ -105,7 +103,6 @@ pub(crate) fn capabilities() -> PlatformCapabilities {
         recording_microphone: CapabilityStatus::available(
             "WASAPI：录制当前默认麦克风；首次使用受 Windows 麦克风隐私设置控制",
         ),
-        ocr: crate::ocr::capability(),
         autostart: CapabilityStatus::available(
             "写入 HKCU\\...\\CurrentVersion\\Run（当前用户，opt-in）",
         ),

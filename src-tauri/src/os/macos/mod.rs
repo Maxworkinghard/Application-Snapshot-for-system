@@ -1,13 +1,12 @@
 //! macOS 平台层。
 //!
 //! 与 Windows / Linux 平台层对外提供同名的一组函数（见 lib.rs 里 `mod os` 的说明），
-//! 共享代码只经 `os::` 调用。实现都用系统原生能力：ScreenCaptureKit 录制、Vision OCR
-//! （两者经 Swift sidecar）、Accessibility 还原窗口、LaunchAgent 自启。
+//! 共享代码只经 `os::` 调用。实现都用系统原生能力：ScreenCaptureKit 录制
+//! （经 Swift sidecar）、Accessibility 还原窗口、LaunchAgent 自启。
 
 mod autostart;
 mod cursor;
 mod icon;
-mod ocr;
 mod recorder;
 mod window;
 
@@ -18,12 +17,11 @@ use std::{path::Path, process::Command};
 
 pub(crate) use autostart::apply_launch_on_boot as apply_autostart;
 pub(crate) use icon::png_for_pid as app_icon_png;
-pub(crate) use ocr::{ocr_language, ocr_recognize, OCR_BACKEND};
 pub(crate) use recorder::{start_recording, Recording};
 pub(crate) use window::restore_minimized;
 
 /// 本平台支持的全局快捷键动作，顺序即设置页的显示顺序
-pub(crate) const SHORTCUT_ACTIONS: &[&str] = &["snapshot", "fullscreen", "record", "polish", "ocr"];
+pub(crate) const SHORTCUT_ACTIONS: &[&str] = &["snapshot", "fullscreen", "record", "polish"];
 
 /// xcap 截不到光标：截完按窗口原点与 DPI 比例把当前系统光标合成上去。
 /// 返回的第二项是光标没合成上的原因（截图本身仍然成功）。
@@ -90,7 +88,6 @@ pub(crate) fn capabilities() -> PlatformCapabilities {
         recording,
         recording_system_audio,
         recording_microphone,
-        ocr: crate::ocr::capability(),
         autostart: CapabilityStatus::probe(
             autostart::autostart_capability(),
             "LaunchAgent：~/Library/LaunchAgents/com.appsnapshot.prompt-pet-shortcut.plist，下次登录生效",
