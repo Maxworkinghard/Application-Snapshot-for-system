@@ -6,7 +6,7 @@ import { formatDuration } from "../lib/format";
 import { narrate } from "../lib/activity";
 import { motionReduced, usePresence } from "../lib/motion";
 import { errorText, useApp } from "../app/context";
-import { useNow, useWindowActive } from "../hooks/useLive";
+import { useNow, usePetAnimation, useWindowVisible } from "../hooks/useLive";
 
 /** 播报只说最近发生的事，太久以前的不提 */
 const FRESH_MS = 15 * 60_000;
@@ -19,7 +19,9 @@ const NOTICE_MS = 8_000;
  */
 export function Companion({ away = false, compact = false }: { away?: boolean; compact?: boolean }) {
   const { settings, notice, activity, clipboard, recording, conflicts, navigate, notify, dismissNotice } = useApp();
-  const windowActive = useWindowActive();
+  // 窗口在屏幕上就一直动（失焦也动），这样和桌面上的桌宠始终是同一个动作
+  const windowVisible = useWindowVisible();
+  const petAnimation = usePetAnimation();
   const [hop, setHop] = useState(false);
   const lastSeen = useRef(activity[0]?.id);
 
@@ -110,8 +112,10 @@ export function Companion({ away = false, compact = false }: { away?: boolean; c
   // 说完的话往下沉一点淡掉，不是啪一下没了
   const { item: shown, leaving } = usePresence(say);
 
-  const animate = windowActive && !motionReduced();
-  const catSrc = asset ? (animate ? petUrl(asset.id, asset.entry || null) : petThumbUrl(asset.id)) : null;
+  const animate = windowVisible && !motionReduced();
+  // 跟着桌宠：桌宠播到哪个动作，这里就播哪个；还没收到桌宠的消息时先放默认动作
+  const entry = petAnimation && petAnimation.assetId === asset?.id ? petAnimation.entry : asset?.entry || null;
+  const catSrc = asset ? (animate ? petUrl(asset.id, entry) : petThumbUrl(asset.id)) : null;
 
   return (
     <div className={`companion ${away ? "is-away" : ""} ${compact ? "is-compact" : ""}`}>

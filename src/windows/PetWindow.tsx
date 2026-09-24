@@ -10,6 +10,7 @@ import {
 } from "../lib/backend";
 import { iconUrl, petUrl } from "../lib/media";
 import { MediaImage } from "../components/MediaImage";
+import { broadcastPetAnimation, onPetAnimationAsked } from "../lib/petSync";
 import type { PreviousApp, Settings } from "../types";
 
 export function PetWindow() {
@@ -94,7 +95,22 @@ export function PetWindow() {
     window.addEventListener("pointerup", finishClick);
   }
 
-  const petSrc = appearanceId === "app-icon" ? null : petUrl(appearanceId, animations[animationIndex] ?? null);
+  // 换了动作就告诉主窗口，侧栏的猫跟着换；主窗口刚打开来问时也答一声
+  const currentEntry = animations[animationIndex] ?? null;
+  const current = useRef({ assetId: appearanceId, entry: currentEntry });
+  current.current = { assetId: appearanceId, entry: currentEntry };
+  useEffect(() => {
+    if (appearanceId !== "app-icon") broadcastPetAnimation({ assetId: appearanceId, entry: currentEntry });
+  }, [appearanceId, currentEntry]);
+  useEffect(
+    () =>
+      onPetAnimationAsked(() => {
+        if (current.current.assetId !== "app-icon") broadcastPetAnimation(current.current);
+      }),
+    [],
+  );
+
+  const petSrc = appearanceId === "app-icon" ? null : petUrl(appearanceId, currentEntry);
 
   function onContextMenu(event: React.MouseEvent) {
     event.preventDefault();
