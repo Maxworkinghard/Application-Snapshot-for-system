@@ -6,6 +6,7 @@ mod platform;
 mod polish;
 mod recording;
 mod settings;
+mod shortcuts;
 mod snapshots;
 mod tracker;
 
@@ -58,6 +59,8 @@ struct AppState {
     /// 标注窗口待编辑 PNG（RGBA 编码前的原始 PNG 字节）
     annotate_png: Mutex<Option<Vec<u8>>>,
     annotate_title: Mutex<String>,
+    /// 启动时没能注册上的全局快捷键，等主窗口加载后再提示用户
+    shortcut_conflicts: Mutex<Vec<String>>,
 }
 
 pub(crate) fn truncate(value: &str, max: usize) -> String {
@@ -101,7 +104,7 @@ pub fn run() {
         .plugin(tauri_plugin_single_instance::init(|app, _args, _cwd| {
             actions::focus_existing_window(app);
         }))
-        .plugin(tauri_plugin_global_shortcut::Builder::new().build())
+        .plugin(shortcuts::plugin())
         .plugin(tauri_plugin_dialog::init())
         .manage(AppState {
             settings_path,
@@ -113,6 +116,7 @@ pub fn run() {
             quick_menu_anchor: Mutex::new(None),
             annotate_png: Mutex::new(None),
             annotate_title: Mutex::new(String::new()),
+            shortcut_conflicts: Mutex::new(Vec::new()),
         })
         .setup(|app| {
             let state = app.state::<AppState>();
@@ -158,6 +162,12 @@ pub fn run() {
                 }
             }
             tracker::start_tracker(app.handle().clone(), tracker);
+
+            let failed = shortcuts::register_all(app.handle(), &settings.shortcuts);
+            if !failed.is_empty() {
+                eprintln!("snapshot: {}", shortcuts::conflict_message(&failed));
+                *state.shortcut_conflicts.lock() = failed;
+            }
 
             // 配置里若已勾选自启，启动时把系统启动项与设置对齐（不会默认打开）。
             // 应用被移动过路径时，这一步顺带把启动项里的旧路径刷新掉。
@@ -275,6 +285,7 @@ pub fn run() {
             pet::delete_pet_asset,
             pet::get_pet_asset_data_url,
             settings::save_shortcuts,
+            shortcuts::get_shortcut_conflicts,
             settings::save_preferences,
             tracker::get_previous_app,
             tracker::list_capturable_windows,
@@ -297,7 +308,6 @@ pub fn run() {
             actions::set_quick_menu_expanded,
             actions::hide_quick_menu,
             actions::show_main_window,
-            actions::perform_action,
             capture::get_annotate_image,
             capture::annotate_get_title,
             capture::annotate_copy,
@@ -366,7 +376,8 @@ mod mac_icon_tests {
 mod pet_asset_tests {
     use super::*;
 
-    /// 老配置含已废弃的录制目录绑定：移除它，补出新动作，保留其它已有绑定。
+    /// 老配置含已废弃的录制目录绑定与（Win/mac 上）不支持的滚动长截图：
+    /// 移除它们，补出新动作，保留其它已有绑定。
     #[test]
     fn old_settings_migrate_shortcut_actions() {
         let path = std::env::temp_dir().join("snapshot-settings-migration.json");
@@ -382,7 +393,8 @@ mod pet_asset_tests {
                 {"action":"snapshot","accelerator":"Alt+Shift+2"},
                 {"action":"record","accelerator":null},
                 {"action":"recordings","accelerator":"Alt+Shift+R"},
-                {"action":"polish","accelerator":null}
+                {"action":"polish","accelerator":null},
+                {"action":"scrolling","accelerator":null}
             ]
         }"#;
         fs::write(&path, legacy).expect("写测试配置失败");
@@ -401,8 +413,8 @@ mod pet_asset_tests {
                 "snapshot",
                 "record",
                 "polish",
-                "fullscreen",
                 "scrolling",
+                "fullscreen",
                 "ocr"
             ]
         );
