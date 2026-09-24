@@ -21,7 +21,6 @@ const settings: Settings = {
   snapshotFormat: "png",
   saveDir: "",
   recordingDir: "",
-  customTheme: null,
   shutterSound: "crisp",
   customSoundPath: null,
   flashOnCapture: true,
@@ -37,13 +36,11 @@ const settings: Settings = {
 const capabilities: PlatformCapabilities = {
   os: "windows",
   displayServer: "n/a",
-  recording: { available: true, detail: "" },
-  recordingSystemAudio: { available: true, detail: "" },
-  recordingMicrophone: { available: true, detail: "" },
-  autostart: { available: true, detail: "" },
-  includeCursor: { available: true, detail: "" },
-  trayNote: "",
-  notes: [],
+  recording: { available: true },
+  recordingSystemAudio: { available: true },
+  recordingMicrophone: { available: true },
+  autostart: { available: true },
+  includeCursor: { available: true },
 };
 
 async function renderApp(handle: (command: string, payload?: InvokeArgs) => unknown) {
@@ -92,6 +89,7 @@ describe("global shortcuts", () => {
       return undefined;
     });
 
-    expect(await screen.findByText("这些快捷键没能注册，可能已被其他程序占用：Alt+Shift+2")).toBeTruthy();
+    // 冲突由侧栏的猫说出来，按键写成人读的样子
+    expect(await screen.findByText("Alt Shift 2 没能注册，可能被别的程序占用了")).toBeTruthy();
   });
 });

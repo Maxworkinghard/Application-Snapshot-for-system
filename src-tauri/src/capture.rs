@@ -9,7 +9,7 @@ pub(crate) fn encode_png(image: &RgbaImage) -> Result<Vec<u8>, String> {
     Ok(bytes)
 }
 
-#[tauri::command]
+/// 截一个窗口（不传就是前台窗口）。快捷键和输入框都经 `actions` 调到这里
 pub(crate) fn capture_window(
     app: AppHandle,
     state: State<'_, AppState>,
@@ -101,10 +101,23 @@ pub(crate) fn finalize_capture(
     cursor_degraded: Option<String>,
 ) -> Result<String, String> {
     let settings = state.settings.lock().clone();
-    let mut archived = false;
-    if settings.auto_save_local {
-        archived = snapshots::store_snapshot(state, &image, app_name).is_ok();
+    let (width, height) = (image.width(), image.height());
+    let record = if settings.auto_save_local {
+        snapshots::store_snapshot(state, &image, app_name).ok()
+    } else {
+        None
+    };
+    let archived = record.is_some();
+    if archived {
+        let _ = app.emit("snapshots-changed", ());
     }
+    let snapshot_id = record.map(|record| record.id);
+    activity::record(
+        app,
+        activity::Activity::new("capture", app_name)
+            .meta(format!("{width} × {height}"))
+            .snapshot(snapshot_id.clone()),
+    );
 
     // after_capture：annotate 打开标注窗；saveas 走另存对话框；默认剪贴板。
     let annotate = settings.after_capture == "annotate";
@@ -115,10 +128,7 @@ pub(crate) fn finalize_capture(
     if annotate {
         open_annotate_window(app, state, &image, app_name)?;
     } else {
-        copy_image_to_clipboard(
-            image,
-            snapshots::clipboard_clear_delay(&settings.clipboard_auto_clear),
-        )?;
+        clipboard::copy_image(app, state, image, &format!("{app_name} 截图"), snapshot_id)?;
     }
 
     let _ = app.emit(
@@ -191,47 +201,6 @@ fn save_image_as_dialog(
     snapshots::write_image(image, &path, format).map_err(|error| format!("另存为失败：{error}"))
 }
 
-fn copy_image_to_clipboard(image: RgbaImage, clear_after: Option<Duration>) -> Result<(), String> {
-    let width = image.width() as usize;
-    let height = image.height() as usize;
-    let bytes = image.into_raw();
-    Clipboard::new()
-        .and_then(|mut clipboard| {
-            clipboard.set_image(ImageData {
-                width,
-                height,
-                bytes: Cow::Borrowed(&bytes),
-            })
-        })
-        .map_err(|error| error.to_string())?;
-
-    if let Some(delay) = clear_after {
-        thread::spawn(move || {
-            // 到点前要确认剪贴板里还是这张图（用户可能已经复制了别的）。只留指纹不留原图：
-            // 4K 截图一份约 33MB，没必要在内存里攥满整个清空时限。
-            let expected = image_fingerprint(width, height, &bytes);
-            drop(bytes);
-            thread::sleep(delay);
-            if let Ok(mut clipboard) = Clipboard::new() {
-                if let Ok(current) = clipboard.get_image() {
-                    if image_fingerprint(current.width, current.height, &current.bytes) == expected
-                    {
-                        let _ = clipboard.clear();
-                    }
-                }
-            }
-        });
-    }
-    Ok(())
-}
-
-fn image_fingerprint(width: usize, height: usize, bytes: &[u8]) -> u64 {
-    use std::hash::{DefaultHasher, Hash, Hasher};
-    let mut hasher = DefaultHasher::new();
-    (width, height, bytes).hash(&mut hasher);
-    hasher.finish()
-}
-
 fn open_annotate_window(
     app: &AppHandle,
     state: &AppState,
@@ -292,13 +261,23 @@ pub(crate) fn annotate_copy(
 ) -> Result<String, String> {
     let image = decode_png_base64(&image_data)?;
     let settings = state.settings.lock().clone();
-    if settings.auto_save_local {
-        let _ = snapshots::store_snapshot(&state, &image, "标注");
+    let snapshot_id = if settings.auto_save_local {
+        snapshots::store_snapshot(&state, &image, "标注")
+            .ok()
+            .map(|record| record.id)
+    } else {
+        None
+    };
+    if snapshot_id.is_some() {
+        let _ = app.emit("snapshots-changed", ());
     }
-    copy_image_to_clipboard(
-        image,
-        snapshots::clipboard_clear_delay(&settings.clipboard_auto_clear),
-    )?;
+    activity::record(
+        &app,
+        activity::Activity::new("capture", "标注图")
+            .meta(format!("{} × {}", image.width(), image.height()))
+            .snapshot(snapshot_id.clone()),
+    );
+    clipboard::copy_image(&app, &state, image, "标注图", snapshot_id)?;
     hide_annotate_window(&app, &state);
     Ok(format!(
         "已复制标注图，{}",

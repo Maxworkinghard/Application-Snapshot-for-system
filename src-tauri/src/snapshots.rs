@@ -3,6 +3,10 @@ use image::buffer::ConvertBuffer;
 use serde::Deserialize;
 
 const SNAPSHOT_LIMIT: usize = 200;
+/// 缩略图的目标高度（像素）。列表里显示 76px 高，高分屏两倍再留点余量
+const THUMB_HEIGHT: u32 = 180;
+/// 超宽截图（带鱼屏、横向长图）缩略图的宽度上限
+const THUMB_MAX_WIDTH: u32 = 640;
 
 #[derive(Clone, Debug, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
@@ -112,14 +116,51 @@ pub(crate) fn store_snapshot(
         size_bytes,
         created_at,
     };
+    // 缩略图失败不影响快照本身：列表里取不到时会按原图现做一张
+    let _ = write_thumbnail(state, &record.id, image);
     let index_path = snapshot_index_path(state);
     let mut records = read_snapshot_index(&index_path);
     records.insert(0, record.clone());
     for stale in records.split_off(records.len().min(SNAPSHOT_LIMIT)) {
-        let _ = fs::remove_file(dir.join(&stale.file_name));
+        remove_snapshot_files(state, &dir, &stale);
     }
     write_snapshot_index(&index_path, &records)?;
     Ok(record)
+}
+
+fn thumbnail_path(state: &AppState, id: &str) -> PathBuf {
+    state.thumbs_dir.join(format!("{id}.jpg"))
+}
+
+/// 按原比例缩到固定高度（超宽的再按宽度封顶），存成 JPEG。
+/// 历史页一屏几十张，原图动辄几 MB，直接当缩略图用会让滚动发卡。
+fn write_thumbnail(state: &AppState, id: &str, image: &RgbaImage) -> Result<(), String> {
+    let (width, height) = thumbnail_size(image.width(), image.height());
+    let small = image::imageops::thumbnail(image, width, height);
+    let rgb: image::RgbImage = small.convert();
+    fs::create_dir_all(&state.thumbs_dir).map_err(|error| error.to_string())?;
+    rgb.save_with_format(thumbnail_path(state, id), ImageFormat::Jpeg)
+        .map_err(|error| error.to_string())
+}
+
+fn thumbnail_size(width: u32, height: u32) -> (u32, u32) {
+    let width = width.max(1);
+    let height = height.max(1);
+    if height <= THUMB_HEIGHT && width <= THUMB_MAX_WIDTH {
+        return (width, height);
+    }
+    let by_height = THUMB_HEIGHT as f64 / height as f64;
+    let by_width = THUMB_MAX_WIDTH as f64 / width as f64;
+    let scale = by_height.min(by_width);
+    (
+        ((width as f64 * scale).round() as u32).max(1),
+        ((height as f64 * scale).round() as u32).max(1),
+    )
+}
+
+fn remove_snapshot_files(state: &AppState, dir: &Path, record: &SnapshotRecord) {
+    let _ = fs::remove_file(dir.join(&record.file_name));
+    let _ = fs::remove_file(thumbnail_path(state, &record.id));
 }
 
 /// 按格式写盘。JPEG 不支持 alpha，要先转成 RGB；PNG / WebP 直接写 RGBA。
@@ -175,42 +216,75 @@ pub(crate) fn list_snapshots(state: State<'_, AppState>) -> Vec<SnapshotRecord> 
     alive
 }
 
-/// 按 id 读出一张快照的文件字节与类型（媒体协议用）。
-pub(crate) fn read_snapshot(state: &AppState, id: &str) -> Result<(&'static str, Vec<u8>), String> {
-    let record = read_snapshot_index(&snapshot_index_path(state))
+fn find_record(state: &AppState, id: &str) -> Result<SnapshotRecord, String> {
+    read_snapshot_index(&snapshot_index_path(state))
         .into_iter()
         .find(|item| item.id == id)
-        .ok_or_else(|| "找不到这条快照".to_string())?;
+        .ok_or_else(|| "找不到这条快照".to_string())
+}
+
+/// 按 id 读出一张快照的文件字节与类型（媒体协议用）。
+pub(crate) fn read_snapshot(state: &AppState, id: &str) -> Result<(&'static str, Vec<u8>), String> {
+    let record = find_record(state, id)?;
     let bytes = fs::read(history_dir(state).join(&record.file_name))
         .map_err(|_| "快照文件已被移动或删除".to_string())?;
     Ok((mime_for_snapshot_file(&record.file_name), bytes))
 }
 
-#[tauri::command]
-pub(crate) fn delete_snapshot(
-    state: State<'_, AppState>,
-    id: String,
-) -> Result<Vec<SnapshotRecord>, String> {
-    let index_path = snapshot_index_path(&state);
-    let mut records = read_snapshot_index(&index_path);
-    let position = records
-        .iter()
-        .position(|item| item.id == id)
-        .ok_or_else(|| "找不到这条快照".to_string())?;
-    let removed = records.remove(position);
-    let _ = fs::remove_file(history_dir(&state).join(&removed.file_name));
-    write_snapshot_index(&index_path, &records)?;
-    Ok(records)
+/// 读缩略图；老快照没有缩略图时按原图现做一张存下来。
+pub(crate) fn read_thumbnail(state: &AppState, id: &str) -> Result<Vec<u8>, String> {
+    let path = thumbnail_path(state, id);
+    if let Ok(bytes) = fs::read(&path) {
+        return Ok(bytes);
+    }
+    let record = find_record(state, id)?;
+    let image = image::open(history_dir(state).join(&record.file_name))
+        .map_err(|_| "快照文件已被移动或删除".to_string())?
+        .to_rgba8();
+    write_thumbnail(state, id, &image)?;
+    fs::read(&path).map_err(|error| error.to_string())
 }
 
+/// 删掉选中的若干张（「全选」再删就是清空）。返回删完后的列表。
 #[tauri::command]
-pub(crate) fn clear_snapshots(state: State<'_, AppState>) -> Result<Vec<SnapshotRecord>, String> {
+pub(crate) fn delete_snapshots(
+    app: AppHandle,
+    state: State<'_, AppState>,
+    ids: Vec<String>,
+) -> Result<Vec<SnapshotRecord>, String> {
+    let dir = history_dir(&state);
     let index_path = snapshot_index_path(&state);
-    for record in read_snapshot_index(&index_path) {
-        let _ = fs::remove_file(history_dir(&state).join(&record.file_name));
+    let (removed, kept): (Vec<_>, Vec<_>) = read_snapshot_index(&index_path)
+        .into_iter()
+        .partition(|item| ids.contains(&item.id));
+    for record in &removed {
+        remove_snapshot_files(&state, &dir, record);
     }
-    write_snapshot_index(&index_path, &[])?;
-    Ok(Vec::new())
+    write_snapshot_index(&index_path, &kept)?;
+    let _ = app.emit("snapshots-changed", ());
+    Ok(kept)
+}
+
+/// 把历史里的一张重新放回剪贴板（同样按偏好自动清空）
+#[tauri::command]
+pub(crate) fn copy_snapshot(
+    app: AppHandle,
+    state: State<'_, AppState>,
+    id: String,
+) -> Result<String, String> {
+    let record = find_record(&state, &id)?;
+    let image = image::open(history_dir(&state).join(&record.file_name))
+        .map_err(|_| "快照文件已被移动或删除".to_string())?
+        .to_rgba8();
+    clipboard::copy_image(
+        &app,
+        &state,
+        image,
+        &format!("{} 截图", record.app_name),
+        Some(record.id.clone()),
+    )?;
+    let clear_label = format_clear_label(&state.settings.lock().clipboard_auto_clear);
+    Ok(format!("已复制 {}，{clear_label}", record.app_name))
 }
 
 #[cfg(test)]
@@ -247,6 +321,17 @@ mod tests {
         assert_eq!(mime_for_snapshot_file("a.JPG"), "image/jpeg");
         assert_eq!(mime_for_snapshot_file("a.webp"), "image/webp");
         assert_eq!(mime_for_snapshot_file("a.png"), "image/png");
+    }
+
+    #[test]
+    fn thumbnails_keep_the_aspect_ratio() {
+        assert_eq!(thumbnail_size(1920, 1080), (320, 180));
+        // 滚动长截图又窄又长：高度封顶，宽度跟着比例走
+        assert_eq!(thumbnail_size(1280, 6400), (36, 180));
+        // 超宽屏按宽度封顶
+        assert_eq!(thumbnail_size(10000, 1000), (640, 64));
+        // 本来就小的不放大
+        assert_eq!(thumbnail_size(120, 90), (120, 90));
     }
 
     #[test]

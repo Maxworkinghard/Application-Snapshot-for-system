@@ -21,7 +21,8 @@ pub(crate) use icon::app_icon_png;
 pub(crate) use window::restore_minimized;
 
 /// 本平台支持的全局快捷键动作，顺序即设置页的显示顺序
-pub(crate) const SHORTCUT_ACTIONS: &[&str] = &["snapshot", "fullscreen", "record", "polish"];
+pub(crate) const SHORTCUT_ACTIONS: &[&str] =
+    &["snapshot", "fullscreen", "record", "polish", "palette"];
 
 /// 一次进行中的录制
 pub(crate) struct Recording(recorder::ActiveRecording);
@@ -94,23 +95,11 @@ pub(crate) fn capabilities() -> PlatformCapabilities {
     PlatformCapabilities {
         os: "windows".into(),
         display_server: "Win32".into(),
-        recording: CapabilityStatus::available(
-            "Windows.Graphics.Capture + Media Foundation（按窗口句柄采集，不依赖 ffmpeg）",
-        ),
-        recording_system_audio: CapabilityStatus::available(
-            "WASAPI loopback：录制当前默认播放设备的系统混音",
-        ),
-        recording_microphone: CapabilityStatus::available(
-            "WASAPI：录制当前默认麦克风；首次使用受 Windows 麦克风隐私设置控制",
-        ),
-        autostart: CapabilityStatus::available(
-            "写入 HKCU\\...\\CurrentVersion\\Run（当前用户，opt-in）",
-        ),
+        recording: CapabilityStatus::yes(),
+        recording_system_audio: CapabilityStatus::yes(),
+        recording_microphone: CapabilityStatus::yes(),
+        autostart: CapabilityStatus::yes(),
         scrolling: None,
-        include_cursor: CapabilityStatus::available(
-            "录制：WGC SetIsCursorCaptureEnabled；静帧：按热点合成系统光标",
-        ),
-        tray_note: "NotifyIcon：左键/双击打开主窗口；右键菜单打开设置/退出。".into(),
-        notes: vec!["静帧光标只支持 32 位带 alpha 的现代光标；老式单色光标会跳过合成".into()],
+        include_cursor: CapabilityStatus::yes(),
     }
 }

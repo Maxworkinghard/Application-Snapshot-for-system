@@ -1,129 +1,85 @@
-/* Neutral surfaces; green is reserved for active controls and primary actions. */
+/*
+ * 纸与墨：暖白底、近黑字、一种信号红。层级靠字重、灰度和位置，不靠卡片、底色和阴影。
+ * 唯一「立起来」的东西是键帽——这是个快捷键工具，键帽是它自己的视觉语言。
+ */
 :root {
   color-scheme: light;
-  --font-sans: "Segoe UI", "Microsoft YaHei", -apple-system, BlinkMacSystemFont, system-ui, sans-serif;
-  --font-mono: "Cascadia Code", Consolas, monospace;
-  --bg-app: #e8e7e2;
-  --bg-surface: #fafaf7;
-  --bg-surface-elevated: #ffffff;
-  --bg-surface-subtle: #f0f0eb;
-  --bg-sidebar: #f0f1ec;
-  --bg-card: #ffffff;
-  --bg-input: #ffffff;
-  --bg-hover: rgba(32, 43, 37, 0.045);
-  --bg-active: rgba(32, 43, 37, 0.08);
-  --border-subtle: #e0e3dc;
-  --border-strong: #c9cfc6;
-  --border-focus: var(--accent-primary);
-  --specular-highlight: none;
-  --text-primary: #242b26;
-  --text-secondary: #4e5851;
-  --text-tertiary: #677169;
-  --text-disabled: #7a827b;
-  --text-inverse: #ffffff;
-  --accent-primary: #35664d;
-  --accent-hover: #294f3c;
-  --accent-rgb: 53, 102, 77;
-  --accent-light: rgba(var(--accent-rgb), 0.09);
-  --accent-glow: transparent;
-  --accent-gradient: var(--accent-primary);
-  --success: #35664d;
-  --status-online: #35664d;
-  --status-warning: #976419;
-  --danger: #b3261e;
-  --danger-hover: #8f1d17;
-  --danger-surface: #fdf0ef;
-  --shadow-sm: 0 1px 2px rgba(32, 43, 37, 0.025);
-  --shadow-md: 0 3px 10px rgba(32, 43, 37, 0.04);
-  --shadow-lg: 0 10px 28px rgba(32, 43, 37, 0.06);
-  --shadow-float: 0 16px 40px rgba(32, 43, 37, 0.08);
+  --font-sans: "Segoe UI Variable Text", "Segoe UI", "Microsoft YaHei UI", "Microsoft YaHei", "PingFang SC",
+    -apple-system, BlinkMacSystemFont, "Noto Sans SC", system-ui, sans-serif;
+  --font-mono: "Cascadia Mono", "Cascadia Code", "JetBrains Mono", Consolas, "SF Mono", Menlo, monospace;
 
-  /* 圆角规范 */
-  --radius-xs: 4px;
-  --radius-sm: 8px;
-  --radius-md: 12px;
-  --radius-lg: 16px;
-  --radius-xl: 20px;
-  --radius-full: 9999px;
+  --paper: #f5f3ee;
+  --paper-raised: #fffefb; /* 输入框、键帽 */
+  --paper-sunk: #ebe8e0; /* 键盘选中行 */
+  --ink: #1b1a17;
+  --ink-2: #55514a;
+  --ink-3: #6f6a61;
+  --ink-4: #8c877d; /* 占位、禁用 */
+  --rule: #ddd9d0;
+  --rule-soft: #e8e4dc;
+  --rule-strong: #c9c3b7;
+  --signal: #b3301c; /* 冲突、错误、录制中、删除 */
+  --signal-soft: #d9a59c;
+  --on-ink: #f5f3ee;
+  --overlay: #161513;
+  --overlay-ink: #edeae3;
+  --overlay-ink-2: #a8a296;
+  --thumb-empty: #e4e0d7;
+  --shadow-panel: 0 24px 60px rgba(0, 0, 0, 0.3);
+  --shadow-dialog: 0 8px 24px rgba(27, 26, 23, 0.18);
 
-  /* ==================== 严格 4 档字阶 (辅助说明 12px / 正文 13px / 分区标题 15px / 主标题 18px，全页≤4档) ==================== */
-  --text-title: 18px;          /* 窗口主标题/全屏主栏目 (line-height: 24px, 字距: -0.015em, 字重: 600) */
-  --leading-title: 24px;
-  --tracking-title: -0.015em;
+  --text: 13px;
+  --text-small: 12px;
+  --text-lead: 15px;
 
-  --text-heading: 15px;        /* 区块标题/卡片名称/主标签 (line-height: 22px, 字距: -0.01em, 字重: 600) */
-  --leading-heading: 22px;
-  --tracking-heading: -0.01em;
-
-  --text-body: 13px;           /* 标准正文/输入框/下拉项/代码编辑 (line-height: 20px, 字重: 400/500) */
-  --leading-body: 20px;
-  --tracking-body: 0;
-
-  --text-caption: 12px;        /* 辅助元数据/状态/按键/键帽 (line-height: 16px, 字距: 0.01em, 字重: 500) */
-  --leading-caption: 16px;
-  --tracking-caption: 0.01em;
-
-  /* ==================== 严格 4/8pt 间距节奏 ==================== */
-  --space-1: 4px;
-  --space-2: 8px;
-  --space-3: 12px;
-  --space-4: 16px;
-  --space-5: 24px;
-  --space-6: 32px;
-  --space-7: 48px;
-
-  /* ==================== 统一交互动效节奏 (严格 60-220ms, 统一 Ease-Out 曲线) ==================== */
-  --duration-instant: 60ms;     /* 物理击键与 Active 按下反馈 (<100ms 即时响应) */
-  --duration-fast: 120ms;        /* 微交互状态变更、Pill 切换、开关、指示器 */
-  --duration-interactive: 180ms; /* 标准面板收放、抽屉展开、模态渐显 */
-  --duration-slow: 240ms;        /* 大面积视图切换与环境场景过渡 */
-
-  /* 统一以 Ease-Out 为核心的动效曲线：响应迅速、降速沉着、严禁无意义漂浮与冗余弹跳 */
-  --ease-out: cubic-bezier(0.16, 1, 0.3, 1);       /* 工业级标准 Ease-Out */
-  --ease-out-quad: cubic-bezier(0.25, 0.46, 0.45, 0.94); /* 快速轻量减速 */
-  --ease-interactive: var(--ease-out);
-  --ease-smooth: var(--ease-out);
-  --ease-spring: var(--ease-out); /* 彻底抹平夸张弹跳，以果断 Decelerating 为主 */
-
-  --transition-instant: all var(--duration-instant) var(--ease-out);
-  --transition-fast: all var(--duration-fast) var(--ease-out);
-  --transition-base: all var(--duration-interactive) var(--ease-out);
-  --focus-ring: 0 0 0 2px var(--bg-surface), 0 0 0 4px var(--accent-primary);
-  --focus-ring-inset: inset 0 0 0 2px var(--accent-primary);
+  /* 动效：见 lib/motion.ts。进场慢一点、退场快一点，换页和指示条用同一档 */
+  --t-press: 100ms;   /* 按下、悬停变色 */
+  --t-fade: 180ms;    /* 小状态：开关、选中变色 */
+  --t-open: 320ms;    /* 进场与移动：换页、指示条滑动、弹层、列表入场 */
+  --t-exit: 160ms;    /* 所有退场 */
+  --t-theme: 520ms;   /* 换颜色：从点的地方铺开 */
+  --rise: 10px;       /* 小东西进场的位移 */
+  --shift: 32px;      /* 换页时新页滑进来的距离 */
+  --stagger: 24ms;    /* 列表逐个入场的间隔 */
+  --settle-from: 0.97; /* 换布局时新布局从这个比例落定 */
+  --ease-out: cubic-bezier(0.2, 0, 0, 1);          /* 标准：移动、指示条 */
+  --ease-enter: cubic-bezier(0.05, 0.7, 0.1, 1);   /* 进场：先快后稳稳落定 */
+  --ease-exit: cubic-bezier(0.3, 0, 0.8, 0.15);    /* 退场：加速离开 */
+  --ease-in: var(--ease-exit);
+  --ease-cat: cubic-bezier(0.34, 1.56, 0.64, 1);
 }
 
-/* Graphite uses the same hierarchy as the light theme. */
 [data-theme="dark"] {
   color-scheme: dark;
-  --bg-app: #1e1f1e;
-  --bg-surface: #272827;
-  --bg-surface-elevated: #303130;
-  --bg-surface-subtle: #353635;
-  --bg-sidebar: #242524;
-  --bg-card: #2e2f2e;
-  --bg-input: #292a29;
-  --bg-hover: rgba(235, 242, 233, 0.055);
-  --bg-active: rgba(235, 242, 233, 0.09);
-  --border-subtle: #3f423f;
-  --border-strong: #585d57;
-  --text-primary: #eff1eb;
-  --text-secondary: #c8d0c5;
-  --text-tertiary: #a4afa0;
-  --text-disabled: #7f8b7c;
-  --text-inverse: #202b23;
-  --accent-primary: #90b79d;
-  --accent-hover: #a8c8b2;
-  --accent-rgb: 144, 183, 157;
-  --accent-light: rgba(var(--accent-rgb), 0.1);
-  --accent-gradient: var(--accent-primary);
-  --success: #90b79d;
-  --status-online: #90b79d;
-  --status-warning: #dfba77;
-  --danger: #e89189;
-  --danger-hover: #f0a9a2;
-  --danger-surface: rgba(232, 145, 137, 0.12);
-  --shadow-sm: 0 1px 2px rgba(0, 0, 0, 0.08);
-  --shadow-md: 0 4px 12px rgba(0, 0, 0, 0.12);
-  --shadow-lg: 0 12px 32px rgba(0, 0, 0, 0.18);
-  --shadow-float: 0 16px 40px rgba(0, 0, 0, 0.22);
+  --paper: #1c1b19;
+  --paper-raised: #252422;
+  --paper-sunk: #2d2b28;
+  --ink: #ece8e0;
+  --ink-2: #bdb7ac;
+  --ink-3: #a39d92;
+  --ink-4: #7e786e;
+  --rule: #393733;
+  --rule-soft: #2f2d2a;
+  --rule-strong: #4c4944;
+  --signal: #ee8a76;
+  --signal-soft: #7a4238;
+  --on-ink: #1c1b19;
+  --overlay: #0e0d0c;
+  --thumb-empty: #2f2d2a;
+  --shadow-panel: 0 24px 60px rgba(0, 0, 0, 0.55);
+  --shadow-dialog: 0 8px 24px rgba(0, 0, 0, 0.45);
+}
+
+/* 减弱：只留淡入淡出，不做位移，不回弹（时长不砍到看不见） */
+[data-motion="reduced"] {
+  --t-press: 0ms;
+  --t-fade: 150ms;
+  --t-open: 200ms;
+  --t-exit: 150ms;
+  --t-theme: 240ms;
+  --rise: 0px;
+  --shift: 0px;
+  --stagger: 0ms;
+  --settle-from: 1;
+  --ease-cat: var(--ease-out);
 }
