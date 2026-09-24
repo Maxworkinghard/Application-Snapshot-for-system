@@ -103,7 +103,7 @@ export function ShortcutsPanel() {
   }
 
   const renderRow = (binding: ShortcutBinding) => {
-    const label = ACTION_LABELS[binding.action] ?? { name: binding.action, tag: "" };
+    const label = ACTION_LABELS[binding.action] ?? { name: binding.action };
     const isRecording = recording === binding.action;
     const saved = settings.shortcuts.find((item) => item.action === binding.action)?.accelerator ?? null;
     const conflicted = Boolean(binding.accelerator && binding.accelerator === saved && conflicts.includes(binding.accelerator));
@@ -128,7 +128,6 @@ export function ShortcutsPanel() {
           <span className="key-row-text">
             <span className="key-row-name">
               <span className={isRecording ? "strong" : ""}>{label.name}</span>
-              {isRecording && <span className="quiet small">正在录新组合键</span>}
             </span>
             {conflicted && <span className="signal small">没注册上，这组键已被其他程序占用</span>}
             {unavailable && !conflicted && <span className="quiet small">不可用</span>}

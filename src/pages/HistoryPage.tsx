@@ -1,6 +1,5 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import {
-  copySnapshot,
   deleteSnapshots,
   listSnapshots,
   onSnapshotsChanged,
@@ -146,14 +145,6 @@ export function HistoryPage() {
     } finally {
       setDeleting(false);
       setConfirming(false);
-    }
-  }
-
-  async function copy(id: string) {
-    try {
-      notify(await copySnapshot(id));
-    } catch (error) {
-      notify(errorText(error), "error");
     }
   }
 
@@ -333,9 +324,6 @@ export function HistoryPage() {
           records={filtered.length ? filtered : records}
           startId={previewId}
           onClose={() => setPreviewId(null)}
-          onCopy={(id) => void copy(id)}
-          onReveal={() => void revealFolder()}
-          onDelete={(id) => void remove([id])}
         />
       )}
       {confirmDialog.item && (

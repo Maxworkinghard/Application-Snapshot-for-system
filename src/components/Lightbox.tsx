@@ -22,20 +22,13 @@ export function Lightbox({
   records,
   startId,
   onClose,
-  onCopy,
-  onReveal,
-  onDelete,
 }: {
   records: SnapshotRecord[];
   startId: string;
   onClose: () => void;
-  onCopy: (id: string) => void;
-  onReveal: () => void;
-  onDelete: (id: string) => void;
 }) {
   const [currentId, setCurrentId] = useState(startId);
   const [box, setBox] = useState<{ width: number; height: number } | null>(null);
-  const [armedDelete, setArmedDelete] = useState(false);
   const [isClosing, setIsClosing] = useState(false);
   // 翻页方向：下一张从右边滑进来，上一张从左边
   const [direction, setDirection] = useState<1 | -1>(1);
@@ -82,32 +75,12 @@ export function Lightbox({
     (delta: number) => {
       const next = records[index + delta];
       if (next) {
-        setArmedDelete(false);
         setDirection(delta > 0 ? 1 : -1);
         setCurrentId(next.id);
       }
     },
     [index, records],
   );
-
-  const remove = useCallback(() => {
-    if (!record) return;
-    if (!armedDelete) {
-      setArmedDelete(true);
-      return;
-    }
-    const next = records[index + 1] ?? records[index - 1];
-    onDelete(record.id);
-    setArmedDelete(false);
-    if (next) setCurrentId(next.id);
-    else onClose();
-  }, [armedDelete, index, onClose, onDelete, record, records]);
-
-  useEffect(() => {
-    if (!armedDelete) return;
-    const timer = window.setTimeout(() => setArmedDelete(false), 2400);
-    return () => window.clearTimeout(timer);
-  }, [armedDelete]);
 
   useEffect(() => {
     const onKey = (event: KeyboardEvent) => {
@@ -116,12 +89,10 @@ export function Lightbox({
         void close();
       } else if (event.key === "ArrowLeft") step(-1);
       else if (event.key === "ArrowRight") step(1);
-      else if (event.key === "Delete") remove();
-      else if ((event.ctrlKey || event.metaKey) && event.key.toLowerCase() === "c" && record) onCopy(record.id);
     };
     window.addEventListener("keydown", onKey);
     return () => window.removeEventListener("keydown", onKey);
-  }, [close, onCopy, record, remove, step]);
+  }, [close, step]);
 
   if (!record) return null;
 
@@ -162,13 +133,6 @@ export function Lightbox({
       <div className="lightbox-foot">
         <span className="mono lightbox-meta">
           {record.width} × {record.height} · {formatBytes(record.sizeBytes)} · {record.fileName.split(".").pop()?.toUpperCase()} · {dayLabel(record.createdAt)} {formatClock(record.createdAt)}
-        </span>
-        <span className="lightbox-actions">
-          <button type="button" onClick={() => onCopy(record.id)}>复制<span className="mono">Ctrl C</span></button>
-          <button type="button" onClick={onReveal}>在文件夹中显示</button>
-          <button type="button" className="is-danger" onClick={remove} aria-live="polite">
-            {armedDelete ? "再按一次删除" : "删除"}<span className="mono">Del</span>
-          </button>
         </span>
       </div>
     </div>,
