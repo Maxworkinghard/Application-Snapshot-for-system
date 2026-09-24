@@ -22,7 +22,7 @@ The cost is not only the code. Three implementations mean three places a bug can
 
 ## Platform capabilities
 
-Each platform has its own native implementation behind a shared set of commands. **Capabilities and behaviour differ per platform** — the same button may go through entirely different system APIs, with different edge cases. See the table below, and the "local capabilities" panel in Settings, which each adapter reports at runtime rather than being hard-coded copy.
+Each platform has its own native implementation behind a shared set of commands. **Capabilities and behaviour differ per platform** — the same button may go through entirely different system APIs, with different edge cases. See the table below; the available / unavailable marks under Preferences → "本机与模型" are probed by each adapter at runtime.
 
 Only the parts that do not depend on system capabilities are shared: settings, snapshot history, prompt polishing, the UI. Anything the OS itself provides where the platforms genuinely differ — recording, window control — is written separately for each. Picking a lowest-common-denominator implementation for the sake of uniformity produced something that was not good enough anywhere.
 
@@ -94,7 +94,7 @@ bash scripts/linux/build.sh  # release binary + deb/AppImage when bundlers succe
 | `xdotool` | Restore a minimized target window before capture; scrolling capture paging |
 | StatusNotifierHost | System tray (KDE native; GNOME needs an AppIndicator extension) |
 
-Recording picks its backend from the session, not from `$DISPLAY`: a Wayland session always tries portal ScreenCast first, because XWayland leaves `$DISPLAY` set and `x11grab` cannot see native Wayland windows. Only when the portal is unavailable does it fall back to `x11grab`, and the capability line then says that the fallback records the X server's view only. An X11 session goes straight to `x11grab`.
+Recording picks its backend from the session, not from `$DISPLAY`: a Wayland session always tries portal ScreenCast first, because XWayland leaves `$DISPLAY` set and `x11grab` cannot see native Wayland windows. Only when the portal is unavailable does it fall back to `x11grab`, and that fallback records the X server's view only. An X11 session goes straight to `x11grab`.
 
 **Autostart** is opt-in via Settings → 开机静默自启动. It writes `~/.config/autostart/com.appsnapshot.prompt-pet-shortcut.desktop`. An **optional** systemd `--user` unit example lives at `scripts/linux/com.appsnapshot.prompt-pet-shortcut.service.example` (advanced; never enabled by the app).
 

@@ -1,10 +1,21 @@
-export type NavPage = "shortcuts" | "prompt" | "history" | "pet" | "prefs" | "theme";
+/** 主窗口里的页面。home / settings 只在「时间线」布局里出现 */
+export type NavPage =
+  | "shortcuts"
+  | "prompt"
+  | "history"
+  | "pet"
+  | "prefs"
+  | "themes"
+  | "home"
+  | "settings";
+
 export type ShortcutAction =
   | "snapshot"
   | "fullscreen"
   | "scrolling"
   | "record"
-  | "polish";
+  | "polish"
+  | "palette";
 
 export interface PromptTemplate {
   id: string;
@@ -24,6 +35,13 @@ export interface PetAsset {
   path: string;
   entry: string;
   animations: string[];
+  /** 导入时用户选的原文件 */
+  source?: string;
+  sizeBytes?: number;
+  importedAt?: number;
+  lastUsedAt?: number;
+  /** 素材文件找不到了 */
+  missing?: boolean;
 }
 
 export interface Settings {
@@ -39,7 +57,6 @@ export interface Settings {
   snapshotFormat: "png" | "jpeg" | "webp";
   saveDir: string;
   recordingDir: string;
-  customTheme: string | null;
   shutterSound: "crisp" | "soft" | "none" | "custom";
   customSoundPath: string | null;
   flashOnCapture: boolean;
@@ -85,9 +102,36 @@ export interface SnapshotRecord {
   createdAt: number;
 }
 
+/** 后端记下的一件事：截了什么、录了什么、润色了什么、哪里失败了 */
+export interface ActivityEntry {
+  id: string;
+  at: number;
+  kind: "capture" | "record" | "polish" | "error";
+  title: string;
+  /** 一小段数字信息，如「1920 × 1080」「58 → 427 字」「02:13」 */
+  meta?: string;
+  /** 润色结果开头、错误原文、录像文件路径 */
+  detail?: string;
+  snapshotId?: string;
+}
+
+/** 剪贴板里放着我们的图时的状态 */
+export interface ClipboardState {
+  label: string;
+  snapshotId: string | null;
+  armedAt: number;
+  /** 何时自动清空；null 表示不会 */
+  clearAt: number | null;
+}
+
+export interface PetImportResult {
+  settings: Settings;
+  imported: number;
+  failed: Array<{ path: string; reason: string }>;
+}
+
 export interface CapabilityStatus {
   available: boolean;
-  detail: string;
 }
 
 export interface PlatformCapabilities {
@@ -100,6 +144,4 @@ export interface PlatformCapabilities {
   /** 仅 Linux 下发：其余平台没有滚动长截图 */
   scrolling?: CapabilityStatus;
   includeCursor: CapabilityStatus;
-  trayNote: string;
-  notes: string[];
 }

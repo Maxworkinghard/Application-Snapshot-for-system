@@ -22,8 +22,14 @@ pub(crate) use scrolling::capture_scrolling_window;
 pub(crate) use window::restore_minimized;
 
 /// 本平台支持的全局快捷键动作，顺序即设置页的显示顺序（滚动长截图只有 Linux/X11 有）
-pub(crate) const SHORTCUT_ACTIONS: &[&str] =
-    &["snapshot", "fullscreen", "scrolling", "record", "polish"];
+pub(crate) const SHORTCUT_ACTIONS: &[&str] = &[
+    "snapshot",
+    "fullscreen",
+    "scrolling",
+    "record",
+    "polish",
+    "palette",
+];
 
 /// 一次进行中的录制（ffmpeg 子进程 + 可选 portal）
 pub(crate) struct Recording(recording::ActiveRecording);
@@ -82,41 +88,20 @@ pub(crate) fn open_folder(path: &Path) -> Result<(), String> {
 }
 
 pub(crate) fn capabilities() -> PlatformCapabilities {
-    let recording = match recording::recording_available() {
-        Ok(()) => CapabilityStatus::available(recording::recording_capability_detail()),
-        Err(detail) => CapabilityStatus {
-            available: false,
-            detail,
-        },
-    };
+    // 滚动长截图要 X11（xdotool 翻页）；纯 Wayland 做不了
     let scrolling = if recording::is_wayland_session() || std::env::var_os("DISPLAY").is_none() {
-        CapabilityStatus {
-            available: false,
-            detail: "滚动长截图需要 X11/`$DISPLAY`（xdotool）；纯 Wayland 不支持".into(),
-        }
+        CapabilityStatus::no()
     } else {
-        CapabilityStatus::available("X11 下 xcap 连拍 + xdotool 翻页拼接（需 xdotool）")
+        CapabilityStatus::yes()
     };
     PlatformCapabilities {
         os: "linux".into(),
         display_server: recording::display_server_label().into(),
-        recording,
+        recording: CapabilityStatus::probe(recording::recording_available()),
         recording_system_audio: recording::system_audio_capability(),
         recording_microphone: recording::microphone_capability(),
-        autostart: CapabilityStatus::probe(
-            autostart::autostart_capability(),
-            "写入 XDG autostart（~/.config/autostart，opt-in）",
-        ),
+        autostart: CapabilityStatus::probe(autostart::autostart_capability()),
         scrolling: Some(scrolling),
-        include_cursor: CapabilityStatus::available(
-            "静帧：ffmpeg x11grab 带光标（失败则回退无光标并在成功提示中说明）；录制：x11grab 尊重开关，portal 路径忽略",
-        ),
-        tray_note: "托盘菜单（打开设置 / 退出）在有 StatusNotifierHost 时可用（KDE 原生；GNOME 需 AppIndicator 扩展）。缺失时应用仍可运行。左键打开主窗口：Windows/macOS 支持；Linux 本 Tauri/tray-icon 0.24（libayatana-appindicator）无点击回调，通常仅菜单可用。Wayland 下托盘/透明宠物表现依赖合成器，需本机验证。".into(),
-        notes: vec![
-            "Linux portal 录制忽略 target_id 与 include_cursor（由桌面选择器/合成器决定）；启动时会提示重新选窗/屏".into(),
-            "Linux 还原最小化用 xdotool（先 windowmap 再 windowactivate），会抢焦点".into(),
-            "Linux 带光标静帧需要 ffmpeg；不可用时回退为无光标截图，并在成功提示中告知".into(),
-            "Wayland（GNOME/KDE）下 portal 录制、托盘与宠物透明需在对应合成器上本机验证".into(),
-        ],
+        include_cursor: CapabilityStatus::yes(),
     }
 }

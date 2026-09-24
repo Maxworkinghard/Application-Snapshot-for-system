@@ -7,7 +7,7 @@ import { soundUrl } from "./media";
  * 机械声是宽频瞬态、没有音高，所以用白噪声过带通再配极快的衰减包络；
  * 用振荡器无论怎么调，出来的都是电子提示音而不是快门声。
  */
-export function shutterClick(ctx: AudioContext, at: number, level: number, bright: boolean) {
+function shutterClick(ctx: AudioContext, at: number, level: number, bright: boolean) {
   const duration = 0.05;
   const buffer = ctx.createBuffer(1, Math.max(1, Math.ceil(ctx.sampleRate * duration)), ctx.sampleRate);
   const data = buffer.getChannelData(0);

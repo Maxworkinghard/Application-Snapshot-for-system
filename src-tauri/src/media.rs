@@ -6,7 +6,9 @@
 //!
 //! 只认下面几种路径，每种都先在设置 / 索引里按 id 查到真实文件，页面拿不到任意文件的读权限：
 //!   snapshot/<快照 id>
+//!   thumb/<快照 id>              缩略图（没有就现做）
 //!   pet/<形象 id>[/<压缩包内的动作路径>]
+//!   pet-thumb/<形象 id>          默认动作的第一帧
 //!   icon/<pid>/<边长>
 //!   sound/<设置里选定的自定义音效路径>
 
@@ -72,6 +74,16 @@ fn serve(app: &AppHandle, path: &str) -> Result<Media, String> {
                 bytes,
             })
         }
+        "thumb" => Ok(Media {
+            mime: "image/jpeg",
+            immutable: true,
+            bytes: snapshots::read_thumbnail(&state, rest)?,
+        }),
+        "pet-thumb" => Ok(Media {
+            mime: "image/png",
+            immutable: false,
+            bytes: pet::read_thumbnail(&state, rest)?,
+        }),
         "pet" => {
             let (id, entry) = match rest.split_once('/') {
                 Some((id, entry)) => (id, Some(entry)),

@@ -1,5 +1,5 @@
 import { describe, expect, it, vi } from "vitest";
-import { fileNameOf, formatBytes, formatShortcut, formatWhen, normalizeKey } from "./format";
+import { fileNameOf, formatBytes, formatWhen, normalizeKey, shortcutKeys } from "./format";
 
 describe("format helpers", () => {
   it("keeps the current zero-byte and large-file labels", () => {
@@ -21,9 +21,9 @@ describe("format helpers", () => {
     expect(normalizeKey("Enter")).toBe("Enter");
   });
 
-  it("formats shortcut labels and relative times", () => {
-    expect(formatShortcut(null)).toBe("未设置");
-    expect(formatShortcut("CommandOrControl+Shift+K")).toBe("Ctrl  +  Shift  +  K");
+  it("splits shortcut labels into keys and formats relative times", () => {
+    expect(shortcutKeys(null)).toEqual([]);
+    expect(shortcutKeys("CommandOrControl+Shift+K")).toEqual(["Ctrl", "Shift", "K"]);
 
     vi.useFakeTimers();
     vi.setSystemTime(new Date("2026-09-23T00:00:00.000Z"));

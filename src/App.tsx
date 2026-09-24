@@ -1,32 +1,13 @@
-import { useEffect, useMemo, useRef, useState } from "react";
-import { getCurrentWindow } from "@tauri-apps/api/window";
-import {
-  Keyboard,
-  PawPrint,
-  TextCursorInput,
-  X,
-  History,
-  Sparkles,
-  SlidersHorizontal,
-  Minus,
-  Maximize2,
-  Info,
-  Palette,
-} from "lucide-react";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import {
   getShortcutConflicts,
   loadSettings,
-  onSettingsChanged,
   onCaptureFeedback,
+  onSettingsChanged,
+  platformCapabilities,
 } from "./lib/backend";
 import { previewHintSound } from "./lib/sound";
-import { ThemePage } from "./pages/ThemePage";
-import { HistoryPage } from "./pages/HistoryPage";
-import { LoadingState } from "./components/LoadingState";
-import { PromptPage } from "./pages/PromptPage";
-import { PetPage } from "./pages/PetPage";
-import { PreferencesPage } from "./pages/PreferencesPage";
-import { ShortcutsPage } from "./pages/ShortcutsPage";
+import { shortcutKeys } from "./lib/format";
 import {
   applyTheme,
   broadcastTheme,
@@ -34,89 +15,151 @@ import {
   readThemePreference,
   resolveTheme,
   watchSystemTheme,
-  type ThemeMode,
   type ThemePreference,
 } from "./lib/theme";
-import type {
-  NavPage,
-  Settings,
-} from "./types";
+import {
+  applyMotion,
+  broadcastMotion,
+  persistLayout,
+  persistMotionPreference,
+  readLayout,
+  readMotionPreference,
+  resolveMotion,
+  watchSystemMotion,
+  type LayoutTheme,
+  type MotionPreference,
+} from "./lib/prefs";
+import { canViewTransition, viewTransition, type TransitionDirection } from "./lib/motion";
+import { AppContext, errorText, useApp, type AppContextValue, type Notice, type NoticeKind } from "./app/context";
+import { LedgerList, NavMark, NoticeLine, SideNav, TitleBar, TopNav } from "./app/Shell";
+import { Companion } from "./components/Companion";
+import { LoadingState } from "./components/LoadingState";
+import { useActivityLog, useClipboardState, useRecordingStatus } from "./hooks/useLive";
+import { ShortcutsPage } from "./pages/ShortcutsPage";
+import { PromptPage } from "./pages/PromptPage";
+import { HistoryPage } from "./pages/HistoryPage";
+import { PetPage } from "./pages/PetPage";
+import { PreferencesPage } from "./pages/PreferencesPage";
+import { ThemesPage } from "./pages/ThemesPage";
+import { TimelineHome } from "./pages/TimelineHome";
+import { SettingsDoc } from "./pages/SettingsDoc";
+import type { NavPage, PlatformCapabilities, Settings } from "./types";
 
-type NavEntry = { id: NavPage; label: string; icon: typeof TextCursorInput };
+/** 每种布局能到的页面，以及打开时落在哪一页 */
+const LAYOUT_PAGES: Record<LayoutTheme, { home: NavPage; pages: NavPage[] }> = {
+  companion: { home: "shortcuts", pages: ["shortcuts", "prompt", "history", "pet", "prefs", "themes"] },
+  ledger: { home: "shortcuts", pages: ["shortcuts", "prompt", "history", "pet", "prefs", "themes"] },
+  topbar: { home: "shortcuts", pages: ["shortcuts", "prompt", "history", "pet", "prefs", "themes"] },
+  timeline: { home: "home", pages: ["home", "prompt", "history", "pet", "settings"] },
+};
 
-const navGroups: Array<{ title: string; items: NavEntry[] }> = [
-  {
-    title: "工作台",
-    items: [
-      { id: "shortcuts", label: "快捷操作", icon: Keyboard },
-      { id: "prompt", label: "Prompt 编辑", icon: Sparkles },
-      { id: "history", label: "快照历史", icon: History },
-      { id: "pet", label: "桌面伴侣", icon: PawPrint },
-    ],
-  },
-  {
-    title: "设置",
-    items: [
-      { id: "prefs", label: "偏好设置", icon: SlidersHorizontal },
-      { id: "theme", label: "界面主题", icon: Palette },
-    ],
-  },
-];
+/** 两种布局之间换页时，对应到最接近的那一页 */
+function mapPage(page: NavPage, layout: LayoutTheme): NavPage {
+  const { home, pages } = LAYOUT_PAGES[layout];
+  if (pages.includes(page)) return page;
+  if (layout === "timeline") return ["shortcuts", "prefs", "themes"].includes(page) ? "settings" : home;
+  if (page === "settings") return "themes";
+  return home;
+}
 
-/** 自带内部滚动区的页面：高度锁在窗口内，页头常驻，只让内容区自己滚 */
-const FULL_HEIGHT_PAGES = new Set<NavPage>(["prompt", "history"]);
+/** 导航里的先后顺序：往后走新页从下面（或右边）来，往回走从上面（或左边）来 */
+const NAV_ORDER: Record<LayoutTheme, NavPage[]> = {
+  companion: ["shortcuts", "prompt", "history", "pet", "prefs", "themes"],
+  ledger: ["shortcuts", "prompt", "history", "pet", "prefs", "themes"],
+  topbar: ["shortcuts", "prompt", "history", "pet", "prefs", "themes"],
+  timeline: ["home", "prompt", "history", "pet", "settings"],
+};
 
-/** 旧页面淡出的时长，必须和 styles 里 page-leave 的 animation-duration 对齐 */
-const PAGE_EXIT_MS = 120;
+function directionFor(layout: LayoutTheme, from: NavPage, to: NavPage): TransitionDirection {
+  const order = NAV_ORDER[layout];
+  const forward = order.indexOf(to) >= order.indexOf(from);
+  // 侧栏是竖排，换页上下走；标题栏里的导航是横排，换页左右走
+  const vertical = layout === "companion" || layout === "ledger";
+  return vertical ? (forward ? "down" : "up") : forward ? "right" : "left";
+}
+
+/** 普通提示自己消失，出错的多留一会儿（伴侣布局里由猫说，别处浮在左下角） */
+const NOTICE_MS: Record<NoticeKind, number> = { info: 3200, error: 9000 };
+
+function PageView({ page }: { page: NavPage }) {
+  switch (page) {
+    case "home":
+      return <TimelineHome />;
+    case "prompt":
+      return <PromptPage />;
+    case "history":
+      return <HistoryPage />;
+    case "pet":
+      return <PetPage />;
+    case "prefs":
+      return <PreferencesPage />;
+    case "themes":
+      return <ThemesPage />;
+    case "settings":
+      return <SettingsDoc />;
+    default:
+      return <ShortcutsPage />;
+  }
+}
 
 export function App() {
-  const [page, setPage] = useState<NavPage>("shortcuts");
-  // 实际渲染的页面滞后于 page：先让旧页面演完淡出，再换内容
-  const [shownPage, setShownPage] = useState<NavPage>("shortcuts");
-  const [isLeaving, setIsLeaving] = useState(false);
-  const canvasRef = useRef<HTMLElement | null>(null);
   // 默认值只在后端有一份；拿到之前显示加载态，不在前端再抄一份默认设置
   const [settings, setSettings] = useState<Settings | null>(null);
-  const [toast, setToast] = useState<string | null>(null);
-  const [themePreference, setThemePreference] = useState<ThemePreference>(() => readThemePreference());
-  const [theme, setTheme] = useState<ThemeMode>(() => resolveTheme(readThemePreference()));
+  const [layout, setLayoutState] = useState<LayoutTheme>(() => readLayout());
+  const [page, setPage] = useState<NavPage>(() => LAYOUT_PAGES[readLayout()].home);
+  const [themePreference, setThemePreferenceState] = useState<ThemePreference>(() => readThemePreference());
+  const [motionPreference, setMotionPreferenceState] = useState<MotionPreference>(() => readMotionPreference());
+  const [notice, setNotice] = useState<Notice | null>(null);
+  const [conflicts, setConflicts] = useState<string[]>([]);
+  const [caps, setCaps] = useState<PlatformCapabilities | null>(null);
+  const [flash, setFlash] = useState(false);
+  const [pendingPreviewId, setPendingPreviewId] = useState<string | null>(null);
+  const [pendingDraft, setPendingDraft] = useState<string | null>(null);
+  const noticeTimer = useRef<number | null>(null);
+  const mainRef = useRef<HTMLElement>(null);
 
-  function changeTheme(next: ThemePreference) {
-    setThemePreference(next);
-    persistThemePreference(next);
-    const mode = resolveTheme(next);
-    setTheme(mode);
-    applyTheme(mode);
-    broadcastTheme(mode);
-  }
+  const activity = useActivityLog();
+  const clipboard = useClipboardState();
+  const recording = useRecordingStatus();
 
-  // 跟随系统时，系统外观变了要当场跟上，否则得重开窗口才生效
-  useEffect(() => {
-    if (themePreference !== "system") return;
-    return watchSystemTheme((mode) => {
-      setTheme(mode);
-      applyTheme(mode);
-      broadcastTheme(mode);
-    });
-  }, [themePreference]);
+  const notify = useCallback((text: string, kind: NoticeKind = "info") => {
+    if (noticeTimer.current !== null) window.clearTimeout(noticeTimer.current);
+    setNotice({ id: Date.now(), text, kind, at: Date.now() });
+    noticeTimer.current = window.setTimeout(() => setNotice(null), NOTICE_MS[kind]);
+  }, []);
 
-  const [flashVisible, setFlashVisible] = useState(false);
+  const dismissNotice = useCallback(() => setNotice(null), []);
 
   useEffect(() => {
     loadSettings()
       .then(setSettings)
-      .catch((error) => notify(`读取设置失败：${error instanceof Error ? error.message : String(error)}`));
+      .catch((error) => notify(`读取设置失败：${errorText(error)}`, "error"));
+    platformCapabilities()
+      .then((value) => setCaps(value ?? null))
+      .catch(() => setCaps(null));
     const pending = onSettingsChanged(setSettings);
     return () => {
       void pending.then((unlisten) => unlisten());
     };
-  }, []);
+  }, [notify]);
+
+  // 快捷键由后端在启动时注册；那一刻网页还没加载，注册不上的键等到这里再提示
+  useEffect(() => {
+    getShortcutConflicts()
+      .then((failed) => {
+        if (!Array.isArray(failed) || failed.length === 0) return;
+        setConflicts(failed);
+        notify(`${failed.map((key) => shortcutKeys(key).join(" ")).join("、")} 没能注册，可能被别的程序占用了`, "error");
+      })
+      // 只是一条提示，取不到不影响使用
+      .catch(() => {});
+  }, [notify]);
 
   useEffect(() => {
     const pending = onCaptureFeedback((payload) => {
       if (payload.flash) {
-        setFlashVisible(true);
-        window.setTimeout(() => setFlashVisible(false), 220);
+        setFlash(true);
+        window.setTimeout(() => setFlash(false), 220);
       }
       if (payload.shutterSound !== "none") {
         previewHintSound(
@@ -131,164 +174,194 @@ export function App() {
     };
   }, []);
 
-  // 快捷键由后端在启动时注册；那一刻网页还没加载，注册不上的键等到这里再提示
-  useEffect(() => {
-    getShortcutConflicts()
-      .then((failed) => {
-        if (failed.length > 0) notify(`这些快捷键没能注册，可能已被其他程序占用：${failed.join("、")}`);
-      })
-      // 只是一条提示，取不到不影响使用
-      .catch(() => {});
+  // 颜色：跟随系统时，系统外观变了要当场跟上
+  const setThemePreference = useCallback((next: ThemePreference) => {
+    setThemePreferenceState(next);
+    persistThemePreference(next);
+    const mode = resolveTheme(next);
+    // 从点的那个选项铺开新颜色
+    if (document.documentElement.dataset.theme !== mode) viewTransition("theme", () => applyTheme(mode));
+    broadcastTheme(mode);
   }, []);
 
   useEffect(() => {
-    if (page === shownPage) {
-      // 淡出途中又点回原页：直接复位，否则会停在半透明状态
-      setIsLeaving(false);
-      return;
-    }
-    setIsLeaving(true);
-    const timer = window.setTimeout(() => {
-      setShownPage(page);
-      setIsLeaving(false);
-      // 换页后回到顶部，否则新页面会停在上一页的滚动位置
-      canvasRef.current?.scrollTo({ top: 0 });
-    }, PAGE_EXIT_MS);
-    return () => window.clearTimeout(timer);
-  }, [page, shownPage]);
-
-  function notify(message: string) {
-    setToast(message);
-    window.setTimeout(() => setToast(null), 2600);
-  }
-
-  const content = useMemo(() => {
-    if (!settings) {
-      return <LoadingState />;
-    }
-    if (shownPage === "prompt") {
-      return <PromptPage settings={settings} onSaved={setSettings} notify={notify} />;
-    }
-    if (shownPage === "pet") {
-      return <PetPage settings={settings} onSaved={setSettings} notify={notify} />;
-    }
-    if (shownPage === "history") {
-      return <HistoryPage notify={notify} />;
-    }
-    if (shownPage === "prefs") {
-      return <PreferencesPage settings={settings} onSaved={setSettings} notify={notify} />;
-    }
-    if (shownPage === "theme") {
-      return <ThemePage preference={themePreference} resolved={theme} onChange={changeTheme} />;
-    }
-    return <ShortcutsPage settings={settings} onSaved={setSettings} notify={notify} />;
-  }, [shownPage, settings, themePreference, theme]);
-
-  const appWindow = getCurrentWindow();
-
-  // 窗口操作要 capability 里显式放行，缺权限时 promise 会被拒。
-  // 原先一律 void 掉，表现就是「点了没反应」且不留痕迹——必须让它说话。
-  function runWindowAction(action: () => Promise<unknown>, label: string) {
-    void action().catch((error) => {
-      notify(`${label}失败：${error instanceof Error ? error.message : String(error)}`);
+    if (themePreference !== "system") return;
+    return watchSystemTheme((mode) => {
+      viewTransition("theme", () => applyTheme(mode));
+      broadcastTheme(mode);
     });
+  }, [themePreference]);
+
+  const setMotionPreference = useCallback((next: MotionPreference) => {
+    setMotionPreferenceState(next);
+    persistMotionPreference(next);
+    const mode = resolveMotion(next);
+    applyMotion(mode);
+    broadcastMotion(mode);
+  }, []);
+
+  useEffect(() => {
+    if (motionPreference !== "system") return;
+    return watchSystemMotion((mode) => {
+      applyMotion(mode);
+      broadcastMotion(mode);
+    });
+  }, [motionPreference]);
+
+  // 新页挂载时要不要自己淡入：走 View Transitions 的换页/换布局不要（过渡已经管了），其余情况要
+  const pageEnters = useRef(true);
+  const pageRef = useRef(page);
+  const layoutRef = useRef(layout);
+  pageRef.current = page;
+  layoutRef.current = layout;
+
+  // 换布局：结构变了就当翻一页，新布局整体淡入、轻轻落定，不让零件各自飞
+  const setLayout = useCallback((next: LayoutTheme) => {
+    if (next === layoutRef.current) return;
+    pageEnters.current = !canViewTransition();
+    viewTransition("layout", () => {
+      setLayoutState(next);
+      setPage((current) => mapPage(current, next));
+    });
+    persistLayout(next);
+  }, []);
+
+  // 换页：旧页往反方向退半步淡掉，新页从导航的方向滑进来；导航下的墨线跟着滑过去
+  const navigate = useCallback<AppContextValue["navigate"]>((next, options) => {
+    if (options?.previewId) setPendingPreviewId(options.previewId);
+    if (options?.draft) setPendingDraft(options.draft);
+    const from = pageRef.current;
+    if (next === from) return;
+    pageEnters.current = !canViewTransition();
+    viewTransition(
+      "page",
+      () => {
+        setPage(next);
+        mainRef.current?.scrollTo?.({ top: 0 });
+      },
+      { direction: directionFor(layoutRef.current, from, next) },
+    );
+  }, []);
+
+  const value = useMemo<AppContextValue | null>(
+    () =>
+      settings && {
+        settings,
+        onSaved: setSettings,
+        notify,
+        notice,
+        dismissNotice,
+        conflicts,
+        setConflicts,
+        caps,
+        activity,
+        clipboard,
+        recording,
+        layout,
+        setLayout,
+        themePreference,
+        setThemePreference,
+        motionPreference,
+        setMotionPreference,
+        page,
+        navigate,
+        pendingPreviewId,
+        consumePreviewId: () => setPendingPreviewId(null),
+        pendingDraft,
+        consumeDraft: () => setPendingDraft(null),
+      },
+    [
+      settings, notify, notice, dismissNotice, conflicts, caps, activity, clipboard, recording,
+      layout, setLayout, themePreference, setThemePreference, motionPreference, setMotionPreference,
+      page, navigate, pendingPreviewId, pendingDraft,
+    ],
+  );
+
+  if (!value) {
+    return (
+      <div className="window">
+        <BareTitleBar />
+        <LoadingState />
+        {notice && <div className="notice-line is-error" role="alert">{notice.text}</div>}
+      </div>
+    );
   }
+
+  const content = (
+    <main className="main" ref={mainRef}>
+      <div key={`${layout}-${page}`} className={`page-view page-${page} ${pageEnters.current ? "is-entering" : ""}`}>
+        <PageView page={page} />
+      </div>
+    </main>
+  );
+
+  // 猫在不在眼前：不在的地方，提示才浮到左下角
+  const catVisible = (layout === "companion" && page !== "pet") || (layout === "timeline" && page === "home");
 
   return (
-    <div className="settings-window-frame">
-      <div
-        className="window-titlebar"
-        data-tauri-drag-region
-        onDoubleClick={() => runWindowAction(() => appWindow.toggleMaximize(), "最大化")}
-      >
-        <div className="titlebar-left">
-          <div className="window-title-chip">
-            <span className="title-name">应用快照</span>
-          </div>
-        </div>
+    <AppContext.Provider value={value}>
+      <div className={`window layout-${layout}`}>
+        {layout === "topbar" ? (
+          <TitleBar tall>
+            <TopNav />
+          </TitleBar>
+        ) : layout === "timeline" ? (
+          <TitleBar right={<TimelineLinks />} />
+        ) : (
+          <TitleBar />
+        )}
 
-        <div className="titlebar-right">
-          <div className="window-controls">
-            <button
-              className="window-control-btn"
-              onClick={() => runWindowAction(() => appWindow.minimize(), "最小化")}
-              title="最小化"
-              aria-label="最小化"
-            >
-              <Minus size={14} />
-            </button>
-            <button
-              className="window-control-btn"
-              onClick={() => runWindowAction(() => appWindow.toggleMaximize(), "最大化")}
-              title="最大化 / 还原"
-              aria-label="最大化或还原"
-            >
-              <Maximize2 size={12} />
-            </button>
-            <button
-              className="window-control-btn is-close"
-              onClick={() => runWindowAction(() => appWindow.close(), "关闭")}
-              title="关闭"
-              aria-label="关闭"
-            >
-              <X size={14} />
-            </button>
-          </div>
-        </div>
-      </div>
-
-      <div className="window-content-grid">
-        <aside className="window-sidebar">
-          {navGroups.map((group) => (
-            <div className="sidebar-group-block" key={group.title}>
-              <div className="sidebar-group-title">{group.title}</div>
-              <div className="sidebar-nav-list">
-                {group.items.map((item) => {
-                  const Icon = item.icon;
-                  const isActive = page === item.id;
-                  return (
-                    <button
-                      key={item.id}
-                      className={`sidebar-nav-item ${isActive ? "is-active" : ""}`}
-                      aria-current={isActive ? "page" : undefined}
-                      onClick={() => setPage(item.id)}
-                    >
-                      <span className="nav-item-icon"><Icon size={15} /></span>
-                      <span className="nav-item-title">{item.label}</span>
-                    </button>
-                  );
-                })}
-              </div>
-            </div>
-          ))}
-
-          <div className="sidebar-footer" />
-        </aside>
-
-        <main className="window-main-canvas" ref={canvasRef}>
-          <div
-            key={shownPage}
-            className={`page-transition-layer ${isLeaving ? "is-leaving" : "is-entering"} ${FULL_HEIGHT_PAGES.has(shownPage) ? "is-fullheight-page" : ""}`}
-          >
+        {layout === "companion" || layout === "ledger" ? (
+          <div className="shell">
+            <aside className="sidebar">
+              <SideNav />
+              {layout === "companion" ? <Companion away={page === "pet"} /> : <LedgerList />}
+            </aside>
             {content}
           </div>
-        </main>
-      </div>
+        ) : (
+          <div className="shell shell-full">{content}</div>
+        )}
 
-      {flashVisible && <div className="shutter-flash-overlay" aria-hidden />}
-      {toast && (
-        <div className="toast-portal">
-          <div className="toast-card toast-info" role="status">
-            <div className="toast-lead"><Info size={16} className="toast-icon info" /></div>
-            <div className="toast-body">
-              <div className="toast-title">{toast}</div>
-            </div>
-            <button className="toast-close-btn" onClick={() => setToast(null)} title="关闭提示">
-              <X size={12} />
-            </button>
-          </div>
-        </div>
-      )}
-    </div>
+        {!catVisible && <NoticeLine />}
+        {flash && <div className="shutter-flash" aria-hidden="true" />}
+      </div>
+    </AppContext.Provider>
+  );
+}
+
+/** 设置还没读到时也得能拖动、关闭窗口 */
+function BareTitleBar() {
+  return (
+    <header className="titlebar" data-tauri-drag-region>
+      <span className="titlebar-name">应用快照</span>
+    </header>
+  );
+}
+
+/** 「时间线」布局的标题栏右侧：回到今天、全部历史、形象、设置 */
+function TimelineLinks() {
+  const { page, navigate } = useApp();
+  const links: Array<{ page: NavPage; label: string }> = [
+    { page: "home", label: "今天" },
+    { page: "history", label: "全部历史" },
+    { page: "pet", label: "形象" },
+    { page: "settings", label: "设置" },
+  ];
+  return (
+    <nav className="top-nav top-nav-right" aria-label="主导航">
+      {links.map((link) => (
+        <button
+          key={link.page}
+          type="button"
+          className={`top-item small ${page === link.page ? "is-on" : ""}`}
+          aria-current={page === link.page ? "page" : undefined}
+          onClick={() => navigate(link.page)}
+        >
+          {link.label}
+          {page === link.page && <NavMark />}
+        </button>
+      ))}
+    </nav>
   );
 }

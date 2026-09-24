@@ -82,8 +82,6 @@ pub(crate) struct Settings {
     /// 录制产物目录。留空则沿用 save_dir，再空则落到「下载」。
     #[serde(default)]
     pub(crate) recording_dir: String,
-    #[serde(default)]
-    pub(crate) custom_theme: Option<String>,
     #[serde(default = "default_shutter_sound")]
     pub(crate) shutter_sound: String,
     #[serde(default)]
@@ -151,7 +149,6 @@ impl Default for Settings {
             snapshot_format: default_snapshot_format(),
             save_dir: String::new(),
             recording_dir: String::new(),
-            custom_theme: None,
             shutter_sound: default_shutter_sound(),
             custom_sound_path: None,
             flash_on_capture: true,
@@ -189,7 +186,6 @@ pub(crate) struct PreferencesPatch {
     snapshot_format: Option<String>,
     save_dir: Option<String>,
     recording_dir: Option<String>,
-    custom_theme: Option<serde_json::Value>,
     shutter_sound: Option<String>,
     custom_sound_path: Option<serde_json::Value>,
     flash_on_capture: Option<bool>,
@@ -279,6 +275,7 @@ pub(crate) fn read_settings(path: &PathBuf) -> Settings {
             asset.entry = asset.animations[0].clone();
         }
     }
+    super::pet::refresh_missing(&mut settings.pet_assets);
     if settings.selected_appearance_id != "app-icon"
         && !settings
             .pet_assets
@@ -335,6 +332,12 @@ pub(crate) fn save_prompt_settings(
     let result = settings.clone();
     emit_settings(&app, &result);
     Ok(result)
+}
+
+/// 内置规则的原文：用户改过内置规则后，前端用它「恢复原文」
+#[tauri::command]
+pub(crate) fn default_prompt() -> &'static str {
+    DEFAULT_PROMPT
 }
 
 #[tauri::command]
@@ -450,9 +453,6 @@ pub(crate) fn save_preferences(
     }
     if let Some(value) = prefs.recording_dir {
         settings.recording_dir = value;
-    }
-    if let Some(value) = prefs.custom_theme {
-        settings.custom_theme = value.as_str().map(str::to_string);
     }
     if let Some(value) = prefs.shutter_sound {
         settings.shutter_sound = value;

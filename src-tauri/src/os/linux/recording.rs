@@ -199,29 +199,11 @@ fn microphone_source() -> Result<String, String> {
 }
 
 pub fn system_audio_capability() -> crate::capabilities::CapabilityStatus {
-    match system_audio_source() {
-        Ok(_) => crate::capabilities::CapabilityStatus {
-            available: true,
-            detail: "PulseAudio/PipeWire：录制默认播放设备的系统混音".into(),
-        },
-        Err(detail) => crate::capabilities::CapabilityStatus {
-            available: false,
-            detail,
-        },
-    }
+    crate::capabilities::CapabilityStatus::probe(system_audio_source().map(|_| ()))
 }
 
 pub fn microphone_capability() -> crate::capabilities::CapabilityStatus {
-    match microphone_source() {
-        Ok(_) => crate::capabilities::CapabilityStatus {
-            available: true,
-            detail: "PulseAudio/PipeWire：录制默认麦克风输入".into(),
-        },
-        Err(detail) => crate::capabilities::CapabilityStatus {
-            available: false,
-            detail,
-        },
-    }
+    crate::capabilities::CapabilityStatus::probe(microphone_source().map(|_| ()))
 }
 
 fn selected_audio_inputs(
@@ -274,31 +256,6 @@ fn append_mux_args(command: &mut Command, audio_inputs: &[AudioInput]) {
                 "160k",
             ]);
         }
-    }
-}
-
-/// 能力探测文案（设置 / diagnostics）。
-pub fn recording_capability_detail() -> String {
-    if let Err(detail) = ensure_ffmpeg() {
-        return detail;
-    }
-    match pick_recording_backend() {
-        Ok(RecordingBackend::Portal) => format!(
-            "portal ScreenCast + PipeWire → ffmpeg（忽略 target_id / include_cursor）· {}",
-            display_server_label()
-        ),
-        Ok(RecordingBackend::X11Grab {
-            xwayland_only: true,
-        }) => format!(
-            "ffmpeg x11grab（门户不可用，只能录到 XWayland 的画面，原生 Wayland 窗口会是黑的）· {}",
-            display_server_label()
-        ),
-        Ok(RecordingBackend::X11Grab {
-            xwayland_only: false,
-        }) => {
-            format!("ffmpeg x11grab · {}", display_server_label())
-        }
-        Err(detail) => detail,
     }
 }
 

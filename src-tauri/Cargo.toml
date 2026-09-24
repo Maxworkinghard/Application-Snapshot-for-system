@@ -17,7 +17,7 @@ arboard = "3.6"
 base64 = "0.22"
 chrono = { version = "0.4", features = ["clock"] }
 dirs = "6"
-image = { version = "0.25", default-features = false, features = ["png", "jpeg", "webp"] }
+image = { version = "0.25", default-features = false, features = ["png", "jpeg", "webp", "gif"] }
 keyring = { version = "3.6", features = ["apple-native", "windows-native", "sync-secret-service"] }
 parking_lot = "0.12"
 # media:// 协议的路径解码；依赖树里本来就有（url 用它），不新增 crate
