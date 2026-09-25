@@ -45,6 +45,13 @@ sudo apt-get install -y -o Dpkg::Options::=--force-confdef -o Dpkg::Options::=--
   ffmpeg \
   librsvg2-bin
 
+# PipeWire older than 1.0 (Ubuntu 22.04 ships 0.3.48) is too old for the headers pipewire-rs 0.10
+# (pulled in by xcap) is written against. Add build-only 1.0.5 headers; the system library is still
+# what gets linked. See pipewire-headers.sh.
+if ! env -u PKG_CONFIG_PATH pkg-config --atleast-version=1.0 libpipewire-0.3; then
+  bash "$(dirname "$0")/pipewire-headers.sh"
+fi
+
 echo ""
 echo "==> System packages ready."
 echo "Also need: Node.js 22+ (npm; distro packages are often 18/20 — too old for npm test) and Rust (https://rustup.rs)."

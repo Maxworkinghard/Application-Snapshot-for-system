@@ -27,6 +27,15 @@ if ! pkg-config --exists webkit2gtk-4.1; then
   exit 1
 fi
 
+# PipeWire older than 1.0 (Ubuntu 22.04): use the build-only headers from pipewire-headers.sh
+if ! pkg-config --atleast-version=1.0 libpipewire-0.3; then
+  export PKG_CONFIG_PATH="/opt/snapshot-build/pipewire-1.0.5/pkgconfig${PKG_CONFIG_PATH:+:$PKG_CONFIG_PATH}"
+  if ! pkg-config --atleast-version=1.0 libpipewire-0.3; then
+    echo "error: PipeWire headers older than 1.0. Run: sudo bash scripts/linux/install-deps.sh" >&2
+    exit 1
+  fi
+fi
+
 echo "==> npm install"
 npm install
 

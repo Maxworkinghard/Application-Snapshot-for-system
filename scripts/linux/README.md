@@ -9,6 +9,7 @@ Scripts for building and running the Tauri app at the repository root on Linux.
 | `build.sh` | `npm install` + `npm run tauri build` |
 | `check-glibc.sh` | Fails if a binary needs a newer glibc than the support floor (2.35, Ubuntu 22.04). Run on every release build. |
 | `smoke-test.sh` | Installs a deb (or runs an AppImage) and launches it headless under Xvfb; passes if it stays up. Installs packages, so CI or throwaway machines only. |
+| `pipewire-headers.sh` | On PipeWire older than 1.0 (Ubuntu 22.04), installs PipeWire 1.0.5 headers for the Rust bindings under `/opt/snapshot-build`. `install-deps.sh` runs it when needed. |
 | `com.appsnapshot.snapshot.service.example` | Optional systemd `--user` unit (advanced; never enabled by the app) |
 
 ```bash
@@ -31,6 +32,8 @@ On Fedora, Arch and other distributions, install the equivalents of the [Tauri L
 Ubuntu 22.04 / Debian 12 or later, x86_64 and aarch64: one deb and one AppImage per architecture. The AppImage also runs on other distributions with glibc 2.35 or later. Ubuntu 20.04 and older (glibc 2.31, no WebKitGTK 4.1) are not supported.
 
 Releases are built on Ubuntu 22.04 on purpose ([linux-packages.yml](../../.github/workflows/linux-packages.yml)). glibc is only backward compatible: a binary built on 22.04 runs on 24.04 and Debian 12, but one built on 24.04 fails on 22.04 with `GLIBC_2.39 not found`. WebKitGTK 4.1 is available on all three (22.04 gets 2.50 from `jammy-updates`), so there is no need for separate packages per Ubuntu release. `check-glibc.sh` fails the build if the binary ever needs more than glibc 2.35, and `smoke-test.sh` installs and launches the same packages on both 22.04 and 24.04 before they reach a release.
+
+One catch on 22.04: xcap depends on pipewire-rs 0.10, whose bindings need PipeWire 1.0 headers, and 22.04 ships PipeWire 0.3.48. `install-deps.sh` then runs `pipewire-headers.sh`, which installs the 1.0.5 headers from Ubuntu 24.04 (version and sha256 pinned) under `/opt/snapshot-build` and points `PKG_CONFIG_PATH` at them. CI and `build.sh` pick that up by themselves; for `npm run tauri dev`, export the `PKG_CONFIG_PATH` it prints. This is safe because the SPA part is header-only and compiled into the binary, while libpipewire is still the system's 0.3.48: a function missing from 0.3.48 fails the link, not the user's launch.
 
 ## Runtime tools
 
