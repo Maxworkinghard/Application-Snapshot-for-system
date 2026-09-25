@@ -112,9 +112,14 @@ fn resolve_recording_dir(settings: &settings::Settings) -> Result<PathBuf, Strin
             return Ok(PathBuf::from(snapshots::expand_user_path(candidate)));
         }
     }
-    dirs::download_dir()
-        .or_else(dirs::document_dir)
-        .ok_or_else(|| "无法确定录制保存目录".to_string())
+    default_recording_dir().ok_or_else(|| "无法确定录制保存目录".to_string())
+}
+
+/// 系统「下载」目录。Linux 上 dirs 只认 ~/.config/user-dirs.dirs 里登记的 XDG_DOWNLOAD_DIR，
+/// 精简桌面、容器、远程会话里常常没有这个文件；这时按惯例退回 ~/Downloads，不让录制直接失败。
+/// Windows / macOS 上 download_dir 总有值。
+fn default_recording_dir() -> Option<PathBuf> {
+    dirs::download_dir().or_else(|| dirs::home_dir().map(|home| home.join("Downloads")))
 }
 
 /// 在系统文件管理器里打开录制目录。目录可能还没建过，先建出来再打开。
@@ -211,5 +216,32 @@ mod tests {
         assert_eq!(format_duration(0), "00:00");
         assert_eq!(format_duration(133_400), "02:13");
         assert_eq!(format_duration(3_723_000), "1:02:03");
+    }
+
+    /// Linux 测试报告里的环境：没有 ~/.config/user-dirs.dirs，dirs 拿不到下载目录。
+    /// 这时要退回 ~/Downloads，而不是报「无法确定录制保存目录」。
+    #[cfg(target_os = "linux")]
+    #[test]
+    fn falls_back_to_home_downloads_without_xdg_user_dirs() {
+        let config =
+            std::env::temp_dir().join(format!("snapshot-no-user-dirs-{}", std::process::id()));
+        std::fs::create_dir_all(&config).expect("建临时配置目录失败");
+        let old = std::env::var_os("XDG_CONFIG_HOME");
+        unsafe { std::env::set_var("XDG_CONFIG_HOME", &config) };
+        let xdg_download = dirs::download_dir();
+        let resolved = super::default_recording_dir();
+        unsafe {
+            match old {
+                Some(value) => std::env::set_var("XDG_CONFIG_HOME", value),
+                None => std::env::remove_var("XDG_CONFIG_HOME"),
+            }
+        }
+        let _ = std::fs::remove_dir_all(&config);
+
+        assert_eq!(xdg_download, None, "临时配置目录里不该有 user-dirs.dirs");
+        assert_eq!(
+            resolved,
+            dirs::home_dir().map(|home| home.join("Downloads"))
+        );
     }
 }

@@ -46,5 +46,5 @@ sudo apt-get install -y -o Dpkg::Options::=--force-confdef -o Dpkg::Options::=--
 
 echo ""
 echo "==> System packages ready."
-echo "Also need: Node.js 20+ (npm) and Rust (https://rustup.rs)."
+echo "Also need: Node.js 22+ (npm; distro packages are often 18/20 — too old for npm test) and Rust (https://rustup.rs)."
 echo "Then: npm install && npm run tauri dev"
