@@ -488,8 +488,6 @@
 }
 .composer:focus-within { border-color: var(--ink-3); }
 .composer-input { flex: 1; min-width: 0; padding: 4px 0; border: 0; background: none; outline: none; resize: none; font-size: 14px; line-height: 22px; }
-.composer-go { padding: 0; border: 0; background: none; }
-.composer-go:disabled { opacity: 0.5; }
 .stream { padding-bottom: 24px; }
 .stream-day { margin-top: 20px; }
 .stream-day-title { display: flex; align-items: center; gap: 12px; margin: 0; font-size: var(--text-small); font-weight: 600; }

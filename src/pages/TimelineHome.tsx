@@ -5,7 +5,6 @@ import { stagger } from "../lib/motion";
 import { parseSize } from "../lib/activity";
 import { SnapshotThumb } from "../components/SnapshotThumb";
 import { Companion } from "../components/Companion";
-import { Keys } from "../components/ui/Keys";
 import { useNow } from "../hooks/useLive";
 import { errorText, useApp } from "../app/context";
 import type { ActivityEntry } from "../types";
@@ -133,18 +132,12 @@ export function TimelineHome() {
             rows={draft.includes("\n") ? 4 : 1}
             value={draft}
             onChange={(event) => setDraft(event.target.value)}
-            onKeyDown={(event) => {
-              if ((event.ctrlKey || event.metaKey) && event.key === "Enter") {
-                event.preventDefault();
-                submit();
-              }
-            }}
             placeholder="粘贴或写下要润色的 Prompt"
             aria-label="要润色的 Prompt"
             spellCheck={false}
           />
-          <button type="button" className="composer-go" onClick={submit} disabled={!draft.trim()} aria-label="润色">
-            <Keys value="CommandOrControl+Enter" />
+          <button type="button" className="btn btn-small" onClick={submit} disabled={!draft.trim()}>
+            润色
           </button>
         </div>
 
