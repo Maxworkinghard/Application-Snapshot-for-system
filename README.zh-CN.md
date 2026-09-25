@@ -140,4 +140,6 @@ Linux 按会话类型选后端，不看 `$DISPLAY`：XWayland 会让 `$DISPLAY` 
 
 ## 许可证
 
-还没有选定许可证，仓库里没有 `LICENSE` 文件，默认保留所有权利。
+Copyright (C) 2026 Snapshot contributors
+
+本项目以 [GNU 通用公共许可证第 3 版或任何更新的版本](LICENSE)（GPL-3.0-or-later）发布。可以自由使用、修改和分发；分发修改后的版本时，必须同样以 GPL 发布并提供源代码。

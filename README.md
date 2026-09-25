@@ -142,4 +142,6 @@ Pushing a `v*` tag runs [release.yml](.github/workflows/release.yml). It builds 
 
 ## License
 
-No license has been chosen yet and the repository has no `LICENSE` file, so all rights are reserved by default.
+Copyright (C) 2026 Snapshot contributors
+
+Released under the [GNU General Public License, version 3 or any later version](LICENSE) (GPL-3.0-or-later). You may use, modify and redistribute it; a modified version you distribute must also be released under the GPL, with its source code.
