@@ -122,12 +122,6 @@ export function PromptPage() {
           readOnly={polishing}
           aria-label="要润色的 Prompt"
           onChange={(event) => setText(event.target.value)}
-          onKeyDown={(event) => {
-            if ((event.ctrlKey || event.metaKey) && event.key === "Enter") {
-              event.preventDefault();
-              void run();
-            }
-          }}
           placeholder="写下要润色的 Prompt"
           spellCheck={false}
         />
