@@ -39,7 +39,7 @@
 
 - **macOS**：14 及以上，Apple Silicon 和 Intel 共用一个 universal 包
 - **Windows**：10 / 11，x64 或 ARM64
-- **Linux**：x86_64 或 aarch64，X11 或 Wayland 桌面会话；deb 包需要 Debian 12 / Ubuntu 24.04 及以上
+- **Linux**：x86_64 或 aarch64，X11 或 Wayland 桌面会话；Ubuntu 22.04 / Debian 12 及以上装 deb，其它发行版用 AppImage（要求 glibc 2.35 及以上）。Ubuntu 20.04 及更早的系统不支持
 
 安装包没有正式签名和公证：macOS 首次打开要按住 Control 点击 →「打开」，Windows 上 SmartScreen 可能会拦截。
 
@@ -136,7 +136,7 @@ Linux 按会话类型选后端，不看 `$DISPLAY`：XWayland 会让 `$DISPLAY` 
 
 ## 发布
 
-推送 `v*` tag 会触发 [release.yml](.github/workflows/release.yml)：在各平台的原生 runner 上打包（macOS universal、Windows x64 / ARM64、Linux x86_64 / aarch64 的 deb 和 AppImage），生成 `SHA256SUMS.txt`，并创建草稿状态的 pre-release，人工检查后再发布。tag、`VERSION` 文件和 `src-tauri/tauri.conf.json` 里的版本号必须一致。
+推送 `v*` tag 会触发 [release.yml](.github/workflows/release.yml)：在各平台的原生 runner 上打包（macOS universal、Windows x64 / ARM64、Linux x86_64 / aarch64 的 deb 和 AppImage），生成 `SHA256SUMS.txt`，并创建草稿状态的 pre-release，人工检查后再发布。Linux 包统一在 Ubuntu 22.04 上打（[linux-packages.yml](.github/workflows/linux-packages.yml)），同一份包拿到 22.04 和 24.04 上各装一遍、无头启动一遍，过了才进草稿。tag、`VERSION` 文件和 `src-tauri/tauri.conf.json` 里的版本号必须一致。
 
 ## 许可证
 

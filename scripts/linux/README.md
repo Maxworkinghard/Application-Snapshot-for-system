@@ -4,9 +4,11 @@ Scripts for building and running the Tauri app at the repository root on Linux.
 
 | File | Purpose |
 |---|---|
-| `install-deps.sh` | Installs the build dependencies and the optional runtime tools (`ffmpeg`, `xdotool`) on Debian / Ubuntu. CI (`check.yml`, `release.yml`) uses it too. |
+| `install-deps.sh` | Installs the build dependencies and the optional runtime tools (`ffmpeg`, `xdotool`) on Debian / Ubuntu 22.04+. CI (`check.yml`, `linux-packages.yml`) uses it too. |
 | `check-env.sh` | Reports what this machine can build and run. Changes nothing. |
 | `build.sh` | `npm install` + `npm run tauri build` |
+| `check-glibc.sh` | Fails if a binary needs a newer glibc than the support floor (2.35, Ubuntu 22.04). Run on every release build. |
+| `smoke-test.sh` | Installs a deb (or runs an AppImage) and launches it headless under Xvfb; passes if it stays up. Installs packages, so CI or throwaway machines only. |
 | `com.appsnapshot.snapshot.service.example` | Optional systemd `--user` unit (advanced; never enabled by the app) |
 
 ```bash
@@ -24,6 +26,12 @@ npm run tauri dev
 
 On Fedora, Arch and other distributions, install the equivalents of the [Tauri Linux prerequisites](https://v2.tauri.app/start/prerequisites/#linux), plus the runtime tools below.
 
+## Supported systems
+
+Ubuntu 22.04 / Debian 12 or later, x86_64 and aarch64: one deb and one AppImage per architecture. The AppImage also runs on other distributions with glibc 2.35 or later. Ubuntu 20.04 and older (glibc 2.31, no WebKitGTK 4.1) are not supported.
+
+Releases are built on Ubuntu 22.04 on purpose ([linux-packages.yml](../../.github/workflows/linux-packages.yml)). glibc is only backward compatible: a binary built on 22.04 runs on 24.04 and Debian 12, but one built on 24.04 fails on 22.04 with `GLIBC_2.39 not found`. WebKitGTK 4.1 is available on all three (22.04 gets 2.50 from `jammy-updates`), so there is no need for separate packages per Ubuntu release. `check-glibc.sh` fails the build if the binary ever needs more than glibc 2.35, and `smoke-test.sh` installs and launches the same packages on both 22.04 and 24.04 before they reach a release.
+
 ## Runtime tools
 
 | Tool | Used for |
@@ -35,7 +43,7 @@ On Fedora, Arch and other distributions, install the equivalents of the [Tauri L
 
 ## X11 vs Wayland
 
-The app goes by the **session type**, not by whether `$DISPLAY` is set: a session counts as Wayland when `WAYLAND_DISPLAY` is set or `XDG_SESSION_TYPE=wayland`. GNOME and KDE Wayland sessions usually run XWayland, so `$DISPLAY` is set there as well, but `x11grab` cannot see native Wayland windows.
+The app goes by the **session type**, not by whether `$DISPLAY` is set: a session counts as Wayland when `WAYLAND_DISPLAY` is set or `XDG_SESSION_TYPE=wayland`. A variable set to an empty string counts as unset (`src-tauri/src/os/linux/session.rs`). GNOME and KDE Wayland sessions usually run XWayland, so `$DISPLAY` is set there as well, but `x11grab` cannot see native Wayland windows.
 
 | Capability | X11 session | Wayland session |
 |---|---|---|

@@ -38,6 +38,9 @@ jobs:
         include:
           - runner: ubuntu-24.04
             name: linux
+          # Linux 支持线里最老的系统（发版也在它上面打包），Rust 侧在它的系统库上也要编得过、测得过
+          - runner: ubuntu-22.04
+            name: linux-22.04
           - runner: windows-latest
             name: windows
           - runner: macos-latest
@@ -52,12 +55,14 @@ jobs:
       - uses: Swatinem/rust-cache@v2
         with:
           workspaces: src-tauri
+          # 两个 Ubuntu 版本都是 Linux，不分开会互相拿到对方链着另一套系统库的缓存
+          key: ${{ matrix.runner }}
       - name: cargo fmt
         working-directory: src-tauri
         run: cargo fmt --check
       # 直接用仓库里给 Linux 用户的那份依赖脚本，顺带保证它在干净机器上是有效的
       - name: System deps
-        if: matrix.name == 'linux'
+        if: runner.os == 'Linux'
         run: bash scripts/linux/install-deps.sh
       # tauri-build 会校验 externalBin 声明的 sidecar 是否存在，macOS 上要先备好
       - name: Prepare sidecars
