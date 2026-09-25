@@ -231,10 +231,9 @@
 /* 当前规则左边那道竖线：和侧栏导航同一种记号，换规则时滑过去 */
 .rules-bar { position: absolute; left: -12px; top: 0; width: 2px; height: 0; background: var(--ink); opacity: 0; pointer-events: none; }
 .rules-bar[data-animate="1"] { transition: transform var(--t-open) var(--ease-out), height var(--t-open) var(--ease-out); }
-.rule { position: relative; border-bottom: 1px solid var(--rule); }
+.rule { position: relative; display: flex; align-items: center; gap: 12px; min-height: 46px; border-bottom: 1px solid var(--rule); }
 .rule.is-fresh { animation: rise-in var(--t-open) var(--ease-enter) both; }
 .rule.is-leaving { opacity: 0; transform: translateX(-12px); pointer-events: none; transition: opacity var(--t-exit) var(--ease-exit), transform var(--t-exit) var(--ease-exit); }
-.rule-head { display: flex; align-items: center; gap: 12px; min-height: 46px; }
 .rule-pick {
   flex: 1 1 auto; min-width: 0; display: flex; align-items: center; min-height: 46px; padding: 0;
   border: 0; background: none; text-align: left; color: var(--ink-2);
@@ -243,48 +242,23 @@
 .rule-pick:hover { color: var(--ink); }
 .rule.is-on .rule-pick { color: var(--ink); font-weight: 600; }
 .rule-title { overflow: hidden; white-space: nowrap; text-overflow: ellipsis; }
-.rule-count { flex: 0 0 auto; }
-.rule-toggle {
-  display: grid; place-items: center; flex: 0 0 auto; width: 28px; height: 28px; margin-right: -8px; padding: 0;
-  border: 0; border-radius: 3px; background: none; color: var(--ink-3);
-  transition: color var(--t-press) var(--ease-out), background-color var(--t-press) var(--ease-out);
-}
-.rule-toggle:hover { color: var(--ink); background: var(--paper-sunk); }
-.rule-toggle svg { transition: transform var(--t-open) var(--ease-out); }
-.rule.is-open .rule-toggle { color: var(--ink); }
-.rule.is-open .rule-toggle svg { transform: rotate(90deg); }
-/* 编辑器就地展开：高度从 0 长到内容高，里面的东西稍晚一点浮上来 */
-.rule-drawer { display: grid; grid-template-rows: 0fr; transition: grid-template-rows var(--t-open) var(--ease-enter); }
-.rule.is-open .rule-drawer { grid-template-rows: 1fr; }
-.rule:not(.is-open) .rule-drawer { transition-duration: var(--t-exit); transition-timing-function: var(--ease-exit); }
-.rule-drawer-inner { min-height: 0; overflow: hidden; }
-.rule-editor {
-  display: grid; gap: 10px; padding: 0 0 14px;
-  opacity: 0; transform: translateY(-6px);
-  transition: opacity var(--t-exit) var(--ease-exit), transform var(--t-exit) var(--ease-exit);
-}
-.rule.is-open .rule-editor { opacity: 1; transform: none; transition: opacity var(--t-open) var(--ease-out) 60ms, transform var(--t-open) var(--ease-enter) 60ms; }
-/* 展开后名字就地可改：和没展开时同一位置、同样的字，只多一道能写字的底线 */
-.rule-title-input {
-  flex: 1 1 auto; min-width: 0; height: 28px; padding: 0; margin: 9px 0;
-  border: 0; border-bottom: 1px dashed var(--rule-strong); background: none; outline: none;
-  color: var(--ink); font: inherit;
-  transition: border-color var(--t-press) var(--ease-out);
-}
-.rule-title-input.is-on { font-weight: 600; }
-.rule-title-input:focus { border-bottom: 1px solid var(--ink-3); }
-.rule-title-input::placeholder { color: var(--ink-4); }
+.rule-count, .rule-edit { flex: 0 0 auto; }
+/* 编辑放进弹窗：列表一行只放名字、字数和「编辑」，条数再多也不挤 */
+.dialog-rule { display: flex; flex-direction: column; gap: 14px; width: min(640px, 100%); }
+.dialog-rule-head { display: flex; align-items: baseline; justify-content: space-between; gap: 12px; }
+.dialog-rule p { margin: 0; }
 .rule-body-input {
-  min-height: 120px; padding: 10px 12px; resize: none; outline: none;
+  height: min(360px, calc(100vh - 300px)); min-height: 120px; padding: 10px 12px; resize: none; outline: none;
   border: 1px solid var(--rule); border-radius: 3px; background: var(--paper-raised); color: var(--ink);
   font-family: var(--font-mono); font-size: 12px; line-height: 19px;
   transition: border-color var(--t-press) var(--ease-out);
 }
 .rule-body-input:focus { border-color: var(--ink-3); }
-.rule-foot { display: flex; align-items: center; justify-content: space-between; gap: 12px; min-height: 20px; }
-.rule-saved { opacity: 0; transition: opacity var(--t-fade) var(--ease-out); }
-.rule-saved.is-shown { opacity: 1; }
+.dialog-rule-foot { display: flex; align-items: center; justify-content: space-between; gap: 12px; margin-top: 4px; }
+.dialog-rule-foot .dialog-actions { margin-top: 0; }
 .rule-actions { display: flex; gap: 16px; }
+/* 有改动时第一次点「取消」：按钮变成「放弃修改」，再点一次才真关 */
+.btn.is-armed { color: var(--signal); border-color: var(--signal); }
 .rows-flush { border-top: 0; }
 
 /* ---------- 快捷键行 ---------- */

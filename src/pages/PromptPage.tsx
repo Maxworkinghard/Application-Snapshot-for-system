@@ -10,7 +10,7 @@ type PolishResult = { text: string; rule: string };
 
 /**
  * 编辑框只放自己写的原文，润色从不改动它；结果单独弹一个窗口给，复制、重新生成都在窗口里。
- * 顶部是润色规则，点哪条就用哪条——和「偏好设置 → 润色规则」里的「用这条」是同一个设置。
+ * 顶部是润色规则，点哪条就用哪条——和「偏好设置 → 润色规则」里点名字切换是同一个设置。
  */
 export function PromptPage() {
   const { settings, onSaved, notify, pendingDraft, consumeDraft } = useApp();
