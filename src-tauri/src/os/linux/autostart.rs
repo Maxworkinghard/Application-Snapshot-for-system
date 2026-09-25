@@ -1,4 +1,4 @@
-//! XDG 开机自启（opt-in，与设置里「开机静默自启动」对齐）。
+//! XDG 开机自启（opt-in，与偏好设置里的「开机时静默启动」对齐）。
 //!
 //! 不写 systemd user unit，也不默认 enable——Windows 侧同样是用户勾选后才生效。
 //! 只在 `~/.config/autostart/` 放 / 删一份 `.desktop`。
@@ -10,7 +10,7 @@ use std::os::unix::fs::OpenOptionsExt;
 use std::path::{Path, PathBuf};
 use std::process::Command;
 
-const DESKTOP_NAME: &str = "com.appsnapshot.prompt-pet-shortcut.desktop";
+const DESKTOP_NAME: &str = "com.appsnapshot.snapshot.desktop";
 
 fn autostart_dir() -> PathBuf {
     dirs::config_dir()

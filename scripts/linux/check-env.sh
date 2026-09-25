@@ -14,8 +14,14 @@ echo "Display"
 info "DISPLAY=${DISPLAY:-<unset>}"
 info "WAYLAND_DISPLAY=${WAYLAND_DISPLAY:-<unset>}"
 info "XDG_SESSION_TYPE=${XDG_SESSION_TYPE:-<unset>}"
-if [[ -n "${DISPLAY:-}" ]]; then ok "X11 display present (x11grab recording possible)"
-elif [[ -n "${WAYLAND_DISPLAY:-}" ]]; then info "Wayland without DISPLAY — will try portal ScreenCast (needs xdg-desktop-portal + PipeWire)"
+# Same rule as the app: WAYLAND_DISPLAY or XDG_SESSION_TYPE=wayland means Wayland, whatever $DISPLAY says
+session_type="${XDG_SESSION_TYPE:-}"
+if [[ -n "${WAYLAND_DISPLAY:-}" || "${session_type,,}" == wayland ]]; then
+  info "Wayland session — recording uses portal ScreenCast (needs xdg-desktop-portal + PipeWire); no scrolling capture"
+  if [[ -n "${DISPLAY:-}" ]]; then
+    info "XWayland present — without the portal, recording falls back to x11grab (X11 windows only)"
+  fi
+elif [[ -n "${DISPLAY:-}" ]]; then ok "X11 session (x11grab recording, scrolling capture)"
 else miss "No DISPLAY / WAYLAND_DISPLAY"
 fi
 
@@ -32,7 +38,8 @@ fi
 
 echo "Optional runtime"
 command -v ffmpeg >/dev/null && ok "ffmpeg (recording)" || miss "ffmpeg (recording disabled until installed)"
-command -v xdotool >/dev/null && ok "xdotool (restore minimized windows)" || miss "xdotool (optional)"
+command -v pactl >/dev/null && ok "pactl (system audio / microphone recording)" || miss "pactl (optional: recording audio; package pulseaudio-utils)"
+command -v xdotool >/dev/null && ok "xdotool (restore minimized windows, scrolling capture)" || miss "xdotool (optional)"
 command -v rsvg-convert >/dev/null && ok "rsvg-convert (SVG app icons)" || info "rsvg-convert optional"
 
 echo "Session services"
@@ -53,5 +60,4 @@ else
 fi
 
 echo ""
-echo "Mainline entry: npm run tauri dev   (repo root)"
-echo "Reference client (linux/windowsnap) is NOT the product path — see README."
+echo "Run from the repo root: npm install && npm run tauri dev"
