@@ -314,13 +314,9 @@
 
 .prompt-page { display: flex; flex-direction: column; height: calc(100vh - var(--titlebar-h)); padding: 10px 32px 22px 20px; }
 .layout-topbar .prompt-page, .layout-timeline .prompt-page { padding-left: 32px; }
-.prompt-tabs { display: flex; align-items: flex-end; justify-content: space-between; min-height: 32px; }
+.prompt-tabs { display: flex; align-items: flex-end; justify-content: space-between; gap: 16px; min-height: 32px; }
 .prompt-tabs .mono { padding-bottom: 6px; }
-.prompt-tablist { display: flex; gap: 18px; }
-/* 选中的是墨色加粗，没选中的灰字；不画下划线 */
-.prompt-tab { padding: 0 0 6px; border: 0; background: none; color: var(--ink-3); transition: color var(--t-fade) var(--ease-out); }
-button.prompt-tab:hover { color: var(--ink); }
-.prompt-tab.is-on { color: var(--ink); font-weight: 600; }
+.prompt-rules { display: flex; align-items: baseline; gap: 12px; min-width: 0; padding-bottom: 6px; }
 .prompt-field { position: relative; display: flex; flex: 1 1 auto; min-height: 0; }
 .prompt-textarea { flex: 1; resize: none; padding: 14px 18px; font-size: var(--text); line-height: 22px; white-space: pre-wrap; }
 .prompt-busy {
@@ -333,6 +329,18 @@ button.prompt-tab:hover { color: var(--ink); }
 .prompt-failure .link { margin-left: 8px; color: var(--ink); }
 .prompt-foot { display: flex; align-items: center; justify-content: flex-end; gap: 10px; margin-top: 12px; }
 .prompt-foot-actions { display: flex; gap: 10px; }
+/* 润色结果弹窗：原文留在页面的编辑框里，这里只放新的一份 */
+.dialog-result { display: flex; flex-direction: column; gap: 12px; width: min(640px, 100%); }
+.dialog-result-head { display: flex; align-items: baseline; justify-content: space-between; gap: 12px; }
+.dialog-result-text {
+  height: min(360px, calc(100vh - 220px)); resize: none; padding: 12px 14px;
+  font-size: var(--text); line-height: 22px; white-space: pre-wrap;
+  transition: opacity var(--t-fade) var(--ease-out);
+}
+/* 重新生成期间旧结果先淡下去，新的一到就换上 */
+.dialog-result-text.is-stale { opacity: 0.45; }
+.dialog-result p { margin: 0; }
+.dialog-result .dialog-actions { margin-top: 4px; }
 
 /* ---------- 快照历史 ---------- */
 
