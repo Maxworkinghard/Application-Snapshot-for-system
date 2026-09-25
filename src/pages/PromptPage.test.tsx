@@ -33,8 +33,8 @@ const base: Settings = {
   afterCapture: "clipboard",
 };
 
-/** 打开 Prompt 页；后端的设置是有状态的，润色结果带上所用规则，方便断言 */
-async function openPromptPage() {
+/** 渲染主窗口；后端的设置是有状态的，润色结果带上所用规则，方便断言 */
+async function renderApp() {
   let settings = structuredClone(base);
   const polished: Array<{ text: string; templateId: string }> = [];
   const copied: string[] = [];
@@ -62,11 +62,17 @@ async function openPromptPage() {
   vi.resetModules();
   const { App } = await import("../App");
   render(<App />);
-  const user = userEvent.setup();
-  await user.click(await screen.findByRole("button", { name: /^Prompt$/ }));
-  const draft = await screen.findByRole("textbox", { name: "要润色的 Prompt" });
-  return { user, draft, polished, copied };
+  return { user: userEvent.setup(), polished, copied };
 }
+
+async function openPromptPage() {
+  const app = await renderApp();
+  await app.user.click(await screen.findByRole("button", { name: /^Prompt$/ }));
+  const draft = await screen.findByRole("textbox", { name: "要润色的 Prompt" });
+  return { ...app, draft };
+}
+
+const settle = () => new Promise((resolve) => setTimeout(resolve, 150));
 
 describe("Prompt 页的润色", () => {
   it("生成后原文不动，结果单独弹窗给出", async () => {
@@ -100,5 +106,30 @@ describe("Prompt 页的润色", () => {
     await user.click(screen.getByRole("button", { name: "生成" }));
     await screen.findByRole("dialog", { name: "润色结果" });
     expect(polished).toEqual([{ text: "改个 bug", templateId: "custom-code" }]);
+  });
+
+  it("输入框里没有 Ctrl+Enter：时间线「今天」和 Prompt 页都只能点按钮润色", async () => {
+    localStorage.setItem("snapshot-layout", "timeline");
+    const { user, polished } = await renderApp();
+    const composer = await screen.findByRole("textbox", { name: "要润色的 Prompt" });
+    await user.type(composer, "改个 bug");
+    await user.keyboard("{Control>}{Enter}{/Control}");
+    await settle();
+    expect(polished).toEqual([]);
+    expect(screen.queryByRole("button", { name: "生成" })).toBeNull();
+
+    // 点「润色」才会带着草稿去 Prompt 页开跑
+    await user.click(screen.getByRole("button", { name: "润色" }));
+    const dialog = await screen.findByRole("dialog", { name: "润色结果" });
+    expect(polished).toHaveLength(1);
+    await user.click(within(dialog).getByRole("button", { name: "关闭" }));
+    await waitFor(() => expect(screen.queryByRole("dialog")).toBeNull());
+
+    // Prompt 页的编辑框同样不认 Ctrl+Enter
+    await user.click(screen.getByRole("textbox", { name: "要润色的 Prompt" }));
+    await user.keyboard("{Control>}{Enter}{/Control}");
+    await settle();
+    expect(polished).toHaveLength(1);
+    expect(screen.queryByRole("dialog")).toBeNull();
   });
 });
