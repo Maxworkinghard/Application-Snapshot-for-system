@@ -66,7 +66,8 @@ pub fn capture_scrolling_window(window_id: u32) -> Result<RgbaImage, String> {
     stitch_vertical(frames)
 }
 
-fn ensure_xdotool() -> Result<(), String> {
+/// 本机能力里的「滚动长截图」也按这个判断，免得显示可用、一滚才报错
+pub(super) fn ensure_xdotool() -> Result<(), String> {
     if Command::new("xdotool").arg("-version").output().is_err() {
         return Err(
             "滚动长截图需要 xdotool，请安装后重试（如 apt install xdotool） / install xdotool for scrolling capture"

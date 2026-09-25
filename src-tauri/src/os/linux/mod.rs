@@ -89,11 +89,11 @@ pub(crate) fn open_folder(path: &Path) -> Result<(), String> {
 }
 
 pub(crate) fn capabilities() -> PlatformCapabilities {
-    // 滚动长截图要 X11（xdotool 翻页）；纯 Wayland 做不了
+    // 滚动长截图要 X11，翻页靠 xdotool；纯 Wayland 做不了，没装 xdotool 也做不了
     let scrolling = if session::is_wayland_session() || session::x11_display().is_none() {
         CapabilityStatus::no()
     } else {
-        CapabilityStatus::yes()
+        CapabilityStatus::probe(scrolling::ensure_xdotool())
     };
     PlatformCapabilities {
         os: "linux".into(),
