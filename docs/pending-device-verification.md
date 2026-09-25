@@ -39,6 +39,7 @@
 - [ ] **Linux PulseAudio/PipeWire 音频输入**
   - 验什么：`pactl` 能取到默认 sink 的 `.monitor`（系统音频）与默认 source（麦克风）；ffmpeg 带 PulseAudio 编译；portal 与 x11grab 两条路径叠加音频后产物可播。
   - 为什么本机验不了：需要真实 Linux 桌面上的音频栈。
+  - 2026-09-25：Linux 测试机没有 `pactl`，跳过，仍待补验。
 
 ## 三、平台能力与打包
 
@@ -50,6 +51,7 @@
 - [ ] **Linux Wayland portal ScreenCast**、**托盘点击行为**、**打包安装包**
   - 验什么：Wayland（GNOME / KDE）下 portal ScreenCast 选窗/选屏与录制；托盘菜单与左键点击（取决于 StatusNotifierHost / AppIndicator 扩展）；打包产物能否安装并启动。
   - 为什么本机验不了：需要对应合成器与发行版环境。
+  - 2026-09-25（X11 测试机）：deb / rpm / AppImage 都能构建，还没装到系统里验启动；测试机没有 ScreenCast 门户、PipeWire 和 StatusNotifierHost，portal 与托盘都没测。
 
 ## 四、2026-09-24 代码优化系列（#21–#25）新增
 
@@ -65,6 +67,7 @@
 - [ ] **全局快捷键**（#22，注册从网页挪到了 Rust）
   - 验什么：绑定后真的按一下能触发；绑一个被别的程序占着的键，整组不保存并点名该键；重启后若有键被占，打开主窗口会提示。
   - 已知疑点：设置页录键读的是按键产生的字符（`event.key`），美式键盘上 Alt+Shift+2 可能被记成 `Alt+Shift+@`。解析器只认 `2` 不认 `@`，会报「不是有效的快捷键」。请用真键盘录一次确认；属实的话改成读 `event.code`。
+  - Linux 2026-09-25：把绑定写进设置后重启，按键能触发；设置页里真人录键没测。
 - [ ] **图片与音频**（#23，改走 media:// 协议）
   - 验什么：快照历史的缩略图与放大预览；桌宠形象（导入 GIF / zip、动作轮换）；快捷菜单窗口列表的应用图标，以及桌宠在「应用图标」模式下的图标清晰度；自定义快门音效的试听与截图时播放（这项此前一直放不出来）。
 - [ ] **这些界面 CSS 比对没覆盖到**（#24，浏览器预览渲染不出来）
@@ -77,7 +80,12 @@
 
 **macOS / Linux**（#25 平台目录重构，代码搬到 `src-tauri/src/os/<平台>/`，本机只过了 CI 编译）：
 - [ ] macOS：录制开始 / 停止，以及停止异常时的提示；带光标截图；最小化窗口还原；开机自启开关。
-- [ ] Linux：录制（x11grab 与 portal）；带光标截图（全屏截图现在也按显示器矩形抓，不再走主屏专用路径）；滚动长截图；开机自启。
+- Linux（2026-09-25 在 X11 测试机 `DISPLAY=:3` 上测了 39e4cae，报告要点见第六节）：
+  - [x] x11grab 录制：启停正常，产物 h264 816×484、4.13 秒，可播。
+  - [x] 带光标截图：`includeCursor` 开启后全屏截图走 ffmpeg x11grab，没有降级提示。
+  - [x] 开机自启：打开后生成 `~/.config/autostart/com.appsnapshot.snapshot.desktop`。
+  - [ ] 滚动长截图：动作能跑通，但测试页不够长，拼出来的高度约等于一屏。要在真正能滚好几屏的页面上确认拼接。
+  - [ ] portal 录制：测试机没有 ScreenCast 门户和 PipeWire，没测。
 
 **已知的原有问题**（不是这批引入的，登记备查）：
 - 模型设置对话框「拉取模型」时刷新图标不转：组件用了 `spinning` 类，但唯一的样式规则挂在一个没人用的父类 `.model-control` 下，删 CSS 前就不生效。
@@ -86,3 +94,22 @@
 
 macOS 上已通过：`cargo fmt --check`、`cargo clippy --all-targets -- -D warnings`（0 警告）、`cargo check --all-targets`、`cargo test`（25 通过）、`npm test`（14 通过）、`npm run build`。
 CI（`check.yml`）三端 Rust job 与 frontend job 全绿，其中 Windows / Linux job 覆盖了本机编译不到的端。
+
+## 六、2026-09-25 Linux 测试发现的问题（已修）与复测项
+
+X11 测试机、39e4cae 上发现三处问题，都已在 main 上修好，需要在 Linux 上复测：
+
+- [ ] **`WAYLAND_DISPLAY` 设了空值被当成 Wayland**
+  - 现象：环境里有 `WAYLAND_DISPLAY=`（空串）时，应用判成 Wayland 会话，滚动长截图报「需要 X11」；`check-env.sh` 却判成 X11，两边说法相反。
+  - 修法：会话判断收拢到 `src-tauri/src/os/linux/session.rs`，`DISPLAY` / `WAYLAND_DISPLAY` / `XDG_SESSION_TYPE` 为空时都算没设，和 `check-env.sh` 一致。
+  - 复测：`export WAYLAND_DISPLAY=` 后启动，滚动长截图、x11grab 录制都能用，设置页「系统」一栏显示 X11。
+- [ ] **没有 `~/.config/user-dirs.dirs` 时录制失败**
+  - 现象：录制目录没填时，报「无法确定录制保存目录」。`dirs::download_dir()` 在 Linux 上只认这个文件里登记的下载目录。
+  - 修法：拿不到就退回 `~/Downloads`，目录不存在会自动建。
+  - 复测：删掉或挪走 `user-dirs.dirs`、设置里录制目录留空，录一段，产物应落在 `~/Downloads`。
+- [ ] **`npm test` 在 Node 20 上跑不了**（环境问题，代码没毛病）
+  - 原因：jsdom 依赖的 undici 8 要 Node ≥ 22.19，它调用的 `worker_threads.markAsUncloneable` 在 Node 20 里没有；README 早就写的是 Node 22，但 `install-deps.sh` 还提示「Node.js 20+」。
+  - 修法：`install-deps.sh` 改成提示 Node 22+；`check-env.sh` 新增 Node 版本检查，低于 22 直接标出来。
+  - 复测：换 Node 22 后 `npm test` 全过。
+
+另外，Prompt 页在这次测试之后改过（#31：润色结果改为弹窗，顶部「草稿」换成规则切换），报告里 F2 测的是旧版，需要按新流程再测一遍。

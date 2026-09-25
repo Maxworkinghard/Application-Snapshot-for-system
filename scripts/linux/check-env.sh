@@ -14,7 +14,8 @@ echo "Display"
 info "DISPLAY=${DISPLAY:-<unset>}"
 info "WAYLAND_DISPLAY=${WAYLAND_DISPLAY:-<unset>}"
 info "XDG_SESSION_TYPE=${XDG_SESSION_TYPE:-<unset>}"
-# Same rule as the app: WAYLAND_DISPLAY or XDG_SESSION_TYPE=wayland means Wayland, whatever $DISPLAY says
+# Same rule as the app (src-tauri/src/os/linux/session.rs): WAYLAND_DISPLAY or XDG_SESSION_TYPE=wayland means
+# Wayland, whatever $DISPLAY says; a variable set to an empty string counts as unset
 session_type="${XDG_SESSION_TYPE:-}"
 if [[ -n "${WAYLAND_DISPLAY:-}" || "${session_type,,}" == wayland ]]; then
   info "Wayland session — recording uses portal ScreenCast (needs xdg-desktop-portal + PipeWire); no scrolling capture"
@@ -28,6 +29,18 @@ fi
 echo "Build tools"
 command -v rustc >/dev/null && ok "rustc $(rustc --version | awk '{print $2}')" || miss "rustc missing (rustup.rs)"
 command -v cargo >/dev/null && ok "cargo" || miss "cargo missing"
+if command -v node >/dev/null; then
+  node_version="$(node -v)"
+  node_major="${node_version#v}"
+  node_major="${node_major%%.*}"
+  if (( node_major >= 22 )); then
+    ok "node $node_version"
+  else
+    miss "node $node_version — need Node.js 22+ (npm test fails on 20: jsdom's undici needs 22; the build alone works on 20.19+)"
+  fi
+else
+  miss "node missing (Node.js 22+)"
+fi
 command -v npm >/dev/null && ok "npm $(npm -v)" || miss "npm missing"
 command -v pkg-config >/dev/null && ok "pkg-config" || miss "pkg-config missing"
 if command -v pkg-config >/dev/null && pkg-config --exists webkit2gtk-4.1; then

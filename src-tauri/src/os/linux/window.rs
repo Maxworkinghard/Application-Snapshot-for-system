@@ -16,7 +16,7 @@ use std::time::Duration;
 /// 实现上先 `windowmap --sync`（映射到屏幕），再 `windowactivate --sync` 确保从最小化
 /// 真正出来；仅 map 在部分 WM 上仍会停在 IconicState。
 pub fn restore_minimized(id: u32) -> Result<(), String> {
-    if std::env::var_os("DISPLAY").is_none() {
+    if super::session::x11_display().is_none() {
         return Err("目标窗口已最小化，且当前无 X11 DISPLAY，无法自动还原（Wayland 无通用还原接口；请先手动还原） / minimized restore needs X11 DISPLAY or manual restore on Wayland".into());
     }
 

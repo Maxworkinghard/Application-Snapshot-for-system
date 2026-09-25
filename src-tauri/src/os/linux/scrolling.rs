@@ -2,13 +2,12 @@
 //! 纯 Wayland（无 `$DISPLAY`）返回可读双语错误。
 
 use image::RgbaImage;
-use std::env;
 use std::process::Command;
 use std::thread;
 use std::time::Duration;
 use xcap::Window;
 
-use super::recording::is_wayland_session;
+use super::session::{is_wayland_session, x11_display};
 use super::window::restore_minimized;
 
 const MAX_FRAMES: usize = 28;
@@ -17,7 +16,7 @@ const OVERLAP_SEARCH_MIN: u32 = 24;
 
 /// 对指定窗口做滚动长截图（best-effort）。
 pub fn capture_scrolling_window(window_id: u32) -> Result<RgbaImage, String> {
-    if is_wayland_session() || env::var_os("DISPLAY").is_none() {
+    if is_wayland_session() || x11_display().is_none() {
         return Err(
             "滚动长截图需要 X11/`$DISPLAY`（xdotool 翻页）。纯 Wayland 尚不支持 / scrolling capture needs X11 DISPLAY; not available on pure Wayland"
                 .into(),

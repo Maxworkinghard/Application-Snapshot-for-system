@@ -8,6 +8,7 @@ mod autostart;
 mod icon;
 mod recording;
 mod scrolling;
+mod session;
 mod still;
 mod window;
 
@@ -89,14 +90,14 @@ pub(crate) fn open_folder(path: &Path) -> Result<(), String> {
 
 pub(crate) fn capabilities() -> PlatformCapabilities {
     // 滚动长截图要 X11（xdotool 翻页）；纯 Wayland 做不了
-    let scrolling = if recording::is_wayland_session() || std::env::var_os("DISPLAY").is_none() {
+    let scrolling = if session::is_wayland_session() || session::x11_display().is_none() {
         CapabilityStatus::no()
     } else {
         CapabilityStatus::yes()
     };
     PlatformCapabilities {
         os: "linux".into(),
-        display_server: recording::display_server_label().into(),
+        display_server: session::display_server_label().into(),
         recording: CapabilityStatus::probe(recording::recording_available()),
         recording_system_audio: recording::system_audio_capability(),
         recording_microphone: recording::microphone_capability(),

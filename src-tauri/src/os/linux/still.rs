@@ -5,7 +5,7 @@ use std::process::Command;
 use std::time::{SystemTime, UNIX_EPOCH};
 
 fn display_spec() -> Result<String, String> {
-    std::env::var("DISPLAY").map_err(|_| {
+    super::session::x11_display().ok_or_else(|| {
         "无 X11 DISPLAY，无法用 x11grab 抓带光标静帧 / no DISPLAY for x11grab cursor frame"
             .to_string()
     })
