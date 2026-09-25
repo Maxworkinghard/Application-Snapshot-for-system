@@ -52,6 +52,7 @@
   - 验什么：Wayland（GNOME / KDE）下 portal ScreenCast 选窗/选屏与录制；托盘菜单与左键点击（取决于 StatusNotifierHost / AppIndicator 扩展）；打包产物能否安装并启动。
   - 为什么本机验不了：需要对应合成器与发行版环境。
   - 2026-09-25（X11 测试机）：deb / rpm / AppImage 都能构建，还没装到系统里验启动；测试机没有 ScreenCast 门户、PipeWire 和 StatusNotifierHost，portal 与托盘都没测。
+  - 2026-09-25 复测（X11 测试机）：本机打的 AppImage 能启动。这只说明打包链路没问题，不代表 22.04 上能用，22.04 / 24.04 见第七节。
 
 ## 四、2026-09-24 代码优化系列（#21–#25）新增
 
@@ -84,8 +85,9 @@
   - [x] x11grab 录制：启停正常，产物 h264 816×484、4.13 秒，可播。
   - [x] 带光标截图：`includeCursor` 开启后全屏截图走 ffmpeg x11grab，没有降级提示。
   - [x] 开机自启：打开后生成 `~/.config/autostart/com.appsnapshot.snapshot.desktop`。
-  - [ ] 滚动长截图：动作能跑通，但测试页不够长，拼出来的高度约等于一屏。要在真正能滚好几屏的页面上确认拼接。
+  - [x] 滚动长截图：2026-09-25 复测，在能滚好几屏的页面上拼出 1280×8305，约 11 倍窗高。
   - [ ] portal 录制：测试机没有 ScreenCast 门户和 PipeWire，没测。
+  - 2026-09-25 重新构建后复测：伴侣正常显示；窗口截图 817×485；录制约 7 秒、816×484，抽帧不是黑屏。
 
 **已知的原有问题**（不是这批引入的，登记备查）：
 - 模型设置对话框「拉取模型」时刷新图标不转：组件用了 `spinning` 类，但唯一的样式规则挂在一个没人用的父类 `.model-control` 下，删 CSS 前就不生效。
@@ -107,10 +109,11 @@ X11 测试机、39e4cae 上发现三处问题，都已在 main 上修好，需�
   - 现象：录制目录没填时，报「无法确定录制保存目录」。`dirs::download_dir()` 在 Linux 上只认这个文件里登记的下载目录。
   - 修法：拿不到就退回 `~/Downloads`，目录不存在会自动建。
   - 复测：删掉或挪走 `user-dirs.dirs`、设置里录制目录留空，录一段，产物应落在 `~/Downloads`。
-- [ ] **`npm test` 在 Node 20 上跑不了**（环境问题，代码没毛病）
+- [x] **`npm test` 在 Node 20 上跑不了**（环境问题，代码没毛病）
   - 原因：jsdom 依赖的 undici 8 要 Node ≥ 22.19，它调用的 `worker_threads.markAsUncloneable` 在 Node 20 里没有；README 早就写的是 Node 22，但 `install-deps.sh` 还提示「Node.js 20+」。
   - 修法：`install-deps.sh` 改成提示 Node 22+；`check-env.sh` 新增 Node 版本检查，低于 22 直接标出来。
   - 复测：换 Node 22 后 `npm test` 全过。
+  - 2026-09-25 复测通过：Node 22 下 `npm test` 28 个全过，`cargo test` 36 个全过。
 
 另外，Prompt 页在这次测试之后改过（#31：润色结果改为弹窗，顶部「草稿」换成规则切换），报告里 F2 测的是旧版，需要按新流程再测一遍。
 
@@ -124,3 +127,8 @@ CI（`linux-packages.yml`）每次发版都会在 22.04 和 24.04（x86_64 / aar
 - [ ] Ubuntu 24.04：装同一份 deb，行为和以前在 24.04 上打的包一致（不回归）。
 - [ ] 任一 KDE 桌面（X11 与 Wayland）：AppImage 启动、托盘。
 - [ ] 没装 `ffmpeg` / `xdotool` 时：「本机能力」和相关功能给出的提示说得清楚缺什么、怎么装。
+  - 2026-09-25（X11 测试机）：卸掉 ffmpeg 后「窗口录制」显示不可用，点录制提示「未找到 ffmpeg，请安装后将它加入 PATH（如 apt install ffmpeg）」，说得清楚。
+  - 卸掉 xdotool 后「滚动长截图」却仍显示可用，真去滚才报「滚动长截图需要 xdotool，请安装后重试」。原因是能力检测只看是不是 X11 会话，没查 xdotool；已改成同时检查 xdotool（`src-tauri/src/os/linux/mod.rs`）。待复测：卸掉 xdotool 后这一栏应显示不可用。
+  - 两样装回去后都恢复可用。
+
+2026-09-25：测试机环境不够，托盘、Wayland portal、系统声音 / 麦克风、KDE、Ubuntu 22.04 / 24.04 真机都没测，上面前三项仍待补验。
