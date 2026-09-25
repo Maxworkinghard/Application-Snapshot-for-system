@@ -102,11 +102,11 @@ jobs:
             case "$ARCHS" in *x86_64*) ;; *) echo "error: $bin 缺 x86_64 切片" >&2; exit 1 ;; esac
           done
           mkdir -p dist/release
-          ditto -c -k --keepParent "$APP" "dist/release/Application-Snapshot-${VERSION}-macos-universal.zip"
+          ditto -c -k --keepParent "$APP" "dist/release/snapshot-${VERSION}-macos-universal.zip"
       - uses: actions/upload-artifact@v4
         with:
           name: macos
-          path: dist/release/Application-Snapshot-*-macos-universal.zip
+          path: dist/release/snapshot-*-macos-universal.zip
           if-no-files-found: error
 
   windows:
@@ -139,14 +139,14 @@ jobs:
             set -- $pair
             SRC="src-tauri/target/$1/release/bundle/nsis/snapshot_${VERSION}_$2-setup.exe"
             test -f "$SRC" || { echo "error: missing $SRC" >&2; ls -la "src-tauri/target/$1/release/bundle/nsis" || true; exit 1; }
-            cp "$SRC" "dist/release/Application-Snapshot-${VERSION}-windows-$2.exe"
+            cp "$SRC" "dist/release/snapshot-${VERSION}-windows-$2.exe"
           done
       - uses: actions/upload-artifact@v4
         with:
           name: windows
           path: |
-            dist/release/Application-Snapshot-*-windows-x64.exe
-            dist/release/Application-Snapshot-*-windows-arm64.exe
+            dist/release/snapshot-*-windows-x64.exe
+            dist/release/snapshot-*-windows-arm64.exe
           if-no-files-found: error
 
   # 在干净的 Windows 上静默安装 x64 安装包、启动、活过 15 秒、再卸载，过不了就不进发布草稿。
@@ -162,7 +162,7 @@ jobs:
           path: packages
       - name: Install, launch and uninstall
         shell: pwsh
-        run: ./scripts/windows/smoke-test.ps1 -Installer "packages/Application-Snapshot-${{ needs.version.outputs.version }}-windows-x64.exe"
+        run: ./scripts/windows/smoke-test.ps1 -Installer "packages/snapshot-${{ needs.version.outputs.version }}-windows-x64.exe"
 
   # 在 Ubuntu 22.04 上打 deb + AppImage，再到 22.04 / 24.04 上各装一遍、起一遍，见 linux-packages.yml
   linux:
@@ -198,16 +198,16 @@ jobs:
         run: |
           set -euo pipefail
           expected=(
-            "Application-Snapshot-${VERSION}-windows-x64.exe"
-            "Application-Snapshot-${VERSION}-windows-arm64.exe"
+            "snapshot-${VERSION}-windows-x64.exe"
+            "snapshot-${VERSION}-windows-arm64.exe"
           )
           if [ "$PLATFORMS" = "all" ]; then
             expected+=(
-              "Application-Snapshot-${VERSION}-macos-universal.zip"
-              "Application-Snapshot-${VERSION}-linux-x86_64.deb"
-              "Application-Snapshot-${VERSION}-linux-x86_64.AppImage"
-              "Application-Snapshot-${VERSION}-linux-aarch64.deb"
-              "Application-Snapshot-${VERSION}-linux-aarch64.AppImage"
+              "snapshot-${VERSION}-macos-universal.zip"
+              "snapshot-${VERSION}-linux-x86_64.deb"
+              "snapshot-${VERSION}-linux-x86_64.AppImage"
+              "snapshot-${VERSION}-linux-aarch64.deb"
+              "snapshot-${VERSION}-linux-aarch64.AppImage"
             )
           fi
           for f in "${expected[@]}"; do

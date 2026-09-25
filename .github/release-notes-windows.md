@@ -6,8 +6,8 @@
 
 | 你的机器 | 附件 |
 |---|---|
-| Windows x64（Intel / AMD） | `Application-Snapshot-{{VERSION}}-windows-x64.exe` |
-| Windows ARM64（骁龙本等） | `Application-Snapshot-{{VERSION}}-windows-arm64.exe` |
+| Windows x64（Intel / AMD） | `snapshot-{{VERSION}}-windows-x64.exe` |
+| Windows ARM64（骁龙本等） | `snapshot-{{VERSION}}-windows-arm64.exe` |
 
 没有 32 位 Windows 包。
 
