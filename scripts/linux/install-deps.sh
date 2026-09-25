@@ -2,7 +2,8 @@
 # Install build + optional runtime dependencies for the Tauri mainline on Debian/Ubuntu.
 # Idempotent. Does NOT enable any autostart.
 #
-# Aimed at Ubuntu 24.04 / Debian bookworm+ (webkit2gtk 4.1 + soup3). Explicitly lists
+# Aimed at Ubuntu 22.04+ / Debian 12 (bookworm)+ (webkit2gtk 4.1 + soup3); CI runs it on both 22.04 and 24.04,
+# and releases are built on 22.04 so the packages also run there. Explicitly lists
 # libsoup-3.0-dev / libjavascriptcoregtk-4.1-dev even though webkit often pulls them,
 # so a minimal CI image does not miss pkg-config files during cargo check.
 set -euo pipefail
@@ -43,6 +44,13 @@ sudo apt-get install -y -o Dpkg::Options::=--force-confdef -o Dpkg::Options::=--
   xdotool \
   ffmpeg \
   librsvg2-bin
+
+# PipeWire older than 1.0 (Ubuntu 22.04 ships 0.3.48) is too old for the headers pipewire-rs 0.10
+# (pulled in by xcap) is written against. Add build-only 1.0.5 headers; the system library is still
+# what gets linked. See pipewire-headers.sh.
+if ! env -u PKG_CONFIG_PATH pkg-config --atleast-version=1.0 libpipewire-0.3; then
+  bash "$(dirname "$0")/pipewire-headers.sh"
+fi
 
 echo ""
 echo "==> System packages ready."

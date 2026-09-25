@@ -9,9 +9,9 @@
 | macOS（Apple Silicon 或 Intel） | `Application-Snapshot-{{VERSION}}-macos-universal.zip` |
 | Windows x64（Intel / AMD） | `Application-Snapshot-{{VERSION}}-windows-x64.exe` |
 | Windows ARM64（骁龙本等） | `Application-Snapshot-{{VERSION}}-windows-arm64.exe` |
-| Linux x86_64，Debian / Ubuntu 系 | `Application-Snapshot-{{VERSION}}-linux-x86_64.deb` |
+| Linux x86_64，Ubuntu 22.04+ / Debian 12+ | `Application-Snapshot-{{VERSION}}-linux-x86_64.deb` |
 | Linux x86_64，其它发行版 | `Application-Snapshot-{{VERSION}}-linux-x86_64.AppImage` |
-| Linux aarch64，Debian / Ubuntu 系 | `Application-Snapshot-{{VERSION}}-linux-aarch64.deb` |
+| Linux aarch64，Ubuntu 22.04+ / Debian 12+ | `Application-Snapshot-{{VERSION}}-linux-aarch64.deb` |
 | Linux aarch64，其它发行版 | `Application-Snapshot-{{VERSION}}-linux-aarch64.AppImage` |
 
 没有 32 位 Windows 包。Mac 两种芯片是**同一份** zip，不要找第二个 Mac 包。Linux 同一架构的 deb 与 AppImage 是同一个程序的两种装法，装一个就够。
@@ -42,4 +42,4 @@ Windows 和 macOS 不用另装东西。Linux 上按需安装：
 
 - macOS 14+（录麦克风需要 macOS 15+）
 - Windows 10 或 Windows 11
-- Linux：X11 或 Wayland 桌面会话；deb 需要 Debian 12 / Ubuntu 24.04 及以上（webkit2gtk-4.1）
+- Linux：X11 或 Wayland 桌面会话；deb 需要 Ubuntu 22.04 / Debian 12 及以上，AppImage 需要 glibc 2.35 及以上（Ubuntu 22.04 同代或更新的发行版）。Ubuntu 20.04 及更早的系统不支持
