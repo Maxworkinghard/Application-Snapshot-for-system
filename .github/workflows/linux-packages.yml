@@ -67,12 +67,12 @@ jobs:
           for f in "$DEB" "$APPIMAGE"; do
             test -f "$f" || { echo "error: missing $f" >&2; find src-tauri/target/release/bundle -maxdepth 2 -type f | head -20; exit 1; }
           done
-          cp "$DEB" "dist/release/Application-Snapshot-${VERSION}-linux-${{ matrix.arch }}.deb"
-          cp "$APPIMAGE" "dist/release/Application-Snapshot-${VERSION}-linux-${{ matrix.arch }}.AppImage"
+          cp "$DEB" "dist/release/snapshot-${VERSION}-linux-${{ matrix.arch }}.deb"
+          cp "$APPIMAGE" "dist/release/snapshot-${VERSION}-linux-${{ matrix.arch }}.AppImage"
       - uses: actions/upload-artifact@v4
         with:
           name: linux-${{ matrix.arch }}
-          path: dist/release/Application-Snapshot-*-linux-${{ matrix.arch }}.*
+          path: dist/release/snapshot-*-linux-${{ matrix.arch }}.*
           if-no-files-found: error
 
   # 同一份包拿到最老（22.04）和当前（24.04）两代系统上装、起；过不了就不进发布草稿

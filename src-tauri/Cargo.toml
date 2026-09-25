@@ -3,6 +3,8 @@ name = "snapshot"
 version = "0.1.1"
 description = "统一的应用快照、Prompt 润色、桌宠和快捷键桌面端"
 authors = ["App Snapshot"]
+license = "GPL-3.0-or-later"
+repository = "https://github.com/Maxworkinghard/Snapshot"
 edition = "2021"
 
 [lib]

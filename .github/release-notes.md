@@ -6,13 +6,13 @@
 
 | 你的机器 | 附件 |
 |---|---|
-| macOS（Apple Silicon 或 Intel） | `Application-Snapshot-{{VERSION}}-macos-universal.zip` |
-| Windows x64（Intel / AMD） | `Application-Snapshot-{{VERSION}}-windows-x64.exe` |
-| Windows ARM64（骁龙本等） | `Application-Snapshot-{{VERSION}}-windows-arm64.exe` |
-| Linux x86_64，Ubuntu 22.04+ / Debian 12+ | `Application-Snapshot-{{VERSION}}-linux-x86_64.deb` |
-| Linux x86_64，其它发行版 | `Application-Snapshot-{{VERSION}}-linux-x86_64.AppImage` |
-| Linux aarch64，Ubuntu 22.04+ / Debian 12+ | `Application-Snapshot-{{VERSION}}-linux-aarch64.deb` |
-| Linux aarch64，其它发行版 | `Application-Snapshot-{{VERSION}}-linux-aarch64.AppImage` |
+| macOS（Apple Silicon 或 Intel） | `snapshot-{{VERSION}}-macos-universal.zip` |
+| Windows x64（Intel / AMD） | `snapshot-{{VERSION}}-windows-x64.exe` |
+| Windows ARM64（骁龙本等） | `snapshot-{{VERSION}}-windows-arm64.exe` |
+| Linux x86_64，Ubuntu 22.04+ / Debian 12+ | `snapshot-{{VERSION}}-linux-x86_64.deb` |
+| Linux x86_64，其它发行版 | `snapshot-{{VERSION}}-linux-x86_64.AppImage` |
+| Linux aarch64，Ubuntu 22.04+ / Debian 12+ | `snapshot-{{VERSION}}-linux-aarch64.deb` |
+| Linux aarch64，其它发行版 | `snapshot-{{VERSION}}-linux-aarch64.AppImage` |
 
 没有 32 位 Windows 包。Mac 两种芯片是**同一份** zip，不要找第二个 Mac 包。Linux 同一架构的 deb 与 AppImage 是同一个程序的两种装法，装一个就够。
 
@@ -22,7 +22,7 @@
 
 - **macOS**：解压后把 `snapshot.app` 拖到「应用程序」。当前构建是 ad-hoc 签名、未公证；若系统提示无法验证开发者，按住 Control 点击 → 打开。截图和录制需要「屏幕录制」权限，截最小化的窗口需要「辅助功能」权限，录麦克风需要麦克风权限。
 - **Windows**：运行对应架构的安装程序。需要 Microsoft Edge WebView2 运行时，Windows 11 自带，Windows 10 上安装程序会按需下载。未用 Trusted Root 代码签名证书签过名时，Smart App Control / SmartScreen 可能拦截。
-- **Linux（deb）**：`sudo apt install ./Application-Snapshot-{{VERSION}}-linux-<架构>.deb`，依赖由 apt 一并装上。
+- **Linux（deb）**：`sudo apt install ./snapshot-{{VERSION}}-linux-<架构>.deb`，依赖由 apt 一并装上。
 - **Linux（AppImage）**：`chmod +x` 之后直接运行。部分发行版需要先装 `libfuse2`。
 
 ## 可选依赖

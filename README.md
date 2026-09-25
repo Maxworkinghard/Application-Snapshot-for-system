@@ -1,6 +1,6 @@
 # Application Snapshot
 
-[![Check](https://github.com/Maxworkinghard/Application-Snapshot-for-system/actions/workflows/check.yml/badge.svg)](https://github.com/Maxworkinghard/Application-Snapshot-for-system/actions/workflows/check.yml)
+[![Check](https://github.com/Maxworkinghard/Snapshot/actions/workflows/check.yml/badge.svg)](https://github.com/Maxworkinghard/Snapshot/actions/workflows/check.yml)
 
 [简体中文](README.zh-CN.md) | English
 
@@ -35,7 +35,7 @@ Windows has had the most testing on real hardware. Some features on macOS and Li
 
 ## Installation
 
-Download the package for your platform from [Releases](https://github.com/Maxworkinghard/Application-Snapshot-for-system/releases). Windows (x64 / ARM64) and Linux (x86_64 / aarch64) packages are available; macOS follows later. You can also [build from source](#build-from-source).
+Download the package for your platform from [Releases](https://github.com/Maxworkinghard/Snapshot/releases). Windows (x64 / ARM64) and Linux (x86_64 / aarch64) packages are available; macOS follows later. You can also [build from source](#build-from-source).
 
 System requirements:
 
@@ -142,4 +142,6 @@ Pushing a `v*` tag runs [release.yml](.github/workflows/release.yml). It builds 
 
 ## License
 
-No license has been chosen yet and the repository has no `LICENSE` file, so all rights are reserved by default.
+Copyright (C) 2026 Snapshot contributors
+
+Released under the [GNU General Public License, version 3 or any later version](LICENSE) (GPL-3.0-or-later). You may use, modify and redistribute it; a modified version you distribute must also be released under the GPL, with its source code.
