@@ -1,6 +1,6 @@
 # OPTIONAL / ADVANCED — systemd --user unit for Application Snapshot (Tauri).
 #
-# Settings → 开机静默自启动 (XDG ~/.config/autostart/) remains the supported
+# Preferences → 开机时静默启动 (XDG ~/.config/autostart/) remains the supported
 # opt-in. Do NOT enable this unit by default; only use it if you deliberately
 # prefer a user service (e.g. headless session bring-up experiments).
 #
@@ -10,20 +10,20 @@
 #      /path/to/repo/src-tauri/target/release/snapshot
 # 2. Install + enable (still opt-in; nothing in the app does this for you):
 #      mkdir -p ~/.config/systemd/user
-#      cp scripts/linux/com.appsnapshot.prompt-pet-shortcut.service.example \
-#         ~/.config/systemd/user/com.appsnapshot.prompt-pet-shortcut.service
+#      cp scripts/linux/com.appsnapshot.snapshot.service.example \
+#         ~/.config/systemd/user/com.appsnapshot.snapshot.service
 #      # edit ExecStart= …
 #      systemctl --user daemon-reload
-#      systemctl --user enable --now com.appsnapshot.prompt-pet-shortcut.service
+#      systemctl --user enable --now com.appsnapshot.snapshot.service
 # 3. Disable later:
-#      systemctl --user disable --now com.appsnapshot.prompt-pet-shortcut.service
+#      systemctl --user disable --now com.appsnapshot.snapshot.service
 #
-# If you already use Settings XDG autostart, leave this unit disabled to avoid
-# starting the app twice.
+# If you already use XDG autostart from Preferences, leave this unit disabled to
+# avoid starting the app twice.
 
 [Unit]
 Description=Application Snapshot (optional user service)
-Documentation=https://github.com/
+Documentation=https://github.com/Maxworkinghard/Application-Snapshot-for-system
 After=graphical-session.target
 PartOf=graphical-session.target
 
