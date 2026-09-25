@@ -16,7 +16,7 @@ tauri-build = { version = "2", features = [] }
 arboard = "3.6"
 base64 = "0.22"
 chrono = { version = "0.4", features = ["clock"] }
-dirs = "6"
+dirs = "7"
 image = { version = "0.25", default-features = false, features = ["png", "jpeg", "webp", "gif"] }
 keyring = { version = "3.6", features = ["apple-native", "windows-native", "sync-secret-service"] }
 parking_lot = "0.12"
