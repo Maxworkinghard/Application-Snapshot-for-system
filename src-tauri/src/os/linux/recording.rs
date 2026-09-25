@@ -2,7 +2,6 @@
 //! → ffmpeg rawvideo；X11 会话用 ffmpeg x11grab。Wayland 下门户不可用时才退回 x11grab，
 //! 那条退路只抓得到 XWayland 的画面，由能力文案说明。
 
-use std::env;
 use std::io::Write;
 use std::path::Path;
 use std::process::{Child, Command, Stdio};
@@ -13,29 +12,7 @@ use std::time::Duration;
 
 use xcap::{Monitor, Window};
 
-/// 当前会话是 X11 还是 Wayland（给错误信息与设置页用）。
-pub fn display_server_label() -> &'static str {
-    // 与 is_wayland_session 对齐：也认 XDG_SESSION_TYPE=wayland
-    if is_wayland_session() {
-        if env::var_os("DISPLAY").is_none() {
-            "Wayland"
-        } else {
-            "Wayland (XWayland available)"
-        }
-    } else if env::var_os("DISPLAY").is_some() {
-        "X11"
-    } else {
-        "unknown"
-    }
-}
-
-/// 当前会话是 Wayland——不管 XWayland 有没有把 `$DISPLAY` 撑起来。
-pub fn is_wayland_session() -> bool {
-    env::var_os("WAYLAND_DISPLAY").is_some()
-        || env::var("XDG_SESSION_TYPE")
-            .map(|v| v.eq_ignore_ascii_case("wayland"))
-            .unwrap_or(false)
-}
+use super::session::{display_server_label, is_wayland_session, x11_display};
 
 /// 录制后端。
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -57,7 +34,7 @@ pub fn pick_recording_backend() -> Result<RecordingBackend, String> {
     if is_wayland_session() {
         return match portal_screencast_available() {
             Ok(()) => Ok(RecordingBackend::Portal),
-            Err(_) if env::var_os("DISPLAY").is_some() => Ok(RecordingBackend::X11Grab {
+            Err(_) if x11_display().is_some() => Ok(RecordingBackend::X11Grab {
                 xwayland_only: true,
             }),
             Err(detail) => Err(format!(
@@ -66,7 +43,7 @@ pub fn pick_recording_backend() -> Result<RecordingBackend, String> {
             )),
         };
     }
-    if env::var_os("DISPLAY").is_some() {
+    if x11_display().is_some() {
         return Ok(RecordingBackend::X11Grab {
             xwayland_only: false,
         });
@@ -264,11 +241,7 @@ fn append_mux_args(command: &mut Command, audio_inputs: &[AudioInput]) {
 /// 旧实现写死 `:0.0`，远程桌面 / 多显示 / `DISPLAY=:3` 会录错屏。
 pub fn build_ffmpeg_grab_args(target_id: u32, include_cursor: bool) -> Result<Vec<String>, String> {
     ensure_ffmpeg()?;
-    if env::var_os("DISPLAY").is_none() {
-        return Err("x11grab 需要 $DISPLAY".into());
-    }
-
-    let display = env::var("DISPLAY").unwrap_or_else(|_| ":0".into());
+    let display = x11_display().ok_or("x11grab 需要 $DISPLAY")?;
     // ffmpeg 的 x11grab 接受 `:3.0+x,y`；若 DISPLAY 已是 `:3.0` 就原样用。
     let display_spec = if display.contains('.') {
         display
@@ -640,6 +613,46 @@ mod tests {
             })
         );
         assert_eq!(display_server_label(), "X11");
+        restore_env(old_w, old_d, old_s);
+    }
+
+    /// `export WAYLAND_DISPLAY=` 这类空值不算 Wayland：X11 桌面上照样走 x11grab、能滚动长截图
+    #[test]
+    fn empty_wayland_display_is_still_an_x11_session() {
+        let _guard = ENV_LOCK.lock().unwrap();
+        let old_w = std::env::var_os("WAYLAND_DISPLAY");
+        let old_d = std::env::var_os("DISPLAY");
+        let old_s = std::env::var_os("XDG_SESSION_TYPE");
+        unsafe {
+            std::env::set_var("WAYLAND_DISPLAY", "");
+            std::env::set_var("DISPLAY", ":3");
+            std::env::set_var("XDG_SESSION_TYPE", "");
+        }
+        assert!(!is_wayland_session());
+        assert_eq!(display_server_label(), "X11");
+        assert_eq!(
+            pick_recording_backend(),
+            Ok(RecordingBackend::X11Grab {
+                xwayland_only: false
+            })
+        );
+        restore_env(old_w, old_d, old_s);
+    }
+
+    #[test]
+    fn empty_display_is_no_x11() {
+        let _guard = ENV_LOCK.lock().unwrap();
+        let old_w = std::env::var_os("WAYLAND_DISPLAY");
+        let old_d = std::env::var_os("DISPLAY");
+        let old_s = std::env::var_os("XDG_SESSION_TYPE");
+        unsafe {
+            std::env::remove_var("WAYLAND_DISPLAY");
+            std::env::set_var("DISPLAY", "");
+            std::env::remove_var("XDG_SESSION_TYPE");
+        }
+        assert_eq!(x11_display(), None);
+        assert_eq!(display_server_label(), "unknown");
+        assert!(pick_recording_backend().is_err());
         restore_env(old_w, old_d, old_s);
     }
 
