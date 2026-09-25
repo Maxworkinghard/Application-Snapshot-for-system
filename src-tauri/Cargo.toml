@@ -31,7 +31,7 @@ tauri-plugin-global-shortcut = "2"
 tauri-plugin-dialog = "2"
 tauri-plugin-single-instance = "2"
 xcap = "0.9.8"
-zip = { version = "6", default-features = false, features = ["deflate"] }
+zip = { version = "8", default-features = false, features = ["deflate"] }
 
 [target.'cfg(target_os = "macos")'.dependencies]
 # AXUIElement 用于还原最小化窗口
