@@ -1,6 +1,6 @@
 # Application Snapshot
 
-[![Check](https://github.com/Maxworkinghard/Application-Snapshot-for-system/actions/workflows/check.yml/badge.svg)](https://github.com/Maxworkinghard/Application-Snapshot-for-system/actions/workflows/check.yml)
+[![Check](https://github.com/Maxworkinghard/Snapshot-/actions/workflows/check.yml/badge.svg)](https://github.com/Maxworkinghard/Snapshot-/actions/workflows/check.yml)
 
 [简体中文](README.zh-CN.md) | English
 
@@ -35,7 +35,7 @@ Windows has had the most testing on real hardware. Some features on macOS and Li
 
 ## Installation
 
-Download the package for your platform from [Releases](https://github.com/Maxworkinghard/Application-Snapshot-for-system/releases). Windows (x64 / ARM64) and Linux (x86_64 / aarch64) packages are available; macOS follows later. You can also [build from source](#build-from-source).
+Download the package for your platform from [Releases](https://github.com/Maxworkinghard/Snapshot-/releases). Windows (x64 / ARM64) and Linux (x86_64 / aarch64) packages are available; macOS follows later. You can also [build from source](#build-from-source).
 
 System requirements:
 

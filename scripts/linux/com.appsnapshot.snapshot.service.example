@@ -23,7 +23,7 @@
 
 [Unit]
 Description=Application Snapshot (optional user service)
-Documentation=https://github.com/Maxworkinghard/Application-Snapshot-for-system
+Documentation=https://github.com/Maxworkinghard/Snapshot-
 After=graphical-session.target
 PartOf=graphical-session.target
 
