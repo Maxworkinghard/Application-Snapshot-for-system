@@ -19,7 +19,8 @@ $entry = Get-ChildItem $roots -ErrorAction SilentlyContinue | Get-ItemProperty |
 if (-not $entry) { throw '装完了，但卸载注册表里找不到 snapshot' }
 $exe = ($entry.DisplayIcon -replace '"', '') -replace ',\d+$', ''
 if (-not (Test-Path $exe)) { throw "找不到装好的主程序：$exe" }
-Write-Host "已安装 $($entry.DisplayVersion)：$exe"
+# HKCU 表示装在当前用户下、不需要管理员权限；HKLM 表示装给所有用户
+Write-Host "已安装 $($entry.DisplayVersion)：$exe（登记在 $($entry.PSPath -replace '^.*::', '')）"
 
 $app = Start-Process -FilePath $exe -PassThru
 Start-Sleep -Seconds $Seconds
