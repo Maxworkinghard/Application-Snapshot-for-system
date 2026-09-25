@@ -113,3 +113,14 @@ X11 测试机、39e4cae 上发现三处问题，都已在 main 上修好，需�
   - 复测：换 Node 22 后 `npm test` 全过。
 
 另外，Prompt 页在这次测试之后改过（#31：润色结果改为弹窗，顶部「草稿」换成规则切换），报告里 F2 测的是旧版，需要按新流程再测一遍。
+
+## 七、Linux 支持线：Ubuntu 22.04+ / Debian 12+（2026-09-25 起）
+
+发版的 Linux 包改在 Ubuntu 22.04 上打，同一份 deb / AppImage 覆盖 22.04、24.04 和 Debian 12。
+CI（`linux-packages.yml`）每次发版都会在 22.04 和 24.04（x86_64 / aarch64）上装包，并在 Xvfb 里无头启动一遍；下面这些是 CI 覆盖不到、要在真桌面上看的：
+
+- [ ] Ubuntu 22.04 GNOME，X11 与 Wayland 各一次：装 deb（再试一次 AppImage），启动、窗口截图、录制（X11 走 x11grab，Wayland 走 portal）、装了 AppIndicator 扩展后的托盘。
+  - Wayland 录制要重点看：22.04 上 PipeWire 的绑定是按 1.0.5 的头文件编的，运行时用的是系统的 0.3.48（原因见 `scripts/linux/README.md`）。CI 只验证了能链接、能启动，没有真的走一遍 portal 录制。
+- [ ] Ubuntu 24.04：装同一份 deb，行为和以前在 24.04 上打的包一致（不回归）。
+- [ ] 任一 KDE 桌面（X11 与 Wayland）：AppImage 启动、托盘。
+- [ ] 没装 `ffmpeg` / `xdotool` 时：「本机能力」和相关功能给出的提示说得清楚缺什么、怎么装。

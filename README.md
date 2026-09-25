@@ -41,7 +41,7 @@ System requirements:
 
 - **macOS**: 14 or later; one universal package for Apple Silicon and Intel
 - **Windows**: 10 or 11, x64 or ARM64
-- **Linux**: x86_64 or aarch64 with an X11 or Wayland desktop session; the deb package needs Debian 12 / Ubuntu 24.04 or later
+- **Linux**: x86_64 or aarch64 with an X11 or Wayland desktop session; the deb package for Ubuntu 22.04 / Debian 12 or later, the AppImage for other distributions with glibc 2.35 or later. Ubuntu 20.04 and older are not supported
 
 The packages are not signed or notarized. On macOS, Control-click the app and choose Open the first time; on Windows, SmartScreen may block the installer.
 
@@ -138,7 +138,7 @@ Every extra implementation is another place for bugs that only reproduce on one 
 
 ## Releases
 
-Pushing a `v*` tag runs [release.yml](.github/workflows/release.yml). It builds on native runners for each platform (macOS universal, Windows x64 / ARM64, Linux x86_64 / aarch64 deb and AppImage), writes `SHA256SUMS.txt`, and creates a draft pre-release to be checked by hand before publishing. The tag, the `VERSION` file and the version in `src-tauri/tauri.conf.json` must match.
+Pushing a `v*` tag runs [release.yml](.github/workflows/release.yml). It builds on native runners for each platform (macOS universal, Windows x64 / ARM64, Linux x86_64 / aarch64 deb and AppImage), writes `SHA256SUMS.txt`, and creates a draft pre-release to be checked by hand before publishing. The Linux packages are built on Ubuntu 22.04 ([linux-packages.yml](.github/workflows/linux-packages.yml)), then installed and launched headless on both 22.04 and 24.04 before they reach the draft. The tag, the `VERSION` file and the version in `src-tauri/tauri.conf.json` must match.
 
 ## License
 

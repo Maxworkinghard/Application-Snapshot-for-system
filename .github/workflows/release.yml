@@ -135,56 +135,12 @@ jobs:
             dist/release/Application-Snapshot-*-windows-arm64.exe
           if-no-files-found: error
 
+  # 在 Ubuntu 22.04 上打 deb + AppImage，再到 22.04 / 24.04 上各装一遍、起一遍，见 linux-packages.yml
   linux:
     needs: version
-    strategy:
-      fail-fast: false
-      matrix:
-        include:
-          # 两个架构都用原生 runner：Linux 侧要链 webkit2gtk 等一堆 C 库，交叉编译得整套 sysroot
-          - runner: ubuntu-24.04
-            arch: x86_64
-            deb_arch: amd64
-            appimage_arch: amd64
-          - runner: ubuntu-24.04-arm
-            arch: aarch64
-            deb_arch: arm64
-            appimage_arch: aarch64
-    runs-on: ${{ matrix.runner }}
-    env:
-      VERSION: ${{ needs.version.outputs.version }}
-    steps:
-      - uses: actions/checkout@v7
-      - uses: actions/setup-node@v4
-        with:
-          node-version: "22"
-          cache: npm
-      # Keep in sync with rust-toolchain.toml.
-      - uses: dtolnay/rust-toolchain@master
-        with:
-          toolchain: 1.98.1
-      # 直接用仓库里给 Linux 用户的那份依赖脚本，顺带保证它在干净机器上是有效的
-      - name: System deps
-        run: bash scripts/linux/install-deps.sh
-      - run: npm ci
-      - name: Build deb and AppImage
-        run: npm run tauri build -- --bundles deb,appimage
-      - name: Collect packages
-        run: |
-          set -euo pipefail
-          mkdir -p dist/release
-          DEB="src-tauri/target/release/bundle/deb/snapshot_${VERSION}_${{ matrix.deb_arch }}.deb"
-          APPIMAGE="src-tauri/target/release/bundle/appimage/snapshot_${VERSION}_${{ matrix.appimage_arch }}.AppImage"
-          for f in "$DEB" "$APPIMAGE"; do
-            test -f "$f" || { echo "error: missing $f" >&2; find src-tauri/target/release/bundle -maxdepth 2 -type f | head -20; exit 1; }
-          done
-          cp "$DEB" "dist/release/Application-Snapshot-${VERSION}-linux-${{ matrix.arch }}.deb"
-          cp "$APPIMAGE" "dist/release/Application-Snapshot-${VERSION}-linux-${{ matrix.arch }}.AppImage"
-      - uses: actions/upload-artifact@v4
-        with:
-          name: linux-${{ matrix.arch }}
-          path: dist/release/Application-Snapshot-*-linux-${{ matrix.arch }}.*
-          if-no-files-found: error
+    uses: ./.github/workflows/linux-packages.yml
+    with:
+      version: ${{ needs.version.outputs.version }}
 
   publish:
     needs: [version, macos, windows, linux]

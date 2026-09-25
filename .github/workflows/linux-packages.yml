@@ -1,0 +1,103 @@
+# Linux 安装包：在支持线里最老的 Ubuntu 22.04 上打 deb + AppImage，再拿到 22.04 和 24.04 上各装一遍、起一遍。
+#
+# 为什么在 22.04 上打：glibc 只向后兼容。24.04 上编出来的程序要 GLIBC_2.39，22.04（2.35）上直接起不来；
+# 22.04 上编的在 24.04、Debian 12 上照样能跑，而 WebKitGTK 4.1 这三处都有（22.04 的 updates 源里是 2.50）。
+# 所以一个 deb 加一个 AppImage 就覆盖 Ubuntu 22.04+ / Debian 12+，不按系统版本拆包，用户也不会下错。
+#
+# 两种触发：发版时由 release.yml 调用；改到打包相关文件的 PR 也跑一遍，打包问题在合并前就暴露。
+name: Linux packages
+
+on:
+  workflow_call:
+    inputs:
+      version:
+        description: "附件名里的版本号，如 0.1.0"
+        required: true
+        type: string
+  pull_request:
+    paths:
+      - ".github/workflows/linux-packages.yml"
+      - "scripts/linux/**"
+      - "src-tauri/tauri.conf.json"
+
+jobs:
+  build:
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          # 两个架构都用原生 runner：Linux 侧要链 webkit2gtk 等一堆 C 库，交叉编译得整套 sysroot
+          - runner: ubuntu-22.04
+            arch: x86_64
+            deb_arch: amd64
+            appimage_arch: amd64
+          - runner: ubuntu-22.04-arm
+            arch: aarch64
+            deb_arch: arm64
+            appimage_arch: aarch64
+    runs-on: ${{ matrix.runner }}
+    steps:
+      - uses: actions/checkout@v7
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "22"
+          cache: npm
+      # Keep in sync with rust-toolchain.toml.
+      - uses: dtolnay/rust-toolchain@master
+        with:
+          toolchain: 1.98.1
+      # 直接用仓库里给 Linux 用户的那份依赖脚本，顺带保证它在支持线里最老的系统上有效
+      - name: System deps
+        run: bash scripts/linux/install-deps.sh
+      - run: npm ci
+      - name: Build deb and AppImage
+        run: npm run tauri build -- --bundles deb,appimage
+      - name: Check glibc floor
+        run: bash scripts/linux/check-glibc.sh src-tauri/target/release/snapshot 2.35
+      - name: Collect packages
+        env:
+          VERSION: ${{ inputs.version }}
+        run: |
+          set -euo pipefail
+          # PR 触发时没有传入版本号，按包里的版本命名
+          VERSION="${VERSION:-$(jq -r .version src-tauri/tauri.conf.json)}"
+          mkdir -p dist/release
+          DEB="src-tauri/target/release/bundle/deb/snapshot_${VERSION}_${{ matrix.deb_arch }}.deb"
+          APPIMAGE="src-tauri/target/release/bundle/appimage/snapshot_${VERSION}_${{ matrix.appimage_arch }}.AppImage"
+          for f in "$DEB" "$APPIMAGE"; do
+            test -f "$f" || { echo "error: missing $f" >&2; find src-tauri/target/release/bundle -maxdepth 2 -type f | head -20; exit 1; }
+          done
+          cp "$DEB" "dist/release/Application-Snapshot-${VERSION}-linux-${{ matrix.arch }}.deb"
+          cp "$APPIMAGE" "dist/release/Application-Snapshot-${VERSION}-linux-${{ matrix.arch }}.AppImage"
+      - uses: actions/upload-artifact@v4
+        with:
+          name: linux-${{ matrix.arch }}
+          path: dist/release/Application-Snapshot-*-linux-${{ matrix.arch }}.*
+          if-no-files-found: error
+
+  # 同一份包拿到最老（22.04）和当前（24.04）两代系统上装、起；过不了就不进发布草稿
+  smoke:
+    needs: build
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - runner: ubuntu-22.04
+            arch: x86_64
+          - runner: ubuntu-24.04
+            arch: x86_64
+          - runner: ubuntu-22.04-arm
+            arch: aarch64
+          - runner: ubuntu-24.04-arm
+            arch: aarch64
+    runs-on: ${{ matrix.runner }}
+    steps:
+      - uses: actions/checkout@v7
+      - uses: actions/download-artifact@v8
+        with:
+          name: linux-${{ matrix.arch }}
+          path: packages
+      - name: Install and launch the deb
+        run: bash scripts/linux/smoke-test.sh deb packages/*.deb
+      - name: Launch the AppImage
+        run: bash scripts/linux/smoke-test.sh appimage packages/*.AppImage
