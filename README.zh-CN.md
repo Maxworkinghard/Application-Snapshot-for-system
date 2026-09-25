@@ -1,6 +1,6 @@
 # 应用快照
 
-[![Check](https://github.com/Maxworkinghard/Snapshot-/actions/workflows/check.yml/badge.svg)](https://github.com/Maxworkinghard/Snapshot-/actions/workflows/check.yml)
+[![Check](https://github.com/Maxworkinghard/Snapshot/actions/workflows/check.yml/badge.svg)](https://github.com/Maxworkinghard/Snapshot/actions/workflows/check.yml)
 
 简体中文 | [English](README.md)
 
@@ -33,7 +33,7 @@
 
 ## 安装
 
-从 [Releases](https://github.com/Maxworkinghard/Snapshot-/releases) 下载对应平台的安装包。目前已发布 Windows（x64 / ARM64）和 Linux（x86_64 / aarch64）版，macOS 版稍后发布；也可以[从源码构建](#从源码构建)。
+从 [Releases](https://github.com/Maxworkinghard/Snapshot/releases) 下载对应平台的安装包。目前已发布 Windows（x64 / ARM64）和 Linux（x86_64 / aarch64）版，macOS 版稍后发布；也可以[从源码构建](#从源码构建)。
 
 系统要求：
 
