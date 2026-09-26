@@ -1,6 +1,6 @@
 use super::*;
 
-/// 输入框窗口的逻辑宽度：面板 640，两侧各留 40 给阴影
+/// 输入框窗口的逻辑宽度：面板 640，两侧各留 40 透明边
 pub(crate) const PALETTE_WIDTH: f64 = 720.0;
 /// 刚打开时的高度；页面量好自己的实际高度后会马上调 resize_quick_menu
 const PALETTE_INITIAL_HEIGHT: f64 = 460.0;
