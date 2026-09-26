@@ -220,6 +220,9 @@
 .row-line { display: flex; align-items: center; justify-content: space-between; gap: 16px; }
 .row-label { color: var(--ink-2); }
 .row-links { display: flex; align-items: baseline; gap: 12px; }
+/* 滑块（如桌宠大小）：细轨道，颜色跟正文走 */
+.range { width: 160px; margin: 0; accent-color: var(--ink); cursor: pointer; align-self: center; }
+.range-value { min-width: 3.2em; text-align: right; }
 
 /* 两栏页面里一栏放多块时，块和块之间的距离 */
 .page-col { display: flex; flex-direction: column; gap: 36px; min-width: 0; }

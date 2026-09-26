@@ -13,6 +13,7 @@ const settings: Settings = {
   activeTemplateId: "builtin-default",
   selectedAppearanceId: "app-icon",
   petAssets: [],
+  petScale: 100,
   shortcuts: [
     { action: "snapshot", accelerator: "Alt+Shift+2" },
     { action: "record", accelerator: null },

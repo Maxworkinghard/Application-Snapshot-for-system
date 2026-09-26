@@ -1,8 +1,9 @@
-import { render, screen, waitFor } from "@testing-library/react";
+import { fireEvent, render, screen, waitFor } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { describe, expect, it, vi } from "vitest";
+import type { InvokeArgs } from "@tauri-apps/api/core";
 import type { PlatformCapabilities, Settings } from "../types";
-import { setupTauriMock } from "../test/tauri";
+import { setupTauriMock, type IPCHandler } from "../test/tauri";
 
 /**
  * B2 拆页后的回归网：逐个导航到从 App.tsx 搬出的页面，确认它们在新位置
@@ -17,6 +18,7 @@ const settings: Settings = {
   activeTemplateId: "builtin-default",
   selectedAppearanceId: "app-icon",
   petAssets: [],
+  petScale: 100,
   shortcuts: [
     { action: "snapshot", accelerator: "Alt+Shift+2" },
     { action: "record", accelerator: null },
@@ -62,8 +64,8 @@ function handler(command: string) {
   }
 }
 
-async function renderApp() {
-  setupTauriMock(handler, { currentWindow: "main", shouldMockEvents: true });
+async function renderApp(handle: IPCHandler = handler) {
+  setupTauriMock(handle, { currentWindow: "main", shouldMockEvents: true });
   vi.resetModules();
   const { App } = await import("../App");
   render(<App />);
@@ -91,6 +93,24 @@ describe("B2 拆页后逐页渲染", () => {
     await user.click(screen.getByRole("button", { name: navLabel }));
     // 换页不等旧页淡出，新页内容应当马上出现
     expect(await screen.findAllByText(marker, { exact: false })).not.toHaveLength(0);
+  });
+
+  it("偏好设置里拖桌宠大小：存下百分比，旁边跟着显示", async () => {
+    const calls: Array<{ command: string; payload?: InvokeArgs }> = [];
+    await renderApp((command, payload) => {
+      calls.push({ command, payload });
+      if (command === "save_preferences") return { ...settings, ...(payload as { prefs: Partial<Settings> }).prefs };
+      return handler(command);
+    });
+    const user = userEvent.setup();
+    await user.click(screen.getByRole("button", { name: /^偏好设置/ }));
+    const slider = await screen.findByRole("slider", { name: "大小" });
+    fireEvent.change(slider, { target: { value: "150" } });
+    expect(await screen.findByText("150%")).toBeTruthy();
+    await waitFor(() =>
+      expect(calls.find((call) => call.command === "save_preferences")?.payload).toEqual({ prefs: { petScale: 150 } }),
+    );
+    expect(screen.getByRole("button", { name: "恢复默认" })).toBeTruthy();
   });
 
   it("主题库里换成「时间线」：侧栏消失，标题栏出现「今天」", async () => {
