@@ -8,6 +8,7 @@
 //!   snapshot/<快照 id>
 //!   thumb/<快照 id>              缩略图（没有就现做）
 //!   pet/<形象 id>[/<压缩包内的动作路径>]
+//!   pet-walk/<形象 id>/<动作路径>  拖动时播的走路动作（横穿画布的改成原地走）
 //!   pet-thumb/<形象 id>          默认动作的第一帧
 //!   icon/<pid>/<边长>
 //!   sound/<设置里选定的自定义音效路径>
@@ -93,6 +94,14 @@ fn serve(app: &AppHandle, path: &str) -> Result<Media, String> {
                 mime: "image/gif",
                 immutable: false,
                 bytes: pet::read_animation(&state, id, entry)?,
+            })
+        }
+        "pet-walk" => {
+            let (id, entry) = rest.split_once('/').ok_or("走路动作路径不完整")?;
+            Ok(Media {
+                mime: "image/gif",
+                immutable: false,
+                bytes: pet::read_walk(&state, id, entry)?,
             })
         }
         "icon" => {

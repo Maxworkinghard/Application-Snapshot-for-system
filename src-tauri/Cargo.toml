@@ -19,6 +19,8 @@ arboard = "3.6"
 base64 = "0.22"
 chrono = { version = "0.4", features = ["clock"] }
 dirs = "7"
+# 走路动作改成原地走时重新编码 GIF；image 本来就依赖它，不新增 crate
+gif = "0.14"
 image = { version = "0.25", default-features = false, features = ["png", "jpeg", "webp", "gif"] }
 keyring = { version = "3.6", features = ["apple-native", "windows-native", "sync-secret-service"] }
 parking_lot = "0.12"

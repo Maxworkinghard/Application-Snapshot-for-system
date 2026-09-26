@@ -54,6 +54,11 @@
   - 2026-09-25（X11 测试机）：deb / rpm / AppImage 都能构建，还没装到系统里验启动；测试机没有 ScreenCast 门户、PipeWire 和 StatusNotifierHost，portal 与托盘都没测。
   - 2026-09-25 复测（X11 测试机）：本机打的 AppImage 能启动。这只说明打包链路没问题，不代表 22.04 上能用，22.04 / 24.04 见第七节。
 
+- [ ] **拖动桌宠时的走路动作：拖动过程中能否持续收到窗口移动事件**（macOS / Linux）
+  - 验什么：导入带 `walk_left` / `walk_right` 的 GIF 包，按住桌宠左右拖。拖动期间应一直显示对应方向的走路图，往回拖会转身，松手约 0.25 秒后恢复原来的动作。
+  - 实现说明：`startDragging()` 之后网页收不到指针事件，方向完全靠 `getCurrentWindow().onMoved` 给出的窗口位置变化来判断（`src/windows/PetWindow.tsx`）。如果某端只在松手时才发一次移动事件，拖动时就看不到走路；如果根本拿不到窗口位置（Wayland 下窗口位置对客户端不可见），走路动作就不会出现。
+  - 为什么本机验不了：Windows 上已确认拖动时持续触发；macOS 拖动时 `windowDidMove` 的触发频率、X11 / Wayland 下的 `ConfigureNotify` 与窗口位置，都要在对应平台的真机上看。
+
 ## 四、2026-09-24 代码优化系列（#21–#25）新增
 
 这一批由 Windows 端完成并合入 main。Windows 上已做过真机端到端验证的，标在「已验」里；下面列的是还缺真人操作或只能在另外两端验的项。

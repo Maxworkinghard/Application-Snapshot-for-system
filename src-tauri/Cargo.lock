@@ -4169,6 +4169,7 @@ dependencies = [
  "chrono",
  "core-foundation 0.10.1",
  "dirs 7.0.0",
+ "gif",
  "image",
  "keyring",
  "objc2",
