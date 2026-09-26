@@ -1,12 +1,10 @@
 import { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState, type ReactNode } from "react";
 import { getCurrentWindow } from "@tauri-apps/api/window";
 import {
-  copySnapshot,
   copyText,
   getRecordingStatus,
   getShortcutConflicts,
   hideQuickMenu,
-  listSnapshots,
   listWindows,
   loadSettings,
   onPaletteOpened,
@@ -18,13 +16,13 @@ import {
   showMainWindow,
   toggleRecording,
 } from "../lib/backend";
-import { iconUrl, petThumbUrl, petUrl, thumbUrl } from "../lib/media";
-import { formatDuration, formatWhen } from "../lib/format";
+import { iconUrl, petThumbUrl, petUrl } from "../lib/media";
+import { formatDuration } from "../lib/format";
 import { typingEntry } from "../lib/petNames";
 import { motionReduced } from "../lib/motion";
 import { MediaImage } from "../components/MediaImage";
 import { Keys } from "../components/ui/Keys";
-import type { CapturableWindow, RecordingStatus, Settings, ShortcutAction, SnapshotRecord } from "../types";
+import type { CapturableWindow, RecordingStatus, Settings, ShortcutAction } from "../types";
 
 type View = "menu" | "windows" | "polish";
 type Status = { kind: "busy" | "ok" | "error"; text: string };
@@ -34,7 +32,10 @@ type Item = { id: string; label: ReactNode; hint?: ReactNode; keywords: string; 
 const OK_HIDE_DELAY_MS = 900;
 /** 面板上方留给猫的空间（窗口本身透明） */
 const CAT_ROOM = 112;
+/** 面板左右和下方的透明边 */
 const EDGE = 40;
+/** 各视图的面板宽度：菜单装得下一行动作和快捷键就够；窗口列表多给点看标题；润色要放下底栏四个按钮 */
+const PANEL_WIDTH: Record<View, number> = { menu: 320, windows: 400, polish: 520 };
 
 const errorText = (error: unknown) => (error instanceof Error ? error.message : String(error));
 
@@ -58,7 +59,6 @@ export function QuickMenuWindow() {
   const [pickerMode, setPickerMode] = useState<"capture" | "record">("capture");
   const [windows, setWindows] = useState<CapturableWindow[] | null>(null);
   const [recording, setRecording] = useState<RecordingStatus>({ active: false, target: null, startedAt: null });
-  const [latest, setLatest] = useState<SnapshotRecord | null>(null);
   const [conflicts, setConflicts] = useState<string[]>([]);
   const [status, setStatus] = useState<Status | null>(null);
   const [opening, setOpening] = useState(0);
@@ -82,9 +82,6 @@ export function QuickMenuWindow() {
   const refresh = useCallback(() => {
     loadSettings().then(setSettings).catch(() => {});
     getRecordingStatus().then((value) => value && setRecording(value)).catch(() => {});
-    listSnapshots()
-      .then((list) => setLatest(Array.isArray(list) && list.length ? list[0] : null))
-      .catch(() => {});
     getShortcutConflicts()
       .then((list) => setConflicts(Array.isArray(list) ? list : []))
       .catch(() => {});
@@ -134,22 +131,23 @@ export function QuickMenuWindow() {
   const asset = settings?.petAssets.find((item) => item.id === settings.selectedAppearanceId && !item.missing) ?? null;
   const headroom = asset ? CAT_ROOM : 24;
 
-  // 窗口高度跟着面板走：进润色、展开窗口列表时变高。
+  // 窗口大小跟着面板走：换视图时变宽变窄，进润色、展开窗口列表时变高。
   // 每次打开都会重新挂一个面板（key={opening}），要改量新的那个；旧面板移出页面时量到的是 0，不能拿来缩窗口。
-  // 用 offsetHeight：getBoundingClientRect 会把入场动画的 scale(0.97) 算进去，量矮一截。
+  // 用 offsetWidth / offsetHeight：getBoundingClientRect 会把入场动画的 scale(0.97) 算进去，量小一圈。
   useLayoutEffect(() => {
     const panel = panelRef.current;
     if (!panel) return;
     const apply = () => {
       if (!panel.isConnected || panel.offsetHeight === 0) return;
-      void resizeQuickMenu(panel.offsetHeight + headroom + EDGE).catch(() => {});
+      void resizeQuickMenu(panel.offsetWidth + EDGE * 2, panel.offsetHeight + headroom + EDGE).catch(() => {});
     };
     apply();
     if (typeof ResizeObserver === "undefined") return;
     const observer = new ResizeObserver(apply);
     observer.observe(panel);
     return () => observer.disconnect();
-  }, [headroom, opening]);
+    // view 变了宽度就变（PANEL_WIDTH），当场重量一次，不等 ResizeObserver
+  }, [headroom, opening, view]);
 
   function showStatus(next: Status | null, hideAfter = false) {
     if (hideTimer.current !== null) window.clearTimeout(hideTimer.current);
@@ -278,7 +276,7 @@ export function QuickMenuWindow() {
     const list: Item[] = [
       {
         id: "capture",
-        label: "截一个窗口…",
+        label: "快照",
         hint: shortcutHint("snapshot"),
         keywords: "截图 截屏 窗口 快照 capture snapshot",
         run: () => void openPicker("capture"),
@@ -293,13 +291,14 @@ export function QuickMenuWindow() {
       recording.active
         ? {
             id: "record",
-            label: (
+            label: <>停止录制 · {recording.target ?? "窗口"}</>,
+            // 时长放在右边：窗口名太长时左边会被截掉，时长不能跟着没了
+            hint: (
               <>
-                停止录制 · {recording.target ?? "窗口"}
-                <span className="mono signal"> {formatDuration(now - (recording.startedAt ?? now))}</span>
+                <span className="mono signal">{formatDuration(now - (recording.startedAt ?? now))}</span>
+                {shortcutHint("record")}
               </>
             ),
-            hint: shortcutHint("record"),
             keywords: "停止 录制 录屏 record stop",
             run: () => void stopRecording(),
           }
@@ -312,29 +311,12 @@ export function QuickMenuWindow() {
           },
       {
         id: "polish",
-        label: "润色剪贴板里的文字",
+        label: "润色 Prompt",
         hint: shortcutHint("polish"),
         keywords: "润色 改写 prompt 剪贴板 polish",
         run: () => void polishClipboardText(),
       },
     ];
-    if (latest) {
-      list.push({
-        id: "again",
-        label: (
-          <span className="palette-again">
-            <img src={thumbUrl(latest.id)} alt="" />
-            再复制一次上一张
-          </span>
-        ),
-        hint: <span className="small quiet">{latest.appName} · {formatWhen(latest.createdAt)}</span>,
-        keywords: `再 复制 上一张 截图 ${latest.appName}`,
-        run: () =>
-          void copySnapshot(latest.id)
-            .then((text) => showStatus({ kind: "ok", text }, true))
-            .catch((error) => showStatus({ kind: "error", text: errorText(error) })),
-      });
-    }
     list.push({
       id: "main",
       label: "打开主窗口",
@@ -347,7 +329,7 @@ export function QuickMenuWindow() {
     });
     return list;
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [settings, recording, latest, conflicts, now]);
+  }, [settings, recording, conflicts, now]);
 
   const visibleItems = useMemo<Item[]>(() => {
     const needle = query.trim().toLowerCase();
@@ -443,7 +425,7 @@ export function QuickMenuWindow() {
       }}
       onKeyDown={onKeyDown}
     >
-      <div className="palette-wrap" key={opening}>
+      <div className="palette-wrap" key={opening} style={{ width: PANEL_WIDTH[view] }}>
         {catSrc && <img className="palette-cat" key={catSrc} src={catSrc} alt="" draggable={false} />}
         <div className="palette" ref={panelRef} role="dialog" aria-label="应用快照输入框">
           {view === "polish" ? (
@@ -531,7 +513,7 @@ export function QuickMenuWindow() {
                       onClick={item.run}
                     >
                       <span className="palette-label">{item.label}</span>
-                      {item.hint}
+                      {item.hint && <span className="palette-hint">{item.hint}</span>}
                     </button>
                   ))}
                 </div>

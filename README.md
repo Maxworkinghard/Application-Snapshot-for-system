@@ -64,7 +64,7 @@ Windows and macOS need nothing extra (on Windows 10 the installer downloads the 
 
 Once started, the companion appears on the desktop (showing the current app's icon by default) and the app has an icon in the system tray.
 
-- **Input box**: right-click the companion to open it. From here you can capture a window, capture the full screen, record a window, polish the text on the clipboard, or copy the last snapshot again. Type to filter commands; paste a block of text to start polishing it straight away.
+- **Input box**: right-click the companion to open it. From here you can take a snapshot of a window, capture the full screen, record a window, or polish the prompt on the clipboard. Type to filter commands; paste a block of text to start polishing it straight away.
 - **Shortcuts**: nothing is bound by default. On the Shortcuts page you can bind a global shortcut to window snapshot, fullscreen snapshot, window recording, prompt polishing and opening the input box, plus scrolling capture on Linux.
 - **Capture**: by default a capture goes to the clipboard, which is cleared after 60 seconds (unless you copied something else in the meantime). In Preferences you can switch to opening the annotation window or a save dialog instead. The clear delay, image format and snapshot folder are under Shortcuts → Clipboard & saving.
 - **Recording**: recordings are saved as MP4 in your Downloads folder by default. The folder and whether to include system audio and the microphone are under Shortcuts → Recording.

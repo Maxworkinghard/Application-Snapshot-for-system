@@ -290,10 +290,11 @@ input:focus-visible, textarea:focus-visible { outline: none; }
 /* ---------- 输入框（快捷菜单窗口） ---------- */
 
 .palette-root {
-  display: flex; justify-content: center; width: 100vw; height: 100vh;
+  display: flex; justify-content: flex-start; width: 100vw; height: 100vh;
   padding: 112px 40px 40px; overflow: hidden;
 }
-.palette-wrap { position: relative; width: 100%; height: fit-content; }
+/* 宽度按视图由页面给（PANEL_WIDTH），窗口跟着它变 */
+.palette-wrap { position: relative; flex: 0 0 auto; height: fit-content; }
 .palette {
   position: relative; width: 100%;
   border-radius: 6px; background: var(--paper); color: var(--ink);
@@ -317,23 +318,23 @@ input:focus-visible, textarea:focus-visible { outline: none; }
 @keyframes cat-drop { from { opacity: 0; transform: translateY(-18px); } }
 [data-motion="reduced"] .palette, [data-motion="reduced"] .palette-cat { animation-name: fade-in; }
 
-.palette-input-row { display: flex; align-items: center; gap: 14px; height: 64px; padding: 0 24px; border-bottom: 1px solid var(--rule); }
-.palette-input { flex: 1; min-width: 0; padding: 0; border: 0; background: none; outline: none; font-size: 18px; }
+.palette-input-row { display: flex; align-items: center; gap: 12px; height: 50px; padding: 0 18px; border-bottom: 1px solid var(--rule); }
+.palette-input { flex: 1; min-width: 0; padding: 0; border: 0; background: none; outline: none; font-size: 16px; }
 .palette-back { display: grid; place-items: center; width: 24px; height: 24px; margin-left: -6px; padding: 0; border: 0; background: none; color: var(--ink-2); }
 
-.palette-list { display: flex; flex-direction: column; padding: 8px 0 12px; max-height: 420px; overflow-y: auto; }
+.palette-list { display: flex; flex-direction: column; padding: 6px 0 8px; max-height: 360px; overflow-y: auto; }
 .palette-item {
-  display: flex; align-items: center; justify-content: space-between; gap: 16px;
-  min-height: 42px; padding: 0 24px; border: 0; background: none; text-align: left; font-size: 14px;
+  display: flex; align-items: center; justify-content: space-between; gap: 12px;
+  min-height: 36px; padding: 0 18px; border: 0; background: none; text-align: left; font-size: 14px;
   transition: background-color var(--t-press) var(--ease-out);
 }
 .palette-item.is-on { background: var(--paper-sunk); }
 .palette-item.is-muted { color: var(--ink-2); }
-.palette-item.is-apart { margin-top: 8px; }
+.palette-item.is-apart { margin-top: 6px; }
 .palette-label { min-width: 0; overflow: hidden; white-space: nowrap; text-overflow: ellipsis; }
-.palette-again { display: inline-flex; align-items: center; gap: 12px; }
-.palette-again img { width: 34px; height: 19px; object-fit: cover; object-position: top; border-radius: 2px; background: var(--thumb-empty); }
-.palette-empty { margin: 16px 24px; }
+/* 右边的快捷键、录制时长不让位：宽度不够时先截左边的文字 */
+.palette-hint { display: inline-flex; flex: 0 0 auto; align-items: center; gap: 10px; }
+.palette-empty { margin: 12px 18px; }
 .palette-window { display: flex; align-items: center; gap: 12px; min-width: 0; }
 .palette-icon { display: grid; place-items: center; flex: 0 0 auto; width: 20px; height: 20px; }
 .palette-icon img { width: 20px; height: 20px; object-fit: contain; }
@@ -343,15 +344,18 @@ input:focus-visible, textarea:focus-visible { outline: none; }
 .palette-window-title { min-width: 0; overflow: hidden; white-space: nowrap; text-overflow: ellipsis; }
 
 .palette-polish { display: flex; flex-direction: column; }
-.palette-source { display: flex; align-items: baseline; gap: 12px; padding: 18px 24px 0; }
+.palette-source { display: flex; align-items: baseline; gap: 12px; padding: 14px 18px 0; }
 .palette-source-text { flex: 1; min-width: 0; overflow: hidden; white-space: nowrap; text-overflow: ellipsis; color: var(--ink-3); }
-.palette-result { min-height: 120px; max-height: 320px; margin-top: 14px; padding: 0 24px; overflow-y: auto; outline: none; }
+.palette-result { min-height: 96px; max-height: 280px; margin-top: 10px; padding: 0 18px; overflow-y: auto; outline: none; }
 .palette-result-text { margin: 0; font-size: 14px; line-height: 24px; white-space: pre-wrap; animation: rise-in var(--t-open) var(--ease-enter); }
 .palette-busy { display: grid; gap: 12px; margin: 8px 0 0; color: var(--ink-2); }
 .palette-busy .busy-line { width: 160px; }
-.palette-foot { display: flex; align-items: center; gap: 20px; height: 56px; margin-top: 14px; padding: 0 14px 0 24px; border-top: 1px solid var(--rule); }
-.palette-foot .btn-primary { height: 34px; }
-.palette-rule { gap: 8px; }
-.palette-status { display: flex; align-items: center; padding: 10px 24px 12px; border-top: 1px solid var(--rule); color: var(--ink-2); animation: rise-in var(--t-open) var(--ease-enter); }
+.palette-foot { display: flex; align-items: center; gap: 14px; height: 48px; margin-top: 10px; padding: 0 12px 0 18px; border-top: 1px solid var(--rule); }
+.palette-foot .btn-primary { height: 30px; }
+.palette-rule { gap: 8px; min-width: 0; }
+/* 规则名太长时截断，别把右边的按钮挤出去 */
+.palette-rule .strong { min-width: 0; overflow: hidden; white-space: nowrap; text-overflow: ellipsis; }
+.palette-foot > .text-btn:not(.palette-rule), .palette-foot > .btn { flex: 0 0 auto; }
+.palette-status { display: flex; align-items: center; padding: 8px 18px 10px; border-top: 1px solid var(--rule); color: var(--ink-2); animation: rise-in var(--t-open) var(--ease-enter); }
 .palette-status.is-ok { color: var(--ink); }
 .palette-status.is-error { color: var(--signal); }
