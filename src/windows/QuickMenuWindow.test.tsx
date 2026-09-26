@@ -22,7 +22,7 @@ async function renderPalette(handle: (command: string, payload?: InvokeArgs) => 
 }
 
 describe("输入框：录制", () => {
-  it("选「录一个窗口…」先列窗口，点哪个就录哪个", async () => {
+  it("选「录制」先列窗口，点哪个就录哪个", async () => {
     const { calls, user } = await renderPalette((command) => {
       if (command === "get_recording_status") return { active: false, target: null, startedAt: null } satisfies RecordingStatus;
       if (command === "list_capturable_windows") return windowList;
@@ -30,7 +30,7 @@ describe("输入框：录制", () => {
       return undefined;
     });
 
-    await user.click(await screen.findByRole("option", { name: "录一个窗口…" }));
+    await user.click(await screen.findByRole("option", { name: "录制" }));
     expect(await screen.findByRole("listbox", { name: "选择要录制的窗口" })).toBeTruthy();
     await user.click(await screen.findByRole("option", { name: /Visual Studio Code/ }));
     expect(await screen.findByText("开始录制 Visual Studio Code")).toBeTruthy();
