@@ -132,7 +132,7 @@ fn default_after_capture() -> String {
 }
 
 /// 桌宠大小能调的范围（百分比），和前端 lib/petSize.ts 的 PET_SCALE 一致
-const PET_SCALE_RANGE: (u32, u32) = (50, 300);
+const PET_SCALE_RANGE: (u32, u32) = (30, 200);
 
 fn default_pet_scale() -> u32 {
     100
@@ -537,7 +537,7 @@ mod tests {
     use super::*;
 
     #[test]
-    fn old_settings_without_pet_scale_keep_the_original_size() {
+    fn old_settings_without_pet_scale_use_the_default_size() {
         let json = r#"{"baseUrl":"","model":"","templates":[],"activeTemplateId":"builtin-default","shortcuts":[]}"#;
         let settings: Settings = serde_json::from_str(json).unwrap();
         assert_eq!(settings.pet_scale, 100);
@@ -545,8 +545,8 @@ mod tests {
 
     #[test]
     fn pet_scale_is_kept_within_its_range() {
-        assert_eq!(clamp_pet_scale(10), 50);
+        assert_eq!(clamp_pet_scale(10), 30);
         assert_eq!(clamp_pet_scale(150), 150);
-        assert_eq!(clamp_pet_scale(1000), 300);
+        assert_eq!(clamp_pet_scale(300), 200);
     }
 }
