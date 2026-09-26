@@ -80,7 +80,8 @@ export const showQuickMenu = (x: number, y: number) => invoke<void>("show_quick_
 export const hideQuickMenu = () => invoke<void>("hide_quick_menu");
 
 /** 输入框窗口按页面内容的实际高度收放 */
-export const resizeQuickMenu = (height: number) => invoke<void>("resize_quick_menu", { height });
+export const resizeQuickMenu = (width: number, height: number) =>
+  invoke<void>("resize_quick_menu", { width, height });
 
 export const showMainWindow = () => invoke<void>("show_main_window");
 

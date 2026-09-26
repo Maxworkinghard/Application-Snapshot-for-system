@@ -1,11 +1,10 @@
 use super::*;
 
-/// 输入框窗口的逻辑宽度：面板 640，两侧各留 40 透明边
-pub(crate) const PALETTE_WIDTH: f64 = 720.0;
-/// 刚打开时的高度；页面量好自己的实际高度后会马上调 resize_quick_menu
-const PALETTE_INITIAL_HEIGHT: f64 = 460.0;
-const PALETTE_MIN_HEIGHT: f64 = 200.0;
-const PALETTE_MAX_HEIGHT: f64 = 760.0;
+/// 输入框窗口的逻辑大小由页面按当前视图量好再告诉这里（resize_quick_menu）；
+/// 这是页面还没量过时的初始值，以及防止量错的上下限
+const PALETTE_INITIAL_SIZE: (f64, f64) = (400.0, 360.0);
+const PALETTE_WIDTH_RANGE: (f64, f64) = (240.0, 760.0);
+const PALETTE_HEIGHT_RANGE: (f64, f64) = (160.0, 760.0);
 
 /// 右键桌宠：在桌宠旁边展开，往屏幕中心的方向开
 #[tauri::command]
@@ -30,38 +29,46 @@ fn open_palette(app: &AppHandle, state: &AppState) -> Result<(), String> {
     let window = app
         .get_webview_window("quick-menu")
         .ok_or_else(|| "输入框窗口不存在".to_string())?;
-    let height = current_logical_height(&window).unwrap_or(PALETTE_INITIAL_HEIGHT);
+    let (width, height) = current_logical_size(&window).unwrap_or(PALETTE_INITIAL_SIZE);
     window
-        .set_size(LogicalSize::new(PALETTE_WIDTH, height))
+        .set_size(LogicalSize::new(width, height))
         .map_err(|e| e.to_string())?;
-    position_palette(app, &window, *state.quick_menu_anchor.lock(), height)?;
+    position_palette(app, &window, *state.quick_menu_anchor.lock(), width, height)?;
     window.show().map_err(|e| e.to_string())?;
     window.set_focus().map_err(|e| e.to_string())?;
     let _ = app.emit_to("quick-menu", "palette-opened", ());
     Ok(())
 }
 
-fn current_logical_height(window: &tauri::WebviewWindow) -> Option<f64> {
+fn current_logical_size(window: &tauri::WebviewWindow) -> Option<(f64, f64)> {
     let scale = window.scale_factor().ok()?;
     let size = window.inner_size().ok()?;
-    Some(size.height as f64 / scale)
+    Some((size.width as f64 / scale, size.height as f64 / scale))
 }
 
-/// 页面内容变高变矮（进入润色、展开窗口列表）时由页面告诉窗口该多高
+/// 页面换了视图、内容变多变少（进润色、展开窗口列表）时由页面告诉窗口该多大
 #[tauri::command]
 pub(crate) fn resize_quick_menu(
     app: AppHandle,
     state: State<'_, AppState>,
+    width: f64,
     height: f64,
 ) -> Result<(), String> {
     let window = app
         .get_webview_window("quick-menu")
         .ok_or_else(|| "输入框窗口不存在".to_string())?;
-    let height = height.clamp(PALETTE_MIN_HEIGHT, PALETTE_MAX_HEIGHT);
+    let width = width.clamp(PALETTE_WIDTH_RANGE.0, PALETTE_WIDTH_RANGE.1);
+    let height = height.clamp(PALETTE_HEIGHT_RANGE.0, PALETTE_HEIGHT_RANGE.1);
     window
-        .set_size(LogicalSize::new(PALETTE_WIDTH, height))
+        .set_size(LogicalSize::new(width, height))
         .map_err(|e| e.to_string())?;
-    position_palette(&app, &window, *state.quick_menu_anchor.lock(), height)
+    position_palette(
+        &app,
+        &window,
+        *state.quick_menu_anchor.lock(),
+        width,
+        height,
+    )
 }
 
 fn monitor_at(window: &tauri::WebviewWindow, sx: f64, sy: f64) -> Option<tauri::Monitor> {
@@ -81,10 +88,11 @@ fn position_palette(
     app: &AppHandle,
     window: &tauri::WebviewWindow,
     anchor: Option<(f64, f64)>,
+    logical_width: f64,
     logical_height: f64,
 ) -> Result<(), String> {
     let scale = window.scale_factor().unwrap_or(1.0);
-    let width = PALETTE_WIDTH * scale;
+    let width = logical_width * scale;
     let height = logical_height * scale;
 
     let (mut px, mut py, monitor) = match anchor {

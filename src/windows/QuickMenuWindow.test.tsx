@@ -56,7 +56,7 @@ describe("输入框：录制", () => {
   });
 });
 
-describe("输入框：窗口高度", () => {
+describe("输入框：窗口大小", () => {
   /** 只记下在观察谁；什么时候回调由测试决定（jsdom 没有布局，也没有 ResizeObserver） */
   class FakeResizeObserver {
     static live = new Set<FakeResizeObserver>();
@@ -92,7 +92,7 @@ describe("输入框：窗口高度", () => {
     });
 
     const { calls } = await renderPalette(() => undefined);
-    // 没有桌宠形象时上方留 24，下方留 40 给阴影
+    // 没有桌宠形象时上方留 24，下方留 40
     const heights = () =>
       calls.filter((call) => call.command === "resize_quick_menu").map((call) => (call.payload as { height: number }).height);
     await waitFor(() => expect(heights()).toContain(300 + 24 + 40));
@@ -102,12 +102,34 @@ describe("输入框：窗口高度", () => {
     await emit("palette-opened");
     await waitFor(() => expect(document.querySelector(".palette")).not.toBe(firstPanel));
 
-    // 新面板更高（比如多了「再复制一次上一张」）：窗口要跟着变高
+    // 新面板更高（比如开着录制时那一行多了时长）：窗口要跟着变高
     panelHeight = 380;
     FakeResizeObserver.notifyAll();
     await waitFor(() => expect(heights().at(-1)).toBe(380 + 24 + 40));
     expect(heights().every((height) => height >= 300 + 24 + 40)).toBe(true);
     vi.unstubAllGlobals();
+  });
+
+  it("菜单窄，点「快照」列窗口时变宽，Esc 回菜单再变窄", async () => {
+    // jsdom 没有布局：面板宽度按外层按视图给的宽度算，高度随便给一个
+    vi.spyOn(HTMLElement.prototype, "offsetWidth", "get").mockImplementation(function (this: HTMLElement) {
+      return this.classList.contains("palette") ? parseFloat((this.parentElement as HTMLElement).style.width) || 0 : 0;
+    });
+    vi.spyOn(HTMLElement.prototype, "offsetHeight", "get").mockImplementation(function (this: HTMLElement) {
+      return this.isConnected && this.classList.contains("palette") ? 250 : 0;
+    });
+    const { calls, user } = await renderPalette((command) => (command === "list_capturable_windows" ? windowList : undefined));
+    const widths = () =>
+      calls.filter((call) => call.command === "resize_quick_menu").map((call) => (call.payload as { width: number }).width);
+    // 面板宽 + 左右各 40
+    await waitFor(() => expect(widths().at(-1)).toBe(320 + 80));
+
+    await user.click(await screen.findByRole("option", { name: "快照" }));
+    expect(await screen.findByRole("listbox", { name: "选择要截取的窗口" })).toBeTruthy();
+    await waitFor(() => expect(widths().at(-1)).toBe(400 + 80));
+
+    await user.keyboard("{Escape}");
+    await waitFor(() => expect(widths().at(-1)).toBe(320 + 80));
   });
 });
 
