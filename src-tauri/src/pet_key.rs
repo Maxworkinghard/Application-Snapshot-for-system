@@ -29,6 +29,7 @@ const TRANSPARENT: u8 = 255;
 /// 一个颜色和它在这一帧里出现的次数
 type ColorCount = ([u8; 3], usize);
 
+/// 一帧算到一半的样子。颜色用 f32 是为了反解边缘时中间值不丢精度。
 struct Canvas {
     width: usize,
     height: usize,
