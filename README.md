@@ -6,7 +6,7 @@
 
 A small desktop tool for window screenshots and screen recording, with prompt polishing and a desktop companion on the side. Built with Tauri 2 + React; one codebase for Windows, macOS and Linux.
 
-The interface is Chinese only for now, so menu names below are followed by their Chinese labels.
+The interface is Chinese only for now; the menu names below are translated into English.
 
 ## Features
 
@@ -65,13 +65,13 @@ Windows and macOS need nothing extra (on Windows 10 the installer downloads the 
 Once started, the companion appears on the desktop (showing the current app's icon by default) and the app has an icon in the system tray.
 
 - **Input box**: right-click the companion to open it. From here you can capture a window, capture the full screen, record a window, polish the text on the clipboard, or copy the last snapshot again. Type to filter commands; paste a block of text to start polishing it straight away.
-- **Shortcuts**: nothing is bound by default. On the Shortcuts (快捷操作) page you can bind a global shortcut to window snapshot, fullscreen snapshot, window recording, prompt polishing and opening the input box, plus scrolling capture on Linux.
-- **Capture**: by default a capture goes to the clipboard, which is cleared after 60 seconds (unless you copied something else in the meantime). In Preferences (偏好设置) you can switch to opening the annotation window or a save dialog instead. The clear delay, image format and snapshot folder are under Shortcuts → Clipboard & saving (快捷操作 → 剪贴板与保存).
-- **Recording**: recordings are saved as MP4 in your Downloads folder by default. The folder and whether to include system audio and the microphone are under Shortcuts → Recording (快捷操作 → 录制).
-- **Prompt polishing**: first enter the endpoint URL, model and API key under Preferences → Machine & model (偏好设置 → 本机与模型). The API key is stored in the OS keychain, never in a config file. Rewrite rules are managed under Preferences → Polishing rules (偏好设置 → 润色规则).
-- **Companion**: on the Companion (桌面伴侣) page, import a `.zip` of GIFs or a single GIF. Use one file per action; a file whose name contains `idle` becomes the default pose. Only GIF is supported and other files in the archive are skipped (each platform's WebView plays different video codecs, so video is not supported for now). Limits: 100 MB per archive, 50 MB per GIF.
-- **Appearance**: the Themes (主题库) page switches the layout, color scheme and motion.
-- **Launch at login**: turn on 开机时静默启动 in Preferences (偏好设置).
+- **Shortcuts**: nothing is bound by default. On the Shortcuts page you can bind a global shortcut to window snapshot, fullscreen snapshot, window recording, prompt polishing and opening the input box, plus scrolling capture on Linux.
+- **Capture**: by default a capture goes to the clipboard, which is cleared after 60 seconds (unless you copied something else in the meantime). In Preferences you can switch to opening the annotation window or a save dialog instead. The clear delay, image format and snapshot folder are under Shortcuts → Clipboard & saving.
+- **Recording**: recordings are saved as MP4 in your Downloads folder by default. The folder and whether to include system audio and the microphone are under Shortcuts → Recording.
+- **Prompt polishing**: first enter the endpoint URL, model and API key under Preferences → Machine & model. The API key is stored in the OS keychain, never in a config file. Rewrite rules are managed under Preferences → Polishing rules.
+- **Companion**: on the Companion page, import a `.zip` of GIFs or a single GIF. Use one file per action; a file whose name contains `idle` becomes the default pose. Only GIF is supported and other files in the archive are skipped (each platform's WebView plays different video codecs, so video is not supported for now). Limits: 100 MB per archive, 50 MB per GIF.
+- **Appearance**: the Themes page switches the layout, color scheme and motion.
+- **Launch at login**: turn on "Launch silently at startup" in Preferences.
 
 ## Build from source
 
