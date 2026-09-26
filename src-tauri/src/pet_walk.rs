@@ -16,13 +16,13 @@ const SOLID_TOLERANCE: i16 = 24;
 
 /// 哪些像素算人物：带透明色的看 alpha；整张不透明的（背景画进去了）看和背景色差多少
 #[derive(Clone, Copy)]
-enum Backdrop {
+pub(crate) enum Backdrop {
     Transparent,
     Solid([u8; 3]),
 }
 
 impl Backdrop {
-    fn of(frames: &[RgbaImage]) -> Self {
+    pub(crate) fn of(frames: &[RgbaImage]) -> Self {
         if frames
             .iter()
             .any(|frame| frame.pixels().any(|pixel| pixel[3] < 255))
@@ -78,7 +78,7 @@ fn figure_box(frame: &RgbaImage, backdrop: Backdrop) -> Option<[u32; 4]> {
 }
 
 /// 解出每一帧（已按处置方式合成成整张画布）和它的时长（百分之一秒）
-fn decode(bytes: &[u8]) -> Result<Vec<(RgbaImage, u16)>, String> {
+pub(crate) fn decode(bytes: &[u8]) -> Result<Vec<(RgbaImage, u16)>, String> {
     let decoder = GifDecoder::new(Cursor::new(bytes)).map_err(|error| error.to_string())?;
     let frames = decoder
         .into_frames()
@@ -94,7 +94,11 @@ fn decode(bytes: &[u8]) -> Result<Vec<(RgbaImage, u16)>, String> {
         .collect())
 }
 
-fn encode(frames: Vec<(RgbaImage, u16)>, width: u32, height: u32) -> Result<Vec<u8>, String> {
+pub(crate) fn encode(
+    frames: Vec<(RgbaImage, u16)>,
+    width: u32,
+    height: u32,
+) -> Result<Vec<u8>, String> {
     let (width, height) = (width as u16, height as u16);
     let mut bytes = Vec::new();
     {

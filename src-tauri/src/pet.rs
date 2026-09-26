@@ -42,24 +42,44 @@ fn pets_dir(state: &AppState) -> &Path {
 }
 
 fn thumb_path(state: &AppState, id: &str) -> PathBuf {
-    pets_dir(state).join(format!("{id}.thumb.png"))
+    pets_dir(state).join(format!("{id}.thumb2.png"))
 }
 
-/// 走路动作处理后的缓存。动作名里有斜杠和中文，拿它的哈希（FNV-1a）当文件名
-fn walk_cache_path(state: &AppState, id: &str, entry: &str) -> PathBuf {
-    let hash = entry.bytes().fold(0xcbf2_9ce4_8422_2325_u64, |hash, byte| {
+/// 动作名里有斜杠和中文，拿它的哈希（FNV-1a）当文件名
+fn fnv(entry: &str) -> u64 {
+    entry.bytes().fold(0xcbf2_9ce4_8422_2325_u64, |hash, byte| {
         (hash ^ byte as u64).wrapping_mul(0x0100_0000_01b3)
-    });
-    pets_dir(state).join(format!("{id}.walk-{hash:016x}.gif"))
+    })
 }
 
-fn remove_walk_cache(state: &AppState, id: &str) {
-    let prefix = format!("{id}.walk-");
+/// 走路动作处理后的缓存
+fn walk_cache_path(state: &AppState, id: &str, entry: &str) -> PathBuf {
+    pets_dir(state).join(format!("{id}.walk2-{:016x}.gif", fnv(entry)))
+}
+
+/// 抠掉背景以后的那份素材
+fn key_cache_path(state: &AppState, id: &str, entry: &str) -> PathBuf {
+    pets_dir(state).join(format!("{id}.keyed-{:016x}.gif", fnv(entry)))
+}
+
+/// 形象删掉、或者重新导入时，把由它派生出来的缓存一起清掉：
+/// 缩略图、走路动作、抠过背景的素材
+fn remove_derived_cache(state: &AppState, id: &str) {
+    let prefixes = [
+        format!("{id}.thumb"),
+        format!("{id}.walk-"),
+        format!("{id}.walk2-"),
+        format!("{id}.keyed-"),
+    ];
     let Ok(entries) = fs::read_dir(pets_dir(state)) else {
         return;
     };
     for entry in entries.flatten() {
-        if entry.file_name().to_string_lossy().starts_with(&prefix) {
+        let name = entry.file_name();
+        if prefixes
+            .iter()
+            .any(|prefix| name.to_string_lossy().starts_with(prefix.as_str()))
+        {
             let _ = fs::remove_file(entry.path());
         }
     }
@@ -152,8 +172,7 @@ pub(crate) fn add_pet_assets(
                 if old_path != existing.path {
                     remove_owned_file(&state, &old_path);
                 }
-                let _ = fs::remove_file(thumb_path(&state, &existing.id));
-                remove_walk_cache(&state, &existing.id);
+                remove_derived_cache(&state, &existing.id);
                 existing.id.clone()
             }
             None => {
@@ -285,8 +304,7 @@ pub(crate) fn delete_pet_asset(
         .ok_or_else(|| "找不到这个形象".to_string())?;
     let removed = settings.pet_assets.remove(position);
     remove_owned_file(&state, &removed.path);
-    let _ = fs::remove_file(thumb_path(&state, &removed.id));
-    remove_walk_cache(&state, &removed.id);
+    remove_derived_cache(&state, &removed.id);
     if settings.selected_appearance_id == id {
         settings.selected_appearance_id = default_appearance_id();
     }
@@ -318,11 +336,43 @@ pub(crate) fn read_thumbnail(state: &AppState, id: &str) -> Result<Vec<u8>, Stri
 }
 
 /// 读出某个形象的一段 GIF 动画（媒体协议用）。不指定动作时取该形象的默认动作。
+/// 背景是画进 GIF 里的白底这种，这里顺手抠成透明再给出去（见 pet_key）。
 pub(crate) fn read_animation(
     state: &AppState,
     id: &str,
     entry: Option<&str>,
 ) -> Result<Vec<u8>, String> {
+    let (entry_name, raw) = read_raw_animation(state, id, entry)?;
+    let cache = key_cache_path(state, id, &entry_name);
+    if let Ok(bytes) = fs::read(&cache) {
+        return Ok(bytes);
+    }
+    let bytes = match pet_key::key_out(&raw) {
+        Ok(Some(keyed)) => keyed,
+        Ok(None) => raw,
+        Err(error) => {
+            eprintln!("snapshot: background left as is ({entry_name}): {error}");
+            raw
+        }
+    };
+    // 左右两个方向可能同时来要同一个动作：各写各的临时文件再改名，免得读到或写出半个文件
+    static SEQUENCE: AtomicU64 = AtomicU64::new(0);
+    let partial = cache.with_extension(format!(
+        "partial{}",
+        SEQUENCE.fetch_add(1, Ordering::Relaxed)
+    ));
+    if fs::write(&partial, &bytes).is_ok() && fs::rename(&partial, &cache).is_err() {
+        let _ = fs::remove_file(&partial);
+    }
+    Ok(bytes)
+}
+
+/// 按动作名把素材原样读出来（压缩包里的条目，或者直接导入的那个 GIF），不碰背景。
+fn read_raw_animation(
+    state: &AppState,
+    id: &str,
+    entry: Option<&str>,
+) -> Result<(String, Vec<u8>), String> {
     let asset = state
         .settings
         .lock()
@@ -355,26 +405,29 @@ pub(crate) fn read_animation(
         return Err("这个动作不是 GIF，无法预览".into());
     }
     // 直接导入的 GIF 本身就是素材，没有压缩包可拆
-    if is_pet_gif(&asset.path) {
+    let bytes = if is_pet_gif(&asset.path) {
         let bytes = fs::read(&archive_path).map_err(|_| "桌宠 GIF 已被移动或删除".to_string())?;
         if bytes.len() > 50 * 1024 * 1024 {
             return Err("桌宠动画不能超过 50MB".into());
         }
-        return Ok(bytes);
-    }
-    let file = fs::File::open(&archive_path).map_err(|_| "桌宠压缩包已被移动或删除".to_string())?;
-    let mut archive = zip::ZipArchive::new(file).map_err(|_| "桌宠压缩包已损坏".to_string())?;
-    let mut entry = archive
-        .by_name(&entry_name)
-        .map_err(|_| "压缩包内的预览动画已丢失".to_string())?;
-    if entry.size() > 50 * 1024 * 1024 {
-        return Err("桌宠动画不能超过 50MB".into());
-    }
-    let mut bytes = Vec::with_capacity(entry.size() as usize);
-    entry
-        .read_to_end(&mut bytes)
-        .map_err(|_| "读取桌宠动画失败".to_string())?;
-    Ok(bytes)
+        bytes
+    } else {
+        let file =
+            fs::File::open(&archive_path).map_err(|_| "桌宠压缩包已被移动或删除".to_string())?;
+        let mut archive = zip::ZipArchive::new(file).map_err(|_| "桌宠压缩包已损坏".to_string())?;
+        let mut entry = archive
+            .by_name(&entry_name)
+            .map_err(|_| "压缩包内的预览动画已丢失".to_string())?;
+        if entry.size() > 50 * 1024 * 1024 {
+            return Err("桌宠动画不能超过 50MB".into());
+        }
+        let mut bytes = Vec::with_capacity(entry.size() as usize);
+        entry
+            .read_to_end(&mut bytes)
+            .map_err(|_| "读取桌宠动画失败".to_string())?;
+        bytes
+    };
+    Ok((entry_name, bytes))
 }
 
 /// 拖动桌宠时播的走路动作（媒体协议用）。横穿画布的改成原地走（见 pet_walk），
