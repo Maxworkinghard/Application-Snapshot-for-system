@@ -297,7 +297,8 @@ input:focus-visible, textarea:focus-visible { outline: none; }
 .palette {
   position: relative; width: 100%;
   border-radius: 6px; background: var(--paper); color: var(--ink);
-  box-shadow: var(--shadow-panel), 0 0 0 1px color-mix(in srgb, var(--ink) 8%, transparent);
+  /* 不加投影：窗口是透明的，四周只留了 24–40px，大投影会在窗口边上被切出一圈硬边 */
+  box-shadow: 0 0 0 1px color-mix(in srgb, var(--ink) 8%, transparent);
   overflow: hidden;
   animation: palette-in var(--t-open) var(--ease-enter) both;
 }
