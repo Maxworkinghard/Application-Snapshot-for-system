@@ -45,6 +45,26 @@ fn thumb_path(state: &AppState, id: &str) -> PathBuf {
     pets_dir(state).join(format!("{id}.thumb.png"))
 }
 
+/// 走路动作处理后的缓存。动作名里有斜杠和中文，拿它的哈希（FNV-1a）当文件名
+fn walk_cache_path(state: &AppState, id: &str, entry: &str) -> PathBuf {
+    let hash = entry.bytes().fold(0xcbf2_9ce4_8422_2325_u64, |hash, byte| {
+        (hash ^ byte as u64).wrapping_mul(0x0100_0000_01b3)
+    });
+    pets_dir(state).join(format!("{id}.walk-{hash:016x}.gif"))
+}
+
+fn remove_walk_cache(state: &AppState, id: &str) {
+    let prefix = format!("{id}.walk-");
+    let Ok(entries) = fs::read_dir(pets_dir(state)) else {
+        return;
+    };
+    for entry in entries.flatten() {
+        if entry.file_name().to_string_lossy().starts_with(&prefix) {
+            let _ = fs::remove_file(entry.path());
+        }
+    }
+}
+
 /// 选中后广播、落盘、顺手把桌宠窗口叫出来
 fn commit(app: &AppHandle, state: &AppState, settings: &mut Settings) -> Result<Settings, String> {
     refresh_missing(&mut settings.pet_assets);
@@ -133,6 +153,7 @@ pub(crate) fn add_pet_assets(
                     remove_owned_file(&state, &old_path);
                 }
                 let _ = fs::remove_file(thumb_path(&state, &existing.id));
+                remove_walk_cache(&state, &existing.id);
                 existing.id.clone()
             }
             None => {
@@ -265,6 +286,7 @@ pub(crate) fn delete_pet_asset(
     let removed = settings.pet_assets.remove(position);
     remove_owned_file(&state, &removed.path);
     let _ = fs::remove_file(thumb_path(&state, &removed.id));
+    remove_walk_cache(&state, &removed.id);
     if settings.selected_appearance_id == id {
         settings.selected_appearance_id = default_appearance_id();
     }
@@ -352,6 +374,36 @@ pub(crate) fn read_animation(
     entry
         .read_to_end(&mut bytes)
         .map_err(|_| "读取桌宠动画失败".to_string())?;
+    Ok(bytes)
+}
+
+/// 拖动桌宠时播的走路动作（媒体协议用）。横穿画布的改成原地走（见 pet_walk），
+/// 结果按动作缓存在素材目录里；本来就原地走、或者处理不了的照用原图，拖动时总有图可播。
+pub(crate) fn read_walk(state: &AppState, id: &str, entry: &str) -> Result<Vec<u8>, String> {
+    let cache = walk_cache_path(state, id, entry);
+    if let Ok(bytes) = fs::read(&cache) {
+        return Ok(bytes);
+    }
+    // 先按普通动作读一遍：顺带校验这是登记过的动作
+    let walk = read_animation(state, id, Some(entry))?;
+    let idle = read_animation(state, id, None).unwrap_or_default();
+    let bytes = match pet_walk::walk_in_place(&walk, &idle) {
+        Ok(Some(converted)) => converted,
+        Ok(None) => walk,
+        Err(error) => {
+            eprintln!("snapshot: walk animation left as is ({entry}): {error}");
+            walk
+        }
+    };
+    // 左右两个方向可能同时来要同一个动作：各写各的临时文件再改名，免得读到或写出半个文件
+    static SEQUENCE: AtomicU64 = AtomicU64::new(0);
+    let partial = cache.with_extension(format!(
+        "partial{}",
+        SEQUENCE.fetch_add(1, Ordering::Relaxed)
+    ));
+    if fs::write(&partial, &bytes).is_ok() && fs::rename(&partial, &cache).is_err() {
+        let _ = fs::remove_file(&partial);
+    }
     Ok(bytes)
 }
 

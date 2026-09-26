@@ -265,9 +265,13 @@ input:focus-visible, textarea:focus-visible { outline: none; }
 
 .pet-window { position: relative; display: grid; width: 100vw; height: 100vh; padding: 2px; place-items: center; user-select: none; cursor: grab; background: transparent; }
 .pet-window:active { cursor: grabbing; }
-.pet-orb { display: grid; width: var(--pet-icon-size, 56px); height: var(--pet-icon-size, 56px); place-items: center; overflow: hidden; color: var(--ink-2); background: transparent; }
-.pet-orb img { display: block; width: 100%; height: 100%; object-fit: contain; }
+/* 格子固定为外框大小：不固定时，竖长的 GIF 会按自身宽高比把格子撑高，下半身被 overflow 裁掉 */
+.pet-orb { display: grid; grid-template: 100% / 100%; width: var(--pet-icon-size, 56px); height: var(--pet-icon-size, 56px); place-items: center; overflow: hidden; color: var(--ink-2); background: transparent; }
+.pet-orb img { display: block; grid-area: 1 / 1; width: 100%; height: 100%; object-fit: contain; }
+/* 走路图和常规动作叠在同一格：藏起来的只是看不见，照样解码播放，拖动时切过去不闪 */
+.pet-orb img[hidden] { visibility: hidden; }
 .pet-orb img.pet-fade { animation: pet-pop var(--t-open) var(--ease-cat) both; }
+.pet-orb img.pet-flip { transform: scaleX(-1); }
 @keyframes pet-pop { from { transform: scale(0.86); opacity: 0; } }
 
 /* ---------- 截后标注窗口 ---------- */

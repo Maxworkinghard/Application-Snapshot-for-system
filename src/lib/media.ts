@@ -16,6 +16,9 @@ export const thumbUrl = (id: string) => media(`thumb/${id}`);
 export const petUrl = (assetId: string, entry?: string | null) =>
   media(entry ? `pet/${assetId}/${entry}` : `pet/${assetId}`);
 
+/** 拖动桌宠时播的走路动作；横穿画布的由后端改成原地走 */
+export const petWalkUrl = (assetId: string, entry: string) => media(`pet-walk/${assetId}/${entry}`);
+
 /** 默认动作的第一帧，静态图。形象架上用它，免得几十个 GIF 一起动 */
 export const petThumbUrl = (assetId: string) => media(`pet-thumb/${assetId}`);
 

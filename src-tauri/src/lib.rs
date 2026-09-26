@@ -5,6 +5,7 @@ mod capture;
 mod clipboard;
 mod media;
 mod pet;
+mod pet_walk;
 mod polish;
 mod recording;
 mod settings;

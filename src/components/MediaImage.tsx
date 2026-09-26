@@ -9,13 +9,16 @@ export function MediaImage({
   fallback,
   className,
   alt = "",
+  hidden,
 }: {
   src: string | null;
   fallback: ReactNode;
   className?: string;
   alt?: string;
+  /** 先藏着但保持加载（桌宠拖动时换成走路图，松手再露出来，不用重新取图） */
+  hidden?: boolean;
 }) {
   const [failed, setFailed] = useState(false);
   if (!src || failed) return <>{fallback}</>;
-  return <img className={className} src={src} alt={alt} draggable={false} onError={() => setFailed(true)} />;
+  return <img className={className} src={src} alt={alt} hidden={hidden} draggable={false} onError={() => setFailed(true)} />;
 }
