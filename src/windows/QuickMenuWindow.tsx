@@ -134,17 +134,22 @@ export function QuickMenuWindow() {
   const asset = settings?.petAssets.find((item) => item.id === settings.selectedAppearanceId && !item.missing) ?? null;
   const headroom = asset ? CAT_ROOM : 24;
 
-  // 窗口高度跟着面板走：进润色、展开窗口列表时变高
+  // 窗口高度跟着面板走：进润色、展开窗口列表时变高。
+  // 每次打开都会重新挂一个面板（key={opening}），要改量新的那个；旧面板移出页面时量到的是 0，不能拿来缩窗口。
+  // 用 offsetHeight：getBoundingClientRect 会把入场动画的 scale(0.97) 算进去，量矮一截。
   useLayoutEffect(() => {
     const panel = panelRef.current;
     if (!panel) return;
-    const apply = () => void resizeQuickMenu(Math.ceil(panel.getBoundingClientRect().height) + headroom + EDGE).catch(() => {});
+    const apply = () => {
+      if (!panel.isConnected || panel.offsetHeight === 0) return;
+      void resizeQuickMenu(panel.offsetHeight + headroom + EDGE).catch(() => {});
+    };
     apply();
     if (typeof ResizeObserver === "undefined") return;
     const observer = new ResizeObserver(apply);
     observer.observe(panel);
     return () => observer.disconnect();
-  }, [headroom]);
+  }, [headroom, opening]);
 
   function showStatus(next: Status | null, hideAfter = false) {
     if (hideTimer.current !== null) window.clearTimeout(hideTimer.current);

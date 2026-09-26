@@ -56,6 +56,61 @@ describe("输入框：录制", () => {
   });
 });
 
+describe("输入框：窗口高度", () => {
+  /** 只记下在观察谁；什么时候回调由测试决定（jsdom 没有布局，也没有 ResizeObserver） */
+  class FakeResizeObserver {
+    static live = new Set<FakeResizeObserver>();
+    targets = new Set<Element>();
+    constructor(private callback: ResizeObserverCallback) {
+      FakeResizeObserver.live.add(this);
+    }
+    observe(target: Element) {
+      this.targets.add(target);
+    }
+    unobserve(target: Element) {
+      this.targets.delete(target);
+    }
+    disconnect() {
+      this.targets.clear();
+      FakeResizeObserver.live.delete(this);
+    }
+    /** 相当于浏览器排完版后通知：旧面板被移走、新面板量好，都会走到这里 */
+    static notifyAll() {
+      for (const observer of [...FakeResizeObserver.live]) {
+        if (observer.targets.size) observer.callback([], observer as unknown as ResizeObserver);
+      }
+    }
+  }
+
+  it("每次打开都量新挂上的面板，旧面板移走时不会把窗口缩到最小", async () => {
+    FakeResizeObserver.live.clear();
+    vi.stubGlobal("ResizeObserver", FakeResizeObserver);
+    let panelHeight = 300;
+    // 面板在页面里时有高度，被移出页面后是 0（浏览器里就是这样）
+    vi.spyOn(HTMLElement.prototype, "offsetHeight", "get").mockImplementation(function (this: HTMLElement) {
+      return this.isConnected && this.classList.contains("palette") ? panelHeight : 0;
+    });
+
+    const { calls } = await renderPalette(() => undefined);
+    // 没有桌宠形象时上方留 24，下方留 40 给阴影
+    const heights = () =>
+      calls.filter((call) => call.command === "resize_quick_menu").map((call) => (call.payload as { height: number }).height);
+    await waitFor(() => expect(heights()).toContain(300 + 24 + 40));
+
+    const firstPanel = document.querySelector(".palette");
+    const { emit } = await import("@tauri-apps/api/event");
+    await emit("palette-opened");
+    await waitFor(() => expect(document.querySelector(".palette")).not.toBe(firstPanel));
+
+    // 新面板更高（比如多了「再复制一次上一张」）：窗口要跟着变高
+    panelHeight = 380;
+    FakeResizeObserver.notifyAll();
+    await waitFor(() => expect(heights().at(-1)).toBe(380 + 24 + 40));
+    expect(heights().every((height) => height >= 300 + 24 + 40)).toBe(true);
+    vi.unstubAllGlobals();
+  });
+});
+
 describe("输入框：润色", () => {
   const settings = {
     baseUrl: "https://api.example.com",
