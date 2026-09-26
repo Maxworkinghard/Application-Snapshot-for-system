@@ -14,6 +14,7 @@ const settings = {
   petAssets: [
     { id: "pet-1", name: "三花", path: "", entry: "idle.gif", animations: ["idle.gif", "wave.gif"] },
   ],
+  petScale: 100,
   shortcuts: [],
   clipboardAutoClear: "60s",
   snapshotFormat: "png",

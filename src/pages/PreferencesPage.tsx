@@ -9,6 +9,7 @@ import { usePresence } from "../lib/motion";
 import { ModelSettingsDialog } from "../components/ModelSettingsDialog";
 import { errorText, useApp } from "../app/context";
 import { RulesPanel } from "./RulesPanel";
+import { PET_SCALE } from "../lib/petSize";
 import type { Settings } from "../types";
 
 function usePrefs() {
@@ -124,6 +125,46 @@ export function BehaviorPanel() {
   );
 }
 
+/** 桌宠在桌面上的大小 */
+export function PetPanel() {
+  const { settings } = useApp();
+  const update = usePrefs();
+  // 拖动时滑块跟手：本地先变，每挪一格就存一次，桌宠收到设置变化当场跟着缩放
+  const [scale, setScale] = useState(settings.petScale);
+  const change = (value: number) => {
+    setScale(value);
+    void update({ petScale: value });
+  };
+
+  return (
+    <section className="panel">
+      <h2 className="panel-title">桌面宠物</h2>
+      <div className="rows">
+        <div className="row">
+          <label className="row-label" htmlFor="pref-petScale">大小</label>
+          <span className="row-links small">
+            {scale !== PET_SCALE.default && (
+              <button type="button" className="link" onClick={() => change(PET_SCALE.default)}>恢复默认</button>
+            )}
+            <input
+              id="pref-petScale"
+              className="range"
+              type="range"
+              min={PET_SCALE.min}
+              max={PET_SCALE.max}
+              step={PET_SCALE.step}
+              value={scale}
+              aria-valuetext={`${scale}%`}
+              onChange={(event) => change(Number(event.target.value))}
+            />
+            <span className="mono ink-2 range-value">{scale}%</span>
+          </span>
+        </div>
+      </div>
+    </section>
+  );
+}
+
 /** 这台机器能做什么（各端 adapter 实时报告）+ 模型 */
 export function MachinePanel() {
   const { settings, caps } = useApp();
@@ -180,7 +221,10 @@ export function MachinePanel() {
 export function PreferencesPage() {
   return (
     <div className="page-grid page-grid-2">
-      <BehaviorPanel />
+      <div className="page-col">
+        <BehaviorPanel />
+        <PetPanel />
+      </div>
       <div className="page-col">
         <MachinePanel />
         <RulesPanel />

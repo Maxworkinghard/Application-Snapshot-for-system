@@ -52,6 +52,8 @@ export interface Settings {
   activeTemplateId: string;
   selectedAppearanceId: string;
   petAssets: PetAsset[];
+  /** 桌宠大小：按屏幕算出的基准大小的百分比，100 就是原来的大小（见 lib/petSize.ts） */
+  petScale: number;
   shortcuts: ShortcutBinding[];
   clipboardAutoClear: "30s" | "60s" | "5m" | "never";
   snapshotFormat: "png" | "jpeg" | "webp";

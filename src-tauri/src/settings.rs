@@ -72,6 +72,9 @@ pub(crate) struct Settings {
     pub(crate) pet_assets: Vec<super::pet::PetAsset>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub(crate) pet_position: Option<PetPosition>,
+    /// 桌宠大小：按屏幕算出的基准大小的百分比，100 就是原来的大小
+    #[serde(default = "default_pet_scale")]
+    pub(crate) pet_scale: u32,
     pub(crate) shortcuts: Vec<ShortcutBinding>,
     #[serde(default = "default_clipboard_auto_clear")]
     pub(crate) clipboard_auto_clear: String,
@@ -128,6 +131,17 @@ fn default_after_capture() -> String {
     "clipboard".into()
 }
 
+/// 桌宠大小能调的范围（百分比），和前端 lib/petSize.ts 的 PET_SCALE 一致
+const PET_SCALE_RANGE: (u32, u32) = (50, 300);
+
+fn default_pet_scale() -> u32 {
+    100
+}
+
+fn clamp_pet_scale(value: u32) -> u32 {
+    value.clamp(PET_SCALE_RANGE.0, PET_SCALE_RANGE.1)
+}
+
 impl Default for Settings {
     fn default() -> Self {
         Self {
@@ -144,6 +158,7 @@ impl Default for Settings {
             selected_appearance_id: default_appearance_id(),
             pet_assets: Vec::new(),
             pet_position: None,
+            pet_scale: default_pet_scale(),
             shortcuts: default_shortcut_bindings(),
             clipboard_auto_clear: default_clipboard_auto_clear(),
             snapshot_format: default_snapshot_format(),
@@ -196,6 +211,7 @@ pub(crate) struct PreferencesPatch {
     record_system_audio: Option<bool>,
     record_microphone: Option<bool>,
     after_capture: Option<String>,
+    pet_scale: Option<u32>,
 }
 
 #[derive(Deserialize)]
@@ -276,6 +292,8 @@ pub(crate) fn read_settings(path: &PathBuf) -> Settings {
         }
     }
     super::pet::refresh_missing(&mut settings.pet_assets);
+    // 手改过配置文件、写了范围外的值：按边界算
+    settings.pet_scale = clamp_pet_scale(settings.pet_scale);
     if settings.selected_appearance_id != "app-icon"
         && !settings
             .pet_assets
@@ -486,6 +504,9 @@ pub(crate) fn save_preferences(
     if let Some(value) = prefs.after_capture {
         settings.after_capture = value;
     }
+    if let Some(value) = prefs.pet_scale {
+        settings.pet_scale = clamp_pet_scale(value);
+    }
     persist_settings(&state.settings_path, &settings)?;
     let result = settings.clone();
     emit_settings(&app, &result);
@@ -509,4 +530,23 @@ fn make_models_endpoint(base_url: &str) -> Result<String, String> {
     } else {
         format!("{trimmed}/v1/models")
     })
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn old_settings_without_pet_scale_keep_the_original_size() {
+        let json = r#"{"baseUrl":"","model":"","templates":[],"activeTemplateId":"builtin-default","shortcuts":[]}"#;
+        let settings: Settings = serde_json::from_str(json).unwrap();
+        assert_eq!(settings.pet_scale, 100);
+    }
+
+    #[test]
+    fn pet_scale_is_kept_within_its_range() {
+        assert_eq!(clamp_pet_scale(10), 50);
+        assert_eq!(clamp_pet_scale(150), 150);
+        assert_eq!(clamp_pet_scale(1000), 300);
+    }
 }

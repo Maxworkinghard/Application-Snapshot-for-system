@@ -52,6 +52,7 @@ let settings: Settings = {
         { id: "pet-clawd", name: "clawd", path: "C:\\Users\\max\\Downloads\\clawd.zip", entry: "idle.gif", animations: ["idle.gif"], importedAt: minutesAgo(2000), missing: true },
       ]
     : [],
+  petScale: 100,
   shortcuts: [
     { action: "snapshot", accelerator: demo ? "CommandOrControl+Shift+A" : null },
     { action: "fullscreen", accelerator: demo ? "CommandOrControl+Shift+F" : null },

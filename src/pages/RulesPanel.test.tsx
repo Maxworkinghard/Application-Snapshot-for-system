@@ -16,6 +16,7 @@ const base: Settings = {
   activeTemplateId: "builtin-default",
   selectedAppearanceId: "app-icon",
   petAssets: [],
+  petScale: 100,
   shortcuts: [],
   clipboardAutoClear: "60s",
   snapshotFormat: "png",

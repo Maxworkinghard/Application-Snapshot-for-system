@@ -1,5 +1,5 @@
 import { useEffect, useRef, useState } from "react";
-import { getCurrentWindow, LogicalSize } from "@tauri-apps/api/window";
+import { currentMonitor, getCurrentWindow, LogicalSize, PhysicalPosition, type Window } from "@tauri-apps/api/window";
 import { AppWindow, PawPrint } from "lucide-react";
 import {
   getPreviousApp,
@@ -11,7 +11,19 @@ import {
 import { iconUrl, petUrl } from "../lib/media";
 import { MediaImage } from "../components/MediaImage";
 import { broadcastPetAnimation, onPetAnimationAsked } from "../lib/petSync";
+import { PET_SCALE, petWindowSize } from "../lib/petSize";
 import type { PreviousApp, Settings } from "../types";
+
+/** 放大后超出了所在屏幕的可用区域，就挪回来 */
+async function keepOnScreen(petWindow: Window) {
+  const monitor = await currentMonitor();
+  if (!monitor) return;
+  const [position, size] = await Promise.all([petWindow.outerPosition(), petWindow.outerSize()]);
+  const { position: origin, size: area } = monitor.workArea;
+  const x = Math.max(origin.x, Math.min(position.x, origin.x + area.width - size.width));
+  const y = Math.max(origin.y, Math.min(position.y, origin.y + area.height - size.height));
+  if (x !== position.x || y !== position.y) await petWindow.setPosition(new PhysicalPosition(x, y));
+}
 
 export function PetWindow() {
   const [app, setApp] = useState<PreviousApp>({ id: null, pid: null, name: "", title: "" });
@@ -19,6 +31,8 @@ export function PetWindow() {
   const [animations, setAnimations] = useState<string[]>([]);
   const [animationIndex, setAnimationIndex] = useState(0);
   const [petSize, setPetSize] = useState(60);
+  // 读到设置前不定大小，免得先按默认缩放一次再跳到用户设的大小
+  const [petScale, setPetScale] = useState<number | null>(null);
   const dragged = useRef(false);
 
   useEffect(() => {
@@ -30,6 +44,7 @@ export function PetWindow() {
       setAppearanceId(id);
       setAnimations(entries);
       setAnimationIndex(initialIndex);
+      setPetScale(settings.petScale ?? PET_SCALE.default);
     };
     void getPreviousApp().then(setApp);
     void loadSettings().then(applyAppearance);
@@ -50,14 +65,20 @@ export function PetWindow() {
   }, [appearanceId, animations]);
 
   useEffect(() => {
+    if (petScale === null) return;
     const petWindow = getCurrentWindow();
     let active = true;
+    let lastSize = 0;
 
     const fitToScreen = async () => {
       const shortEdge = Math.min(window.screen.availWidth, window.screen.availHeight);
-      const nextSize = Math.round(Math.max(58, Math.min(72, shortEdge * 0.06)));
+      const nextSize = petWindowSize(shortEdge, petScale);
       if (active) setPetSize(nextSize);
+      if (nextSize === lastSize) return;
+      lastSize = nextSize;
       await petWindow.setSize(new LogicalSize(nextSize, nextSize));
+      // 只在大小变了时才挪：平常拖动桌宠不去抢它的位置
+      await keepOnScreen(petWindow);
     };
 
     void fitToScreen();
@@ -68,7 +89,7 @@ export function PetWindow() {
       void movedListener.then((unlisten) => unlisten());
       void scaleListener.then((unlisten) => unlisten());
     };
-  }, []);
+  }, [petScale]);
 
   function onPointerDown(event: React.PointerEvent) {
     if (event.button !== 0) return;
