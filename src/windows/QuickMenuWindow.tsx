@@ -304,7 +304,7 @@ export function QuickMenuWindow() {
           }
         : {
             id: "record",
-            label: "录一个窗口…",
+            label: "录制",
             hint: shortcutHint("record"),
             keywords: "录制 录屏 视频 record",
             run: () => void openPicker("record"),
